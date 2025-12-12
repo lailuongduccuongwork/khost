@@ -71,7 +71,7 @@ export const INITIAL_USERS: User[] = [
     fullName: 'Quản trị viên',
     role: UserRole.ADMIN,
     password: '123',
-    propertyId: undefined, // Access all
+    // propertyId removed to avoid undefined error in Firebase
     permissions: Object.values(PERMISSIONS),
   },
   {

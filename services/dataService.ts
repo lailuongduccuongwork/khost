@@ -114,7 +114,10 @@ const _resetToMockData = () => {
 // Hàm lưu toàn bộ cache lên Firebase (hoặc localStorage nếu chưa config)
 const _syncToCloud = () => {
     if (isFirebaseReady && db) {
-        set(ref(db), CACHE).catch(err => console.error("Sync failed", err));
+        // Firebase không hỗ trợ lưu 'undefined'.
+        // Ta sử dụng JSON.stringify/parse để loại bỏ các trường undefined.
+        const sanitizedCache = JSON.parse(JSON.stringify(CACHE));
+        set(ref(db), sanitizedCache).catch(err => console.error("Sync failed", err));
     } else {
         localStorage.setItem('properties', JSON.stringify(CACHE.properties));
         localStorage.setItem('rooms', JSON.stringify(CACHE.rooms));
