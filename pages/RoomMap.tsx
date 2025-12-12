@@ -568,7 +568,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const handleDeleteBooking = () => {
       // Ensure we have an ID to delete
       if (!bookingMeta.id) {
-          alert("Lỗi: Không tìm thấy thông tin đơn hàng để xóa.");
+          alert("Lỗi: Không tìm thấy ID đơn hàng để xóa. Vui lòng thử tải lại trang.");
           return;
       }
 
@@ -814,7 +814,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                      <option value={BookingStatus.CHECKED_IN}>CHECKED_IN</option>
                                      <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
                                  </select>
-                                 <button onClick={handleDeleteBooking} className="flex items-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-2 bg-red-50 font-bold border border-red-100" title="Xóa đơn (Chuyển vào lịch sử)"><Trash2 size={20} /> Xóa đơn</button>
+                                 <button 
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleDeleteBooking();
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-2 bg-red-50 font-bold border border-red-100" 
+                                    title="Xóa đơn (Chuyển vào lịch sử)"
+                                 >
+                                    <Trash2 size={20} /> Xóa đơn
+                                 </button>
                                 </>
                              )}
                           </div>
