@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -161,7 +162,7 @@ const App: React.FC = () => {
               <Lock size={24} />
             </div>
             <h1 className="text-2xl font-bold text-gray-800">Đăng nhập hệ thống</h1>
-            <p className="text-gray-500">ezHotel Management</p>
+            <p className="text-gray-500">K-Host Management</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -237,7 +238,13 @@ const App: React.FC = () => {
           )}
 
           {currentPage === 'bookings' && (
-            <Bookings bookings={bookings} rooms={rooms} customers={customers} onRefresh={refreshData} />
+            <Bookings 
+              bookings={bookings} 
+              rooms={rooms} 
+              customers={customers} 
+              onRefresh={refreshData} 
+              currentUserId={currentUser.id}
+            />
           )}
 
           {currentPage === 'reports' && currentUser.role !== UserRole.RECEPTIONIST && (

@@ -208,6 +208,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   const revenueData = useMemo(() => {
       return bookings
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
+        .filter(b => b.status !== BookingStatus.DELETED) // Explicitly filter out deleted
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData)
         .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
@@ -219,7 +220,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // Criteria: All non-deleted bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
       return bookings
-        .filter(b => b.status !== BookingStatus.DELETED)
+        .filter(b => b.status !== BookingStatus.DELETED) // Explicitly filter out deleted
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData)
         .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());

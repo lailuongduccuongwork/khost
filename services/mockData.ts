@@ -1,8 +1,9 @@
+
 import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS } from '../types';
 
 export const INITIAL_PROPERTIES: Property[] = [
-  { id: 'p1', name: 'ezHotel Hà Nội', address: '123 Kim Mã, Ba Đình, Hà Nội' },
-  { id: 'p2', name: 'ezHotel Đà Nẵng', address: '456 Võ Văn Kiệt, Sơn Trà, Đà Nẵng' },
+  { id: 'p1', name: 'K-Host Hà Nội', address: '123 Kim Mã, Ba Đình, Hà Nội' },
+  { id: 'p2', name: 'K-Host Đà Nẵng', address: '456 Võ Văn Kiệt, Sơn Trà, Đà Nẵng' },
 ];
 
 export const INITIAL_ROOM_TYPES: RoomType[] = [

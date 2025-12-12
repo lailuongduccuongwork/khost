@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase } from 'lucide-react';
 import { UserRole } from '../types';
@@ -31,10 +32,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, ro
     <div className="w-64 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col shadow-xl z-50">
       <div className="p-6 border-b border-slate-700 flex items-center gap-3">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-lg ${viewMode === 'MANAGEMENT' ? 'bg-orange-500' : 'bg-blue-500'}`}>
-          e
+          K
         </div>
         <div>
-          <h1 className="text-xl font-bold">ezHotel</h1>
+          <h1 className="text-xl font-bold">K-Host</h1>
           <p className="text-xs text-slate-400">{viewMode === 'MANAGEMENT' ? 'Quản lý' : 'Lễ tân'}</p>
         </div>
       </div>

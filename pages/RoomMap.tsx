@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle } from 'lucide-react';
 
 interface RoomMapProps {
   rooms: Room[];
@@ -263,6 +263,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // ADDED: Local confirm state
   
   // Data for the modal
   const [bookingMeta, setBookingMeta] = useState<{
@@ -377,6 +378,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // --- Modal Opening Logic ---
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
       setIsEditMode(editMode);
+      setShowDeleteConfirm(false); // Reset delete confirmation state
       
       if (editMode && booking) {
           setBookingMeta({
@@ -565,22 +567,27 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      onRefresh();
   };
 
-  const handleDeleteBooking = () => {
-      // Ensure we have an ID to delete
-      if (!bookingMeta.id) {
-          alert("Lỗi: Không tìm thấy ID đơn hàng để xóa. Vui lòng thử tải lại trang.");
-          return;
-      }
+  const handleDeleteClick = () => {
+      // Trigger local confirmation instead of window.confirm
+      setShowDeleteConfirm(true);
+  };
 
-      if (window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn xóa đơn đặt phòng #${bookingMeta.id} khỏi hệ thống không?`)) {
-          const success = DataService.deleteBooking(bookingMeta.id, currentUser);
-          if (success) {
-              alert("Đã xóa đơn thành công!");
-              setShowModal(false);
-              onRefresh();
-          } else {
-              alert("Không thể xóa đơn. Vui lòng thử lại.");
-          }
+  const handleConfirmDelete = () => {
+      const idToDelete = bookingMeta.id;
+      console.log("Confirmed delete for:", idToDelete);
+
+      if (!idToDelete) return;
+
+      const success = DataService.deleteBooking(idToDelete, currentUser);
+      
+      if (success) {
+          alert("Đã xóa đơn thành công!");
+          setShowDeleteConfirm(false);
+          setShowModal(false);
+          onRefresh();
+      } else {
+          alert("Không thể xóa đơn. Vui lòng kiểm tra console log.");
+          setShowDeleteConfirm(false);
       }
   };
 
@@ -806,26 +813,44 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                              {isEditMode && (
                                 <>
                                  <select className="border border-gray-200 p-3 rounded-xl font-semibold bg-gray-50 text-gray-700 outline-none focus:border-blue-500" value={bookingMeta.status} onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}>
-                                     {/* Removed PENDING, CONFIRMED, CANCELLED as requested, only keep operational statuses */}
-                                     {/* If current status is not in list (e.g. Confirmed), show it anyway as disabled/readonly option or just let it map to CheckIn if changed */}
                                      {!['CHECKED_IN', 'CHECKED_OUT'].includes(bookingMeta.status) && (
                                          <option value={bookingMeta.status} disabled>{bookingMeta.status}</option>
                                      )}
                                      <option value={BookingStatus.CHECKED_IN}>CHECKED_IN</option>
                                      <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
                                  </select>
-                                 <button 
-                                    type="button"
-                                    onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        handleDeleteBooking();
-                                    }}
-                                    className="flex items-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-2 bg-red-50 font-bold border border-red-100" 
-                                    title="Xóa đơn (Chuyển vào lịch sử)"
-                                 >
-                                    <Trash2 size={20} /> Xóa đơn
-                                 </button>
+                                 
+                                 {!showDeleteConfirm ? (
+                                     <button 
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            handleDeleteClick();
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-2 bg-red-50 font-bold border border-red-100" 
+                                        title="Xóa đơn (Chuyển vào lịch sử)"
+                                     >
+                                        <Trash2 size={20} /> Xóa đơn
+                                     </button>
+                                 ) : (
+                                     <div className="flex items-center gap-2 ml-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-fade-in">
+                                         <AlertTriangle size={18} className="text-red-600 ml-1" />
+                                         <span className="text-sm font-bold text-red-700 mr-1">Chắc chắn xóa?</span>
+                                         <button 
+                                            onClick={handleConfirmDelete} 
+                                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm transition-colors"
+                                         >
+                                            Có, xóa ngay
+                                         </button>
+                                         <button 
+                                            onClick={() => setShowDeleteConfirm(false)} 
+                                            className="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors"
+                                         >
+                                            Hủy
+                                         </button>
+                                     </div>
+                                 )}
                                 </>
                              )}
                           </div>

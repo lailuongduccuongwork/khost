@@ -9,9 +9,10 @@ interface BookingsProps {
   rooms: Room[];
   customers: Customer[];
   onRefresh?: () => void;
+  currentUserId: string; // Add prop to track who deletes
 }
 
-const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefresh }) => {
+const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefresh, currentUserId }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
   const getCustomerName = (id: string) => customers.find(c => c.id === id)?.name || 'Unknown';
@@ -31,19 +32,25 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
           [BookingStatus.CHECKED_IN]: 'bg-green-100 text-green-800',
           [BookingStatus.CHECKED_OUT]: 'bg-gray-100 text-gray-800',
           [BookingStatus.CANCELLED]: 'bg-red-100 text-red-800',
+          [BookingStatus.DELETED]: 'bg-black text-white',
       };
       return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${styles[status]}`}>{status}</span>;
   };
 
   const handleDelete = (id: string) => {
-      if(confirm(`Bạn có chắc chắn muốn xóa đơn ${id} khỏi hệ thống không?`)) {
-          DataService.deleteBooking(id, 'CURRENT_USER'); // In real app, pass actual ID
-          if(onRefresh) onRefresh();
+      if(window.confirm(`CẢNH BÁO: Bạn có chắc chắn muốn xóa vĩnh viễn đơn đặt phòng #${id}?\n\nHành động này sẽ:\n- Xoá đơn khỏi sơ đồ phòng.\n- Xoá đơn khỏi báo cáo doanh thu.\n- Không thể khôi phục.`)) {
+          const success = DataService.deleteBooking(id, currentUserId);
+          if (success) {
+              alert("Đã xoá đơn thành công.");
+              if(onRefresh) onRefresh();
+          } else {
+              alert("Lỗi: Không thể xoá đơn này.");
+          }
       }
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in">
       <div className="p-5 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-lg font-bold text-gray-800">Danh sách đặt phòng</h2>
         <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors">
@@ -56,7 +63,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input 
                 type="text" 
-                placeholder="Tìm theo tên khách, số phòng..."
+                placeholder="Tìm theo tên khách, số phòng, mã đơn..."
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -95,10 +102,16 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
                 </td>
                 <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                        {/* 
                         <button className="text-gray-400 hover:text-blue-600" title="Chi tiết">
                             <Eye size={18} />
                         </button>
-                        <button onClick={() => handleDelete(booking.id)} className="text-gray-400 hover:text-red-600" title="Xóa đơn">
+                        */}
+                        <button 
+                            onClick={() => handleDelete(booking.id)} 
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition-colors" 
+                            title="Xóa đơn vĩnh viễn"
+                        >
                             <Trash2 size={18} />
                         </button>
                     </div>

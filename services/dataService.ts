@@ -6,13 +6,14 @@ import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS,
 declare const XLSX: any;
 
 // Helper to get from local storage or default
+// IMPORTANT: Return a COPY of defaultVal to avoid mutating the const reference
 const getFromStorage = <T,>(key: string, defaultVal: T): T => {
   const stored = localStorage.getItem(key);
-  if (!stored) return defaultVal;
+  if (!stored) return JSON.parse(JSON.stringify(defaultVal));
   try {
     return JSON.parse(stored);
   } catch (e) {
-    return defaultVal;
+    return JSON.parse(JSON.stringify(defaultVal));
   }
 };
 
@@ -20,37 +21,81 @@ const saveToStorage = (key: string, data: any) => {
   localStorage.setItem(key, JSON.stringify(data));
 };
 
-export const DataService = {
-  // --- History Logic ---
-  getHistory: (): HistoryLog[] => {
-      const history = getFromStorage<HistoryLog[]>('history', []);
-      // Filter last 3 months
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      return history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
-  },
+// --- Internal Helper Functions (defined outside object to allow safe internal calls) ---
 
-  logAction: (action: HistoryLog['action'], booking: Booking, description: string, staffId: string) => {
-      const history = getFromStorage<HistoryLog[]>('history', []);
-      const newLog: HistoryLog = {
-          id: `log_${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          action,
-          description,
-          bookingSnapshot: booking,
-          staffId
-      };
-      
-      // Add new log
-      history.unshift(newLog);
-      
-      // Cleanup logs older than 3 months
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      const cleanHistory = history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
-      
-      saveToStorage('history', cleanHistory);
-  },
+const _getHistory = (): HistoryLog[] => {
+    const history = getFromStorage<HistoryLog[]>('history', []);
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    return history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
+};
+
+const _logAction = (action: HistoryLog['action'], booking: Booking, description: string, staffId: string) => {
+    const history = getFromStorage<HistoryLog[]>('history', []);
+    const newLog: HistoryLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        action,
+        description,
+        bookingSnapshot: booking,
+        staffId
+    };
+    history.unshift(newLog);
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const cleanHistory = history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
+    saveToStorage('history', cleanHistory);
+};
+
+const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
+    const rooms = getFromStorage<Room[]>('rooms', INITIAL_ROOMS);
+    const index = rooms.findIndex(r => r.id === roomId);
+    if (index !== -1) {
+      rooms[index].status = status;
+      saveToStorage('rooms', rooms);
+    }
+};
+
+const _deleteBooking = (bookingId: string, staffId: string): boolean => {
+    console.log(`[DataService] _deleteBooking called for ID: ${bookingId} by ${staffId}`);
+    try {
+        let bookings = getFromStorage<Booking[]>('bookings', INITIAL_BOOKINGS);
+        console.log(`[DataService] Current bookings count: ${bookings.length}`);
+        
+        const index = bookings.findIndex(b => b.id === bookingId);
+        console.log(`[DataService] Found booking at index: ${index}`);
+        
+        if (index !== -1) {
+            const bookingToDelete = bookings[index];
+            
+            // Restore room status if needed
+            if (bookingToDelete.status === BookingStatus.CHECKED_IN) {
+                _updateRoomStatus(bookingToDelete.roomId, RoomStatus.VACANT_CLEAN);
+            }
+
+            // Log before deleting
+            const deletedSnapshot = { ...bookingToDelete, status: BookingStatus.DELETED };
+            _logAction('DELETE', deletedSnapshot, `Xóa đơn ${bookingId} khỏi hệ thống`, staffId);
+            
+            // Remove from list
+            bookings.splice(index, 1);
+            saveToStorage('bookings', bookings);
+            console.log(`[DataService] Deleted successfully. New count: ${bookings.length}`);
+            return true;
+        } else {
+            console.warn(`[DataService] Booking ID ${bookingId} not found in storage.`);
+        }
+        return false;
+    } catch (e) {
+        console.error("[DataService] deleteBooking error:", e);
+        return false;
+    }
+};
+
+// --- Exported Service ---
+export const DataService = {
+  getHistory: _getHistory,
+  logAction: _logAction,
 
   // Properties
   getProperties: (): Property[] => getFromStorage('properties', INITIAL_PROPERTIES),
@@ -68,20 +113,12 @@ export const DataService = {
   },
   saveRooms: (rooms: Room[]) => saveToStorage('rooms', rooms),
   
-  updateRoomStatus: (roomId: string, status: RoomStatus) => {
-    const rooms = getFromStorage<Room[]>('rooms', INITIAL_ROOMS);
-    const index = rooms.findIndex(r => r.id === roomId);
-    if (index !== -1) {
-      rooms[index].status = status;
-      saveToStorage('rooms', rooms);
-    }
-  },
+  updateRoomStatus: _updateRoomStatus,
 
   // Customers
   getCustomers: (): Customer[] => getFromStorage('customers', INITIAL_CUSTOMERS),
   addCustomer: (customer: Customer) => {
     const customers = getFromStorage<Customer[]>('customers', INITIAL_CUSTOMERS);
-    // Basic de-duplication
     const existing = customers.find(c => c.phone === customer.phone);
     if (existing) {
         Object.assign(existing, customer);
@@ -103,7 +140,7 @@ export const DataService = {
       const now = new Date();
       const yy = now.getFullYear().toString().slice(-2);
       const mm = (now.getMonth() + 1).toString().padStart(2, '0');
-      const sequence = bookings.length + 1 + Math.floor(Math.random() * 1000); // Random to avoid simple conflicts in demo
+      const sequence = bookings.length + 1 + Math.floor(Math.random() * 1000);
       const seqStr = sequence.toString().padStart(6, '0');
       return `${yy}-${mm}-${seqStr}`;
   },
@@ -118,7 +155,6 @@ export const DataService = {
 
       // Find conflicting bookings
       const conflict = bookings.find(b => {
-          // Ignore self (for updates), deleted, or cancelled bookings
           if (b.id === excludeBookingId) return false;
           if (b.status === BookingStatus.DELETED || b.status === BookingStatus.CANCELLED) return false;
           if (b.roomId !== roomId) return false;
@@ -126,14 +162,6 @@ export const DataService = {
           const existStart = new Date(b.checkInDate).getTime();
           const existEnd = new Date(b.checkOutDate).getTime();
 
-          // Standard Overlap Logic: (StartA < EndB) && (EndA > StartB)
-          // Added Buffer Logic: 
-          // New booking must start at least 30m AFTER existing ends: NewStart >= ExistEnd + 30m
-          // New booking must end at least 30m BEFORE existing starts: NewEnd + 30m <= ExistStart
-          
-          // Therefore, collision exists if:
-          // (NewStart < ExistEnd + Buffer) AND (NewEnd + Buffer > ExistStart)
-          
           return (newStart < existEnd + bufferMs) && (newEnd + bufferMs > existStart);
       });
 
@@ -154,12 +182,11 @@ export const DataService = {
     bookings.push(booking);
     saveToStorage('bookings', bookings);
     
-    // Auto update room status
     if (booking.status === BookingStatus.CHECKED_IN) {
-      DataService.updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED);
+      _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED);
     }
 
-    DataService.logAction('CREATE', booking, `Tạo mới đơn đặt phòng ${booking.id}`, booking.createdBy);
+    _logAction('CREATE', booking, `Tạo mới đơn đặt phòng ${booking.id}`, booking.createdBy);
   },
 
   updateBooking: (updatedBooking: Booking) => {
@@ -176,47 +203,25 @@ export const DataService = {
 
       if (updatedBooking.status !== oldStatus) {
         if (updatedBooking.status === BookingStatus.CHECKED_IN) {
-           DataService.updateRoomStatus(updatedBooking.roomId, RoomStatus.OCCUPIED);
+           _updateRoomStatus(updatedBooking.roomId, RoomStatus.OCCUPIED);
            actionType = 'CHECK_IN';
            desc = `Check-in đơn ${updatedBooking.id}`;
         } else if (updatedBooking.status === BookingStatus.CHECKED_OUT) {
-           DataService.updateRoomStatus(updatedBooking.roomId, RoomStatus.VACANT_DIRTY);
+           _updateRoomStatus(updatedBooking.roomId, RoomStatus.VACANT_DIRTY);
            actionType = 'CHECK_OUT';
            desc = `Check-out đơn ${updatedBooking.id}`;
         } else if (updatedBooking.status === BookingStatus.CANCELLED) {
-           DataService.updateRoomStatus(updatedBooking.roomId, RoomStatus.VACANT_CLEAN);
+           _updateRoomStatus(updatedBooking.roomId, RoomStatus.VACANT_CLEAN);
            actionType = 'CANCEL';
            desc = `Hủy đơn ${updatedBooking.id}`;
         }
       }
       
-      DataService.logAction(actionType, updatedBooking, desc, updatedBooking.createdBy);
+      _logAction(actionType, updatedBooking, desc, updatedBooking.createdBy);
     }
   },
 
-  // Completely remove from active bookings array, save to history
-  deleteBooking: (bookingId: string, staffId: string): boolean => {
-      let bookings = getFromStorage<Booking[]>('bookings', INITIAL_BOOKINGS);
-      const index = bookings.findIndex(b => b.id === bookingId);
-      
-      if (index !== -1) {
-          const bookingToDelete = bookings[index];
-          // Log before deleting
-          const deletedSnapshot = { ...bookingToDelete, status: BookingStatus.DELETED };
-          DataService.logAction('DELETE', deletedSnapshot, `Xóa đơn ${bookingId} khỏi hệ thống`, staffId);
-          
-          // Restore room status if needed
-          if (bookingToDelete.status === BookingStatus.CHECKED_IN) {
-              DataService.updateRoomStatus(bookingToDelete.roomId, RoomStatus.VACANT_CLEAN);
-          }
-
-          // Remove from list
-          bookings.splice(index, 1);
-          saveToStorage('bookings', bookings);
-          return true;
-      }
-      return false;
-  },
+  deleteBooking: _deleteBooking, // Expose internal function
 
   // Users
   getUsers: (): User[] => getFromStorage('users', INITIAL_USERS),
