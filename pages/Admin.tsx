@@ -16,7 +16,8 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   
   const [userData, setUserData] = useState<Partial<User>>({
     role: UserRole.RECEPTIONIST,
-    permissions: []
+    permissions: [],
+    allowedPropertyIds: []
   });
 
   const handleDelete = (id: string) => {
@@ -31,15 +32,27 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       setUserData({
           role: UserRole.RECEPTIONIST,
           permissions: [],
-          password: ''
+          password: '',
+          allowedPropertyIds: []
       });
       setShowModal(true);
   };
 
   const openEditModal = (user: User) => {
       setEditingUserId(user.id);
-      setUserData({ ...user });
+      setUserData({ ...user, allowedPropertyIds: user.allowedPropertyIds || [] });
       setShowModal(true);
+  };
+
+  const toggleProperty = (propId: string) => {
+      setUserData(prev => {
+          const current = prev.allowedPropertyIds || [];
+          if (current.includes(propId)) {
+              return { ...prev, allowedPropertyIds: current.filter(id => id !== propId) };
+          } else {
+              return { ...prev, allowedPropertyIds: [...current, propId] };
+          }
+      });
   };
 
   const handleSaveUser = () => {
@@ -67,7 +80,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
             fullName: userData.fullName,
             role: userData.role as UserRole,
             password: userData.password,
-            propertyId: userData.propertyId,
+            allowedPropertyIds: userData.allowedPropertyIds || [],
             permissions: [] 
         };
         DataService.addUser(userToAdd);
@@ -100,7 +113,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
               <th className="px-6 py-3">Tên đăng nhập</th>
               <th className="px-6 py-3">Mật khẩu</th>
               <th className="px-6 py-3">Vai trò</th>
-              <th className="px-6 py-3">Chi nhánh quản lý</th>
+              <th className="px-6 py-3">Chi nhánh được phép</th>
               <th className="px-6 py-3 text-right">Hành động</th>
             </tr>
           </thead>
@@ -120,9 +133,14 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm">
-                  {user.propertyId 
-                    ? properties.find(p => p.id === user.propertyId)?.name 
-                    : <span className="text-purple-600 font-semibold flex items-center gap-1"><Shield size={12}/> Tất cả chi nhánh</span>
+                  {user.allowedPropertyIds && user.allowedPropertyIds.length > 0 
+                    ? <div className="flex flex-wrap gap-1">
+                        {user.allowedPropertyIds.map(pid => {
+                            const p = properties.find(prop => prop.id === pid);
+                            return p ? <span key={pid} className="bg-gray-100 px-2 py-0.5 rounded text-xs">{p.name}</span> : null;
+                        })}
+                      </div>
+                    : <span className="text-purple-600 font-semibold flex items-center gap-1"><Shield size={12}/> Tất cả</span>
                   }
                 </td>
                 <td className="px-6 py-4 text-right">
@@ -197,18 +215,21 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Chi nhánh quản lý</label>
-                        <select 
-                            className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                            value={userData.propertyId || ''}
-                            onChange={e => setUserData({...userData, propertyId: e.target.value || undefined})}
-                        >
-                            <option value="">-- Tất cả (Dành cho Admin) --</option>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Chi nhánh được phép truy cập</label>
+                        <div className="max-h-40 overflow-y-auto border rounded-lg p-2 space-y-1 bg-gray-50">
                             {properties.map(p => (
-                                <option key={p.id} value={p.id}>{p.name}</option>
+                                <label key={p.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer transition-colors">
+                                    <input 
+                                        type="checkbox" 
+                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                        checked={userData.allowedPropertyIds?.includes(p.id) || false}
+                                        onChange={() => toggleProperty(p.id)}
+                                    />
+                                    <span className="text-sm text-gray-700 font-medium">{p.name}</span>
+                                </label>
                             ))}
-                        </select>
-                        <p className="text-xs text-gray-400 mt-1">Admin có thể để trống để quản lý tất cả.</p>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">Để trống = Truy cập tất cả (Chỉ nên dùng cho Admin).</p>
                     </div>
                     <div className="flex justify-end gap-3 mt-6 pt-2 border-t">
                         <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium">Hủy</button>

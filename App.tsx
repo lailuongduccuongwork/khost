@@ -67,6 +67,7 @@ const App: React.FC = () => {
             if (freshUser) {
                 setCurrentUser(freshUser);
                 if (freshUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
+                if (freshUser.role === UserRole.RECEPTIONIST) setCurrentPage('room-map'); // Redirect receptionist
             } else {
                 setCurrentUser(parsedUser); // Fallback
             }
@@ -89,23 +90,29 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isLoading) {
         const props = DataService.getProperties();
-        if (props.length > 0 && !currentPropertyId) {
+        
+        // Ensure currentPropertyId is valid for the user
+        if (currentUser && props.length > 0) {
+            const allowedIds = currentUser.allowedPropertyIds || [];
+            
+            // If user has restrictions and currentPropertyId is NOT in allowed list (or not set)
+            if (allowedIds.length > 0 && (!currentPropertyId || !allowedIds.includes(currentPropertyId))) {
+                setCurrentPropertyId(allowedIds[0]); // Force set to first allowed
+            } else if (!currentPropertyId) {
+                // No restrictions, just set to first available
+                setCurrentPropertyId(props[0].id);
+            } else {
+                // Valid, just refresh
+                refreshData();
+            }
+        } else if (props.length > 0 && !currentPropertyId) {
             setCurrentPropertyId(props[0].id);
         } else {
             refreshData();
         }
     }
-  }, [currentPropertyId, isLoading]);
+  }, [currentPropertyId, isLoading, currentUser, properties.length]); // Added dependencies
 
-
-  useEffect(() => {
-    if (currentUser) {
-       if (currentUser.propertyId) {
-         setCurrentPropertyId(currentUser.propertyId);
-       }
-       refreshData();
-    }
-  }, [currentUser]);
 
   // --- Automation System (Auto Check-in / Check-out) ---
   useEffect(() => {
@@ -179,6 +186,19 @@ const App: React.FC = () => {
       localStorage.setItem('k_host_user', JSON.stringify(foundUser)); // Save Session
       if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
       else setViewMode('RECEPTION');
+      
+      // Auto-set property based on allowed list
+      if (foundUser.allowedPropertyIds && foundUser.allowedPropertyIds.length > 0) {
+          setCurrentPropertyId(foundUser.allowedPropertyIds[0]);
+      }
+      
+      // Receptionist Landing Page
+      if (foundUser.role === UserRole.RECEPTIONIST) {
+          setCurrentPage('room-map');
+      } else {
+          setCurrentPage('dashboard');
+      }
+
     } else {
       alert('Tên đăng nhập hoặc mật khẩu không đúng!');
     }
@@ -189,6 +209,7 @@ const App: React.FC = () => {
     setLoginUsername('');
     setLoginPassword('');
     setViewMode('RECEPTION');
+    setCurrentPage('dashboard'); // Reset
     localStorage.removeItem('k_host_user'); // Clear Session
   };
 
@@ -290,7 +311,7 @@ const App: React.FC = () => {
 
       <main className="ml-64 pt-16 p-6 min-h-screen">
         <div className="max-w-7xl mx-auto h-full">
-          {currentPage === 'dashboard' && (
+          {currentPage === 'dashboard' && currentUser.role !== UserRole.RECEPTIONIST && (
             <Dashboard bookings={bookings} rooms={rooms} />
           )}
           
@@ -308,7 +329,7 @@ const App: React.FC = () => {
             />
           )}
 
-          {currentPage === 'bookings' && (
+          {currentPage === 'bookings' && currentUser.role !== UserRole.RECEPTIONIST && (
             <Bookings 
               bookings={bookings} 
               rooms={rooms} 

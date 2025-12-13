@@ -32,6 +32,7 @@ export interface Property {
   id: string;
   name: string;
   address: string;
+  sortOrder?: number; // Order for display
 }
 
 export interface RoomType {
@@ -39,6 +40,7 @@ export interface RoomType {
   name: string;
   price: number;
   capacity: number;
+  sortOrder?: number; // Order for display
 }
 
 export interface Room {
@@ -48,6 +50,7 @@ export interface Room {
   propertyId: string;
   status: RoomStatus;
   floor: number;
+  sortOrder?: number; // Order for display
 }
 
 export interface Customer {
@@ -87,7 +90,7 @@ export interface User {
   username: string;
   fullName: string;
   role: UserRole;
-  propertyId?: string; // If null, can access all (Super Admin)
+  allowedPropertyIds?: string[]; // List of property IDs user can access. If empty/undefined for Admin, means ALL.
   password?: string; 
   permissions: string[];
 }

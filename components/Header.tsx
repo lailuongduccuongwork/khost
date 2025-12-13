@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Building2, Bell, UserCircle, RefreshCcw } from 'lucide-react';
 import { User, Property, UserRole } from '../types';
@@ -12,27 +13,39 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, onPropertyChange, viewMode, onToggleMode }) => {
-  const canSwitchProperty = !user.propertyId;
   const canSwitchMode = user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
+
+  // Filter properties allowed for this user
+  // If allowedPropertyIds is undefined or empty, assume all access (typical for Admin)
+  // HOWEVER, for Receptionist/Manager, if defined, we filter.
+  // Exception: Admin usually has empty list = All. 
+  
+  let allowedProperties = properties;
+  if (user.allowedPropertyIds && user.allowedPropertyIds.length > 0) {
+      allowedProperties = properties.filter(p => user.allowedPropertyIds!.includes(p.id));
+  }
+
+  // If user has restricted access but not assigned to current property, we need to show something?
+  // Ideally, the App.tsx ensures currentPropertyId is valid.
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 fixed top-0 right-0 left-64 z-40 flex items-center justify-between px-6 shadow-sm">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2 text-gray-600 bg-gray-100 px-3 py-1.5 rounded-md">
           <Building2 size={18} />
-          {canSwitchProperty ? (
+          {allowedProperties.length > 1 ? (
             <select
               value={currentPropertyId}
               onChange={(e) => onPropertyChange(e.target.value)}
               className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-[200px]"
             >
-              {properties.map(p => (
+              {allowedProperties.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           ) : (
             <span className="text-sm font-medium text-gray-700">
-              {properties.find(p => p.id === currentPropertyId)?.name || 'Unknown Property'}
+              {allowedProperties.find(p => p.id === currentPropertyId)?.name || 'Unknown Property'}
             </span>
           )}
         </div>

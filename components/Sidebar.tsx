@@ -12,20 +12,26 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, role, viewMode }) => {
-  const menuItems = [
+  let menuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble },
     { id: 'bookings', label: 'Đặt phòng', icon: CalendarDays },
   ];
 
-  // Only show reports if NOT receptionist
-  if (role !== UserRole.RECEPTIONIST) {
-    menuItems.push({ id: 'reports', label: 'Báo cáo', icon: BarChart3 });
-  }
+  // Logic: RECEPTIONIST only sees Room Map
+  if (role === UserRole.RECEPTIONIST) {
+      menuItems = [
+          { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble },
+      ];
+  } else {
+      // Logic for Managers/Admins
+      // Only show reports if NOT receptionist (redundant check but safe)
+      menuItems.push({ id: 'reports', label: 'Báo cáo', icon: BarChart3 });
 
-  // Management items
-  if (viewMode === 'MANAGEMENT') {
-     menuItems.push({ id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase });
+      // Management items
+      if (viewMode === 'MANAGEMENT') {
+         menuItems.push({ id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase });
+      }
   }
 
   return (

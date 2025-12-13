@@ -225,6 +225,9 @@ const _deleteBooking = (bookingId: string, staffId: string): boolean => {
     }
 };
 
+// Helper sorting function
+const sortByOrder = (a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0);
+
 // --- Exported Service ---
 export const DataService = {
   init: _initRealtimeConnection,
@@ -232,11 +235,11 @@ export const DataService = {
   logAction: _logAction,
 
   // Properties
-  getProperties: (): Property[] => CACHE.properties,
+  getProperties: (): Property[] => [...CACHE.properties].sort(sortByOrder),
   saveProperties: (properties: Property[]) => { CACHE.properties = properties; _saveNode('properties', properties); },
   
   // Room Types
-  getRoomTypes: (): RoomType[] => CACHE.roomTypes,
+  getRoomTypes: (): RoomType[] => [...CACHE.roomTypes].sort(sortByOrder),
   saveRoomTypes: (types: RoomType[]) => { CACHE.roomTypes = types; _saveNode('roomTypes', types); },
   
   // Tags
@@ -245,8 +248,9 @@ export const DataService = {
 
   // Rooms
   getRooms: (propertyId?: string): Room[] => {
-    if (propertyId) return CACHE.rooms.filter(r => r.propertyId === propertyId);
-    return CACHE.rooms;
+    let list = [...CACHE.rooms];
+    if (propertyId) list = list.filter(r => r.propertyId === propertyId);
+    return list.sort(sortByOrder);
   },
   saveRooms: (rooms: Room[]) => { CACHE.rooms = rooms; _saveNode('rooms', rooms); },
   

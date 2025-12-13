@@ -274,6 +274,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       search: ''
   });
 
+  // Init branch filter based on currentProperty context or default
+  useEffect(() => {
+      if (currentProperty) {
+          setFilters(prev => ({...prev, branchId: currentProperty.id || 'ALL'}));
+      }
+  }, [currentProperty]);
+
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -346,10 +353,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   // --- Filter Logic ---
   const filteredRooms = useMemo(() => {
+    // rooms are already sorted by sortOrder from DataService
     return rooms.filter(r => {
+        // Strict Branch Filter
         if (filters.branchId !== 'ALL' && r.propertyId !== filters.branchId) return false;
+        
+        // Other filters
         if (filters.typeId !== 'ALL' && r.typeId !== filters.typeId) return false;
         if (filters.roomId !== 'ALL' && r.id !== filters.roomId) return false;
+        
         return true;
     });
   }, [rooms, filters]);
@@ -787,7 +799,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                </select>
                <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.branchId} onChange={e => setFilters({...filters, branchId: e.target.value})}>
                    <option value="ALL">Tất cả chi nhánh</option>
-                   {currentProperty ? <option value={currentProperty.id}>{currentProperty.name}</option> : null}
+                   {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                </select>
                <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.typeId} onChange={e => setFilters({...filters, typeId: e.target.value})}>
                    <option value="ALL">Tất cả hạng phòng</option>

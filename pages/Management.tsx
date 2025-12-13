@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { User, Room, RoomType, Property, RoomStatus, Tag } from '../types';
 import { DataService } from '../services/dataService';
-import { Plus, Trash2, Save, X, Tag as TagIcon, Pencil, RotateCcw } from 'lucide-react';
+import { Plus, Trash2, Save, X, Tag as TagIcon, Pencil, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface ManagementProps {
   users: User[];
@@ -34,6 +34,22 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
     setNewTag({ color: '#3b82f6' });
   };
 
+  // --- REORDERING HELPER ---
+  const moveItem = (list: any[], index: number, direction: number, saveFn: (items: any[]) => void) => {
+      if (index + direction < 0 || index + direction >= list.length) return;
+      
+      const newList = [...list];
+      const item = newList[index];
+      newList.splice(index, 1);
+      newList.splice(index + direction, 0, item);
+      
+      // Update sortOrder for all items to match new index
+      const updatedList = newList.map((item, idx) => ({ ...item, sortOrder: idx }));
+      
+      saveFn(updatedList);
+      onRefresh();
+  };
+
   // --- Handlers: ROOMS ---
   const startEditRoom = (room: Room) => {
       setEditingId(room.id);
@@ -58,7 +74,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
               typeId: newRoom.typeId,
               propertyId: newRoom.propertyId,
               floor: Number(newRoom.floor) || 1,
-              status: RoomStatus.VACANT_CLEAN
+              status: RoomStatus.VACANT_CLEAN,
+              sortOrder: rooms.length // Append to end
           };
           updatedRooms.push(r);
       }
@@ -96,7 +113,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
               id: `rt${Date.now()}`,
               name: newType.name,
               price: Number(newType.price) || 0,
-              capacity: Number(newType.capacity) || 1
+              capacity: Number(newType.capacity) || 1,
+              sortOrder: roomTypes.length
           };
           updatedTypes.push(t);
       }
@@ -133,7 +151,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
           const p: Property = {
               id: `p${Date.now()}`,
               name: newProp.name,
-              address: newProp.address || ''
+              address: newProp.address || '',
+              sortOrder: properties.length
           };
           updatedProps.push(p);
       }
@@ -231,11 +250,17 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                   <div className="overflow-auto max-h-[500px]">
                       <table className="w-full text-sm text-left">
                           <thead className="bg-gray-100">
-                              <tr><th>Phòng</th><th>Tầng</th><th>Hạng</th><th>Chi nhánh</th><th className="text-right">Thao tác</th></tr>
+                              <tr><th className="p-3">Thứ tự</th><th>Phòng</th><th>Tầng</th><th>Hạng</th><th>Chi nhánh</th><th className="text-right">Thao tác</th></tr>
                           </thead>
                           <tbody>
-                              {rooms.map(r => (
+                              {rooms.map((r, idx) => (
                                   <tr key={r.id} className={`border-b ${editingId === r.id ? 'bg-orange-50' : ''}`}>
+                                      <td className="p-3">
+                                          <div className="flex flex-col">
+                                              <button onClick={() => moveItem(rooms, idx, -1, DataService.saveRooms)} disabled={idx===0} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowUp size={14}/></button>
+                                              <button onClick={() => moveItem(rooms, idx, 1, DataService.saveRooms)} disabled={idx===rooms.length-1} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowDown size={14}/></button>
+                                          </div>
+                                      </td>
                                       <td className="p-3 font-bold">{r.number}</td>
                                       <td className="p-3">{r.floor}</td>
                                       <td className="p-3">{roomTypes.find(t => t.id === r.typeId)?.name}</td>
@@ -273,11 +298,17 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                </div>
                <table className="w-full text-sm text-left">
                        <thead className="bg-gray-100">
-                           <tr><th>Tên hạng</th><th>Giá chuẩn</th><th>Sức chứa</th><th className="text-right">Thao tác</th></tr>
+                           <tr><th className="p-3">Thứ tự</th><th>Tên hạng</th><th>Giá chuẩn</th><th>Sức chứa</th><th className="text-right">Thao tác</th></tr>
                        </thead>
                        <tbody>
-                           {roomTypes.map(t => (
+                           {roomTypes.map((t, idx) => (
                                <tr key={t.id} className={`border-b ${editingId === t.id ? 'bg-orange-50' : ''}`}>
+                                   <td className="p-3">
+                                          <div className="flex flex-col">
+                                              <button onClick={() => moveItem(roomTypes, idx, -1, DataService.saveRoomTypes)} disabled={idx===0} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowUp size={14}/></button>
+                                              <button onClick={() => moveItem(roomTypes, idx, 1, DataService.saveRoomTypes)} disabled={idx===roomTypes.length-1} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowDown size={14}/></button>
+                                          </div>
+                                   </td>
                                    <td className="p-3 font-bold">{t.name}</td>
                                    <td className="p-3">{t.price.toLocaleString()}</td>
                                    <td className="p-3">{t.capacity}</td>
@@ -312,11 +343,17 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                </div>
                <table className="w-full text-sm text-left">
                        <thead className="bg-gray-100">
-                           <tr><th>Tên chi nhánh</th><th>Địa chỉ</th><th className="text-right">Thao tác</th></tr>
+                           <tr><th className="p-3">Thứ tự</th><th>Tên chi nhánh</th><th>Địa chỉ</th><th className="text-right">Thao tác</th></tr>
                        </thead>
                        <tbody>
-                           {properties.map(p => (
+                           {properties.map((p, idx) => (
                                <tr key={p.id} className={`border-b ${editingId === p.id ? 'bg-orange-50' : ''}`}>
+                                   <td className="p-3">
+                                          <div className="flex flex-col">
+                                              <button onClick={() => moveItem(properties, idx, -1, DataService.saveProperties)} disabled={idx===0} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowUp size={14}/></button>
+                                              <button onClick={() => moveItem(properties, idx, 1, DataService.saveProperties)} disabled={idx===properties.length-1} className="text-gray-400 hover:text-gray-700 disabled:opacity-30"><ArrowDown size={14}/></button>
+                                          </div>
+                                   </td>
                                    <td className="p-3 font-bold">{p.name}</td>
                                    <td className="p-3">{p.address}</td>
                                    <td className="p-3 text-right">
