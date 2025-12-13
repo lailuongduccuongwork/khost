@@ -373,6 +373,15 @@ export const DataService = {
      CACHE.users = [...CACHE.users, user];
      _saveNode('users', CACHE.users);
   },
+  updateUser: (updatedUser: User) => {
+     const newUsers = [...CACHE.users];
+     const idx = newUsers.findIndex(u => u.id === updatedUser.id);
+     if (idx !== -1) {
+         newUsers[idx] = updatedUser;
+         CACHE.users = newUsers;
+         _saveNode('users', newUsers);
+     }
+  },
   deleteUser: (userId: string) => {
     CACHE.users = CACHE.users.filter(u => u.id !== userId);
     _saveNode('users', CACHE.users);

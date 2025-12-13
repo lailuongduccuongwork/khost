@@ -16,6 +16,7 @@ const App: React.FC = () => {
   // --- Auth State ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
 
   // --- App View State ---
   const [currentPropertyId, setCurrentPropertyId] = useState<string>('');
@@ -59,8 +60,17 @@ const App: React.FC = () => {
     if (savedUser) {
         try {
             const parsedUser = JSON.parse(savedUser);
-            setCurrentUser(parsedUser);
-            if (parsedUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
+            // Refresh user data from current source of truth in case password/details changed
+            const users = DataService.getUsers();
+            const freshUser = users.find(u => u.id === parsedUser.id);
+            
+            if (freshUser) {
+                setCurrentUser(freshUser);
+                if (freshUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
+            } else {
+                setCurrentUser(parsedUser); // Fallback
+            }
+
         } catch (e) {
             console.error("Session parse error", e);
             localStorage.removeItem('k_host_user');
@@ -147,20 +157,37 @@ const App: React.FC = () => {
   // --- Handlers ---
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    const foundUser = users.find(u => u.username === loginUsername);
+    
+    // 1. Try Normal Login
+    let foundUser = users.find(u => u.username === loginUsername && u.password === loginPassword);
+    
+    // 2. Recovery Logic: 
+    // If logging in as admin/000 but failed (likely due to old data in DB having '123'), force update DB.
+    if (!foundUser && loginUsername === 'admin' && loginPassword === '000') {
+        const dbAdmin = users.find(u => u.username === 'admin');
+        if (dbAdmin) {
+            // Found admin user but password didn't match '000'
+            console.log("Detecting stale Admin password. Syncing to '000'...");
+            const updatedAdmin = { ...dbAdmin, password: '000' };
+            DataService.updateUser(updatedAdmin); // Update DB
+            foundUser = updatedAdmin; // Allow login
+        }
+    }
+
     if (foundUser) {
       setCurrentUser(foundUser);
       localStorage.setItem('k_host_user', JSON.stringify(foundUser)); // Save Session
       if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
       else setViewMode('RECEPTION');
     } else {
-      alert('User not found (Try "admin", "manager_hn", "le_tan")');
+      alert('Tên đăng nhập hoặc mật khẩu không đúng!');
     }
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
     setLoginUsername('');
+    setLoginPassword('');
     setViewMode('RECEPTION');
     localStorage.removeItem('k_host_user'); // Clear Session
   };
@@ -206,7 +233,7 @@ const App: React.FC = () => {
                 type="text" 
                 value={loginUsername}
                 onChange={(e) => setLoginUsername(e.target.value)}
-                placeholder="admin, manager_hn..."
+                placeholder="Nhập tên đăng nhập"
                 className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
@@ -214,17 +241,15 @@ const App: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
               <input 
                 type="password" 
-                value="123"
-                readOnly
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 bg-gray-50 text-gray-500 cursor-not-allowed"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="Nhập mật khẩu"
+                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
             <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
               Đăng nhập
             </button>
-            <div className="text-xs text-center text-gray-400 mt-4">
-              Tài khoản mẫu: admin, manager_hn, le_tan
-            </div>
           </form>
           
           {/* Cảnh báo nếu chưa config Firebase */}
