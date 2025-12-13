@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
@@ -19,12 +19,14 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
 
   // --- App View State ---
-  const [currentPropertyId, setCurrentPropertyId] = useState<string>('');
+  const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); // Can be 'ALL'
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [viewMode, setViewMode] = useState<'RECEPTION' | 'MANAGEMENT'>('RECEPTION');
   
   // --- Data State ---
-  const [isLoading, setIsLoading] = useState(true); // Loading state for DB connection
+  const [isLoading, setIsLoading] = useState(true);
+  const [dataTick, setDataTick] = useState(0); // Signal to refresh data with latest state
+  
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -33,26 +35,6 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
-  // Function to pull latest data from Service (Cache) into React State
-  const refreshData = () => {
-    setProperties(DataService.getProperties());
-    setUsers(DataService.getUsers());
-    setCustomers(DataService.getCustomers());
-    setRoomTypes(DataService.getRoomTypes());
-    setTags(DataService.getTags());
-    
-    const allRooms = DataService.getRooms(); 
-    const allBookings = DataService.getBookings();
-
-    if (currentPropertyId) {
-       setRooms(allRooms.filter(r => r.propertyId === currentPropertyId));
-       setBookings(allBookings.filter(b => b.propertyId === currentPropertyId));
-    } else {
-       setRooms(allRooms);
-       setBookings(allBookings);
-    }
-  };
-
   // --- INITIALIZATION ---
   useEffect(() => {
     // 1. Restore Login Session
@@ -60,58 +42,96 @@ const App: React.FC = () => {
     if (savedUser) {
         try {
             const parsedUser = JSON.parse(savedUser);
-            // Refresh user data from current source of truth in case password/details changed
-            const users = DataService.getUsers();
-            const freshUser = users.find(u => u.id === parsedUser.id);
-            
-            if (freshUser) {
-                setCurrentUser(freshUser);
-                if (freshUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
-                if (freshUser.role === UserRole.RECEPTIONIST) setCurrentPage('room-map'); // Redirect receptionist
-            } else {
-                setCurrentUser(parsedUser); // Fallback
-            }
-
+            // We'll verify against DB users later, but set initial state now
+            setCurrentUser(parsedUser);
+            if (parsedUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
+            if (parsedUser.role === UserRole.RECEPTIONIST) setCurrentPage('room-map');
         } catch (e) {
-            console.error("Session parse error", e);
             localStorage.removeItem('k_host_user');
         }
     }
 
     // 2. Connect Firebase
+    // IMPORTANT: The callback here must NOT use state variables directly 
+    // because it captures the closure at mount time (stale state).
+    // Instead, we toggle 'dataTick' to trigger the main useEffect to run with fresh state.
     DataService.init(() => {
-        // Callback này chạy mỗi khi Firebase có dữ liệu mới
-        refreshData();
+        setDataTick(prev => prev + 1);
         setIsLoading(false);
     });
   }, []);
 
-  // Update rooms/bookings when property filter changes
+  // --- MAIN DATA REFRESH LOGIC ---
+  // This useEffect runs whenever dataTick changes (DB update) OR currentPropertyId/User changes.
   useEffect(() => {
-    if (!isLoading) {
-        const props = DataService.getProperties();
-        
-        // Ensure currentPropertyId is valid for the user
-        if (currentUser && props.length > 0) {
-            const allowedIds = currentUser.allowedPropertyIds || [];
-            
-            // If user has restrictions and currentPropertyId is NOT in allowed list (or not set)
-            if (allowedIds.length > 0 && (!currentPropertyId || !allowedIds.includes(currentPropertyId))) {
-                setCurrentPropertyId(allowedIds[0]); // Force set to first allowed
-            } else if (!currentPropertyId) {
-                // No restrictions, just set to first available
-                setCurrentPropertyId(props[0].id);
-            } else {
-                // Valid, just refresh
-                refreshData();
-            }
-        } else if (props.length > 0 && !currentPropertyId) {
-            setCurrentPropertyId(props[0].id);
-        } else {
-            refreshData();
+    if (isLoading) return;
+
+    // 1. Sync Static Data
+    const props = DataService.getProperties();
+    const allUsers = DataService.getUsers();
+    
+    setProperties(props);
+    setUsers(allUsers);
+    setCustomers(DataService.getCustomers());
+    setRoomTypes(DataService.getRoomTypes());
+    setTags(DataService.getTags());
+
+    // 2. Validate/Refresh Current User from DB Source
+    if (currentUser) {
+        const freshUser = allUsers.find(u => u.id === currentUser.id);
+        if (freshUser && JSON.stringify(freshUser) !== JSON.stringify(currentUser)) {
+             // Update session silently if permissions/roles changed in DB
+             setCurrentUser(freshUser);
+             localStorage.setItem('k_host_user', JSON.stringify(freshUser));
         }
     }
-  }, [currentPropertyId, isLoading, currentUser, properties.length]); // Added dependencies
+
+    // 3. Determine Effective Property ID
+    let activePropId = currentPropertyId;
+    
+    // Check Permissions
+    const allowedIds = currentUser?.allowedPropertyIds || [];
+    const hasRestrictions = allowedIds.length > 0;
+
+    // Validate activePropId
+    const isValid = activePropId && (activePropId === 'ALL' || props.some(p => p.id === activePropId));
+    const isAllowed = !hasRestrictions || (activePropId === 'ALL' ? allowedIds.length > 1 : allowedIds.includes(activePropId));
+
+    // If invalid or not allowed, reset to sensible default
+    if (!isValid || !isAllowed) {
+        if (!hasRestrictions) {
+            activePropId = 'ALL';
+        } else {
+            // If restricted, default to ALL (if multiple allowed) or the single allowed ID
+            activePropId = allowedIds.length > 1 ? 'ALL' : allowedIds[0];
+        }
+        // Only update state if different to prevent loops
+        if (activePropId !== currentPropertyId) {
+            setCurrentPropertyId(activePropId);
+            return; // The state change will trigger this effect again
+        }
+    }
+
+    // 4. Get & Filter Dynamic Data (Rooms, Bookings)
+    let allRooms = DataService.getRooms(); 
+    let allBookings = DataService.getBookings();
+
+    // 4a. Security Filter (Permission based)
+    if (hasRestrictions) {
+        allRooms = allRooms.filter(r => allowedIds.includes(r.propertyId));
+        allBookings = allBookings.filter(b => allowedIds.includes(b.propertyId));
+    }
+
+    // 4b. View Filter (Selection based)
+    if (activePropId && activePropId !== 'ALL') {
+       setRooms(allRooms.filter(r => r.propertyId === activePropId));
+       setBookings(allBookings.filter(b => b.propertyId === activePropId));
+    } else {
+       setRooms(allRooms);
+       setBookings(allBookings);
+    }
+
+  }, [dataTick, currentPropertyId, isLoading, currentUser?.id /* deep dependency not needed */]);
 
 
   // --- Automation System (Auto Check-in / Check-out) ---
@@ -120,7 +140,7 @@ const App: React.FC = () => {
 
       const runAutomation = () => {
           const now = new Date();
-          const allBookings = DataService.getBookings(); // Read directly from service to ensure latest
+          const allBookings = DataService.getBookings(); // Read directly from service
           let hasChanges = false;
           
           const updatedBookings = allBookings.map(b => {
@@ -131,15 +151,14 @@ const App: React.FC = () => {
 
               if (b.status === BookingStatus.CONFIRMED && now >= checkIn) {
                   updated.status = BookingStatus.CHECKED_IN;
-                  DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED); // This triggers sync
+                  DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED);
                   modified = true;
                   hasChanges = true;
-                  // Log is handled inside dataService manually or we call log here
               }
 
               if (b.status === BookingStatus.CHECKED_IN && now >= checkOut) {
                   updated.status = BookingStatus.CHECKED_OUT;
-                  DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY); // This triggers sync
+                  DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY);
                   modified = true;
                   hasChanges = true;
               }
@@ -148,8 +167,7 @@ const App: React.FC = () => {
           });
 
           if (hasChanges) {
-              // We call saveBookings which pushes to Firebase
-              // The Firebase listener will then fire, updating our local state via refreshData()
+              // This pushes to DB -> triggers init callback -> toggles dataTick -> refreshes UI
               DataService.saveBookings(updatedBookings);
           }
       };
@@ -158,41 +176,34 @@ const App: React.FC = () => {
       const intervalId = setInterval(runAutomation, 30000);
 
       return () => clearInterval(intervalId);
-  }, [currentUser, currentPropertyId, isLoading]);
+  }, [currentUser, isLoading]);
 
 
   // --- Handlers ---
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // 1. Try Normal Login
     let foundUser = users.find(u => u.username === loginUsername && u.password === loginPassword);
     
-    // 2. Recovery Logic: 
-    // If logging in as admin/000 but failed (likely due to old data in DB having '123'), force update DB.
+    // Recovery Logic
     if (!foundUser && loginUsername === 'admin' && loginPassword === '000') {
         const dbAdmin = users.find(u => u.username === 'admin');
         if (dbAdmin) {
-            // Found admin user but password didn't match '000'
-            console.log("Detecting stale Admin password. Syncing to '000'...");
             const updatedAdmin = { ...dbAdmin, password: '000' };
-            DataService.updateUser(updatedAdmin); // Update DB
-            foundUser = updatedAdmin; // Allow login
+            DataService.updateUser(updatedAdmin);
+            foundUser = updatedAdmin;
         }
     }
 
     if (foundUser) {
       setCurrentUser(foundUser);
-      localStorage.setItem('k_host_user', JSON.stringify(foundUser)); // Save Session
+      localStorage.setItem('k_host_user', JSON.stringify(foundUser));
       if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
       else setViewMode('RECEPTION');
       
-      // Auto-set property based on allowed list
-      if (foundUser.allowedPropertyIds && foundUser.allowedPropertyIds.length > 0) {
-          setCurrentPropertyId(foundUser.allowedPropertyIds[0]);
-      }
+      // Auto-set property logic handled by main useEffect
+      setCurrentPropertyId(''); // Reset to trigger validation logic
       
-      // Receptionist Landing Page
       if (foundUser.role === UserRole.RECEPTIONIST) {
           setCurrentPage('room-map');
       } else {
@@ -209,8 +220,8 @@ const App: React.FC = () => {
     setLoginUsername('');
     setLoginPassword('');
     setViewMode('RECEPTION');
-    setCurrentPage('dashboard'); // Reset
-    localStorage.removeItem('k_host_user'); // Clear Session
+    setCurrentPage('dashboard');
+    localStorage.removeItem('k_host_user');
   };
 
   const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
@@ -222,15 +233,14 @@ const App: React.FC = () => {
       setCurrentPage('dashboard');
   };
 
+  const manualRefresh = () => setDataTick(t => t + 1);
+
   // --- Loading Screen ---
   if (isLoading) {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-4">
               <Loader2 className="animate-spin text-blue-600" size={48} />
               <p className="font-medium">Đang kết nối cơ sở dữ liệu đám mây...</p>
-              <p className="text-xs text-gray-400 max-w-md text-center">
-                Nếu quá lâu, hãy kiểm tra file <code>services/dataService.ts</code> và đảm bảo bạn đã điền Firebase Config Key.
-              </p>
           </div>
       )
   }
@@ -273,12 +283,11 @@ const App: React.FC = () => {
             </button>
           </form>
           
-          {/* Cảnh báo nếu chưa config Firebase */}
           {JSON.stringify(properties).length < 5 && (
              <div className="mt-6 p-3 bg-orange-50 border border-orange-200 rounded-lg flex gap-3 items-start">
                  <CloudOff className="text-orange-500 mt-0.5 flex-shrink-0" size={16} />
                  <div className="text-xs text-orange-700">
-                     <strong>Chế độ Offline:</strong> Bạn chưa điền API Key trong file <code>dataService.ts</code>. Dữ liệu sẽ không được đồng bộ giữa các thiết bị.
+                     <strong>Chế độ Offline:</strong> Database chưa sẵn sàng.
                  </div>
              </div>
           )}
@@ -288,7 +297,9 @@ const App: React.FC = () => {
   }
 
   // --- Main Layout ---
-  const currentPropertyObj = properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''};
+  const currentPropertyObj = currentPropertyId === 'ALL' 
+        ? { id: 'ALL', name: 'Toàn bộ chi nhánh', address: '' }
+        : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''});
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -323,7 +334,7 @@ const App: React.FC = () => {
               customers={customers}
               tags={tags}
               onUpdateStatus={handleUpdateRoomStatus}
-              onRefresh={refreshData} // Now redundant but kept for interface compat
+              onRefresh={manualRefresh}
               currentProperty={currentPropertyObj}
               currentUser={currentUser.id}
             />
@@ -334,7 +345,7 @@ const App: React.FC = () => {
               bookings={bookings} 
               rooms={rooms} 
               customers={customers} 
-              onRefresh={refreshData} 
+              onRefresh={manualRefresh}
               currentUserId={currentUser.id}
             />
           )}
@@ -358,10 +369,10 @@ const App: React.FC = () => {
                     roomTypes={roomTypes} 
                     properties={properties} 
                     tags={tags}
-                    onRefresh={refreshData}
+                    onRefresh={manualRefresh}
                  />
                  <div className="mt-8">
-                     <Admin users={users} properties={properties} onRefresh={refreshData} />
+                     <Admin users={users} properties={properties} onRefresh={manualRefresh} />
                  </div>
              </div>
           )}

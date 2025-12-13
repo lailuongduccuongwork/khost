@@ -173,7 +173,34 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       const user = users.find(u => u.id === b.createdBy);
       const type = roomTypes.find(t => t.id === room?.typeId);
       const property = properties.find(p => p.id === b.propertyId);
-      const debt = b.totalPrice - b.paidAmount;
+      
+      // --- LOGIC TÍNH TIỀN KHÁCH ĐOÀN ---
+      let finalTotal = b.totalPrice;
+      let finalPaid = b.paidAmount;
+
+      if (b.groupId) {
+          // 1. Tìm tất cả các phòng trong đoàn (Dựa trên bookings gốc để đảm bảo tính đúng tổng ngay cả khi bộ lọc ngày bị cắt)
+          const groupMembers = bookings.filter(x => x.groupId === b.groupId && x.status !== BookingStatus.DELETED);
+          
+          // 2. Sắp xếp để tìm "Leader" cố định (Sắp xếp theo ID string để nhất quán)
+          groupMembers.sort((x, y) => x.id.localeCompare(y.id));
+
+          if (groupMembers.length > 0) {
+              const leader = groupMembers[0];
+              
+              if (b.id === leader.id) {
+                  // Đây là phòng đầu tiên: Cộng dồn toàn bộ tiền của đoàn
+                  finalTotal = groupMembers.reduce((sum, item) => sum + item.totalPrice, 0);
+                  finalPaid = groupMembers.reduce((sum, item) => sum + item.paidAmount, 0);
+              } else {
+                  // Các phòng còn lại: Hiển thị 0
+                  finalTotal = 0;
+                  finalPaid = 0;
+              }
+          }
+      }
+
+      const debt = finalTotal - finalPaid;
 
       // Map tags
       const bookingTags = (b.tags || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
@@ -189,8 +216,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           "Ngày tạo": formatDateTime(b.createdAt),
           "Thời gian nhận phòng": formatDateTime(b.checkInDate),
           "Thời gian trả phòng": formatDateTime(b.checkOutDate),
-          "Tổng bill": b.totalPrice,
-          "Đã trả": b.paidAmount,
+          "Tổng bill": finalTotal,
+          "Đã trả": finalPaid,
           "Còn nợ": debt,
           "Nhân viên tạo đơn": user?.fullName || b.createdBy,
           // Raw object for table color logic and sorting
@@ -285,13 +312,13 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                           <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian trả phòng"]}</td>
                           
                           <td className="p-4 text-right font-bold text-green-600 bg-green-50/30">
-                              {row["Tổng bill"].toLocaleString()}
+                              {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
                           </td>
                           <td className="p-4 text-right font-semibold text-blue-600 bg-blue-50/30">
-                              {row["Đã trả"].toLocaleString()}
+                              {row["Đã trả"] > 0 ? row["Đã trả"].toLocaleString() : '-'}
                           </td>
                           <td className={`p-4 text-right font-bold bg-red-50/30 ${row._debtRaw > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                              {row._debtRaw > 0 ? row._debtRaw.toLocaleString() : '0'}
+                              {row._debtRaw > 0 ? row._debtRaw.toLocaleString() : '-'}
                           </td>
                           
                           <td className="p-4 text-gray-600 text-xs font-medium">{row["Nhân viên tạo đơn"]}</td>

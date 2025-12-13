@@ -267,19 +267,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const properties = DataService.getProperties();
 
   const [filters, setFilters] = useState({
-      branchId: 'ALL',
+      // Removed branchId filter from local state as it is controlled globally
       typeId: 'ALL',
       roomId: 'ALL',
       status: 'ALL', 
       search: ''
   });
-
-  // Init branch filter based on currentProperty context or default
-  useEffect(() => {
-      if (currentProperty) {
-          setFilters(prev => ({...prev, branchId: currentProperty.id || 'ALL'}));
-      }
-  }, [currentProperty]);
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -353,15 +346,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   // --- Filter Logic ---
   const filteredRooms = useMemo(() => {
-    // rooms are already sorted by sortOrder from DataService
+    // rooms are ALREADY filtered by App.tsx based on Global Property Selector (Single or ALL)
     return rooms.filter(r => {
-        // Strict Branch Filter
-        if (filters.branchId !== 'ALL' && r.propertyId !== filters.branchId) return false;
-        
-        // Other filters
         if (filters.typeId !== 'ALL' && r.typeId !== filters.typeId) return false;
         if (filters.roomId !== 'ALL' && r.id !== filters.roomId) return false;
-        
         return true;
     });
   }, [rooms, filters]);
@@ -611,12 +599,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
          const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; // Simple strategy: Assign payment to leader
          // In a real app, you might want to sum paidAmount from rows, but here we edit total in meta.
          
+         const selectedRoom = rooms.find(r => r.id === row.roomId);
+
          if (row.bookingId) {
              // UPDATE Existing
              const updatedB: Booking = {
                  id: row.bookingId,
                  groupId: groupId, // Ensure group ID is set/preserved
-                 propertyId: currentProperty.id,
+                 propertyId: selectedRoom?.propertyId || currentProperty.id, // Ensure correct property ID from room
                  roomId: row.roomId,
                  customerId: 'c_guest',
                  guestName: bookingMeta.guestName || 'Khách lẻ',
@@ -631,19 +621,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  notes: bookingMeta.notes,
                  tags: bookingMeta.tags
              };
-             // Retrieve original createdAt if possible, but for now we might overwrite date. 
-             // Ideally DataService.getBookings() would give us the obj to copy.
-             // Simplification: We accept updating timestamp or DataService handles it.
-             // Let's rely on DataService.updateBooking overwriting.
-             // Actually, to preserve createdAt, we should ideally fetch the old object.
-             // For this demo, let's just push the update.
              DataService.updateBooking(updatedB);
          } else {
              // CREATE New
              const newB: Booking = {
                  id: DataService.generateBookingId(),
                  groupId: groupId,
-                 propertyId: currentProperty.id,
+                 propertyId: selectedRoom?.propertyId || currentProperty.id,
                  roomId: row.roomId,
                  customerId: 'c_guest',
                  guestName: bookingMeta.guestName || 'Khách lẻ',
@@ -797,10 +781,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                    <option value="ARRIVING">Sắp đến</option>
                    <option value="DEPARTING">Sắp đi</option>
                </select>
-               <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.branchId} onChange={e => setFilters({...filters, branchId: e.target.value})}>
-                   <option value="ALL">Tất cả chi nhánh</option>
-                   {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-               </select>
+               {/* REMOVED BRANCH SELECTOR HERE - NOW GLOBAL */}
                <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.typeId} onChange={e => setFilters({...filters, typeId: e.target.value})}>
                    <option value="ALL">Tất cả hạng phòng</option>
                    {roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -917,8 +898,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           )}
       </div>
 
-       {/* CREATE/EDIT MODAL */}
-       {showModal && (
+      {/* CREATE/EDIT MODAL */}
+      {showModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-[1200px] overflow-hidden animate-fade-in border border-white/20">
                   <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white">

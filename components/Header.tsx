@@ -16,17 +16,19 @@ const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, on
   const canSwitchMode = user.role === UserRole.ADMIN || user.role === UserRole.MANAGER;
 
   // Filter properties allowed for this user
-  // If allowedPropertyIds is undefined or empty, assume all access (typical for Admin)
-  // HOWEVER, for Receptionist/Manager, if defined, we filter.
-  // Exception: Admin usually has empty list = All. 
-  
   let allowedProperties = properties;
   if (user.allowedPropertyIds && user.allowedPropertyIds.length > 0) {
       allowedProperties = properties.filter(p => user.allowedPropertyIds!.includes(p.id));
   }
 
-  // If user has restricted access but not assigned to current property, we need to show something?
-  // Ideally, the App.tsx ensures currentPropertyId is valid.
+  // Determine label for display
+  let displayLabel = 'Đang tải...';
+  if (currentPropertyId === 'ALL') {
+      displayLabel = 'Toàn bộ chi nhánh';
+  } else {
+      const prop = allowedProperties.find(p => p.id === currentPropertyId);
+      displayLabel = prop ? prop.name : 'Unknown Property';
+  }
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 fixed top-0 right-0 left-64 z-40 flex items-center justify-between px-6 shadow-sm">
@@ -37,15 +39,17 @@ const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, on
             <select
               value={currentPropertyId}
               onChange={(e) => onPropertyChange(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-[200px]"
+              className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-[200px] cursor-pointer"
             >
+              <option value="ALL" className="font-bold">Toàn bộ chi nhánh ({allowedProperties.length})</option>
+              <hr />
               {allowedProperties.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           ) : (
             <span className="text-sm font-medium text-gray-700">
-              {allowedProperties.find(p => p.id === currentPropertyId)?.name || 'Unknown Property'}
+              {displayLabel}
             </span>
           )}
         </div>
