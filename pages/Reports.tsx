@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, AlertTriangle } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -203,13 +203,32 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return dateToCheck >= start && dateToCheck <= end;
   };
 
+  // --- Data Integrity Check ---
+  // Ensure we only show bookings where Room, Property and RoomType still exist
+  const isOrphanBooking = (b: Booking) => {
+      const room = rooms.find(r => r.id === b.roomId);
+      const property = properties.find(p => p.id === b.propertyId);
+      
+      // 1. If Property Deleted -> Hide
+      if (!property) return true;
+      
+      // 2. If Room Deleted -> Hide
+      if (!room) return true;
+
+      // 3. If RoomType Deleted (Room exists but points to invalid type) -> Hide or Allow?
+      // Strict mode: Hide to prevent errors.
+      const type = roomTypes.find(t => t.id === room.typeId);
+      if (!type) return true;
+
+      return false;
+  };
+
   // --- 1. Revenue Report (Báo cáo doanh thu phòng) ---
   // Criteria: Booking has ended (CHECKED_OUT) AND checkOutDate is within range
   const revenueData = useMemo(() => {
       return bookings
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
-        // NOTE: No need to check for DELETED here because active bookings list 
-        // is guaranteed to be clean of soft-deleted items by DataService.
+        .filter(b => !isOrphanBooking(b)) // Remove phantom data
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData)
         .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
@@ -221,7 +240,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
       return bookings
-        // Same here: Input 'bookings' array contains ONLY visible/active bookings.
+        .filter(b => !isOrphanBooking(b)) // Remove phantom data
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData)
         .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
@@ -294,7 +313,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
             <div className="flex items-center gap-2 mt-1">
                 <p className="text-gray-500 text-sm">Hệ thống báo cáo chi tiết hoạt động kinh doanh.</p>
                 <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded border border-orange-100 flex items-center gap-1">
-                    <Info size={10} /> Đồng bộ realtime với sơ đồ phòng
+                    <Info size={10} /> Dữ liệu đã được đồng bộ hóa sạch
                 </span>
             </div>
         </div>
