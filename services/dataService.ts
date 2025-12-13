@@ -133,6 +133,7 @@ const _syncToCloud = () => {
 // --- Internal Helper Functions ---
 
 const _getHistory = (): HistoryLog[] => {
+    // Chỉ hiển thị log trong 3 tháng gần nhất cho UI
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
     return CACHE.history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
@@ -152,11 +153,15 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
     const history = [...CACHE.history]; // copy
     history.unshift(newLog);
     
-    // Clean old
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    CACHE.history = history.filter(h => new Date(h.timestamp) >= threeMonthsAgo);
+    // OPTIMIZATION FOR FREE TIER:
+    // Giới hạn cứng số lượng log để tránh file database bị phình to quá mức,
+    // gây tốn băng thông tải xuống (360MB/ngày) mỗi khi F5 trang.
+    // Giữ lại tối đa 300 log gần nhất.
+    if (history.length > 300) {
+        history.length = 300; // Cắt bỏ các log cũ hơn
+    }
     
+    CACHE.history = history;
     _syncToCloud();
 };
 
