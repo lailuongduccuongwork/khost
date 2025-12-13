@@ -56,11 +56,9 @@ const _initRealtimeConnection = (onDataChange: () => void) => {
              // 2. Dynamic Data (Rooms, Bookings, Customers)
              onValue(ref(db, 'rooms'), (snap) => { CACHE.rooms = snap.val() || []; onDataChange(); });
              
-             // HARD DELETE ENFORCEMENT: Filter out any DELETED items immediately upon receipt
+             // Load Raw Bookings - Filtering happens in getter
              onValue(ref(db, 'bookings'), (snap) => { 
-                 const rawBookings = snap.val() || [];
-                 // Ensure we never hold DELETED bookings in memory
-                 CACHE.bookings = rawBookings.filter((b: Booking) => b.status !== BookingStatus.DELETED);
+                 CACHE.bookings = snap.val() || [];
                  onDataChange(); 
              });
 
@@ -111,11 +109,7 @@ const _loadFromMockOrStorage = () => {
     CACHE.properties = load('properties', INITIAL_PROPERTIES);
     CACHE.rooms = load('rooms', INITIAL_ROOMS);
     CACHE.roomTypes = load('roomTypes', INITIAL_ROOM_TYPES);
-    
-    // HARD DELETE ENFORCEMENT: Filter storage data
-    const rawBookings = load('bookings', INITIAL_BOOKINGS);
-    CACHE.bookings = rawBookings.filter((b: Booking) => b.status !== BookingStatus.DELETED);
-
+    CACHE.bookings = load('bookings', INITIAL_BOOKINGS);
     CACHE.customers = load('customers', INITIAL_CUSTOMERS);
     CACHE.users = load('users', INITIAL_USERS);
     CACHE.history = load('history', []);
@@ -125,8 +119,7 @@ const _resetToMockData = () => {
     CACHE.properties = INITIAL_PROPERTIES;
     CACHE.rooms = INITIAL_ROOMS;
     CACHE.roomTypes = INITIAL_ROOM_TYPES;
-    // Ensure mock data doesn't contain deleted items (just in case)
-    CACHE.bookings = INITIAL_BOOKINGS.filter(b => b.status !== BookingStatus.DELETED);
+    CACHE.bookings = INITIAL_BOOKINGS;
     CACHE.customers = INITIAL_CUSTOMERS;
     CACHE.users = INITIAL_USERS;
     
@@ -172,13 +165,6 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
     
     // Cloud Sync
     if (isFirebaseReady && db) {
-        // Use a timestamp-based key to append without downloading/uploading whole array
-        // This is much better for bandwidth than set(ref(db, 'history'), fullArray)
-        // However, given the current Mock Data array structure, we'll continue using array set for simplicity
-        // BUT we limit the local array size before save to prevent massive upload
-        
-        // Strategy: Get current history from cache, ensure max 300, save to 'history'
-        // Ideally we should use push(), but to keep compatible with array-based reading in _initRealtimeConnection:
         if (CACHE.history.length > 300) CACHE.history.length = 300;
         _saveNode('history', CACHE.history);
     } else {
@@ -195,6 +181,31 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
       _saveNode('rooms', CACHE.rooms);
     }
 };
+
+// --- Strict Data Access ---
+const _getBookingsStrict = (propertyId?: string): Booking[] => {
+    // Optimization: Create sets for O(1) lookup speed
+    const validRoomIds = new Set(CACHE.rooms.map(r => r.id));
+    const validPropertyIds = new Set(CACHE.properties.map(p => p.id));
+
+    let cleanList = CACHE.bookings.filter(b => {
+        // 1. Basic Status Check
+        if (b.status === BookingStatus.DELETED) return false;
+
+        // 2. Referential Integrity Check (Orphan Logic)
+        // If the room doesn't exist, the booking is phantom -> Hide it
+        const roomExists = validRoomIds.has(b.roomId);
+        // If the property doesn't exist -> Hide it
+        const propertyExists = validPropertyIds.has(b.propertyId);
+
+        return roomExists && propertyExists;
+    });
+
+    if (propertyId) {
+        cleanList = cleanList.filter(b => b.propertyId === propertyId);
+    }
+    return cleanList;
+}
 
 const _deleteBooking = (bookingId: string, staffId: string): boolean => {
     try {
@@ -261,11 +272,8 @@ export const DataService = {
     _saveNode('customers', newCustomers);
   },
 
-  // Bookings
-  getBookings: (propertyId?: string): Booking[] => {
-    if (propertyId) return CACHE.bookings.filter(b => b.propertyId === propertyId);
-    return CACHE.bookings;
-  },
+  // Bookings - USING STRICT MODE
+  getBookings: _getBookingsStrict,
   
   generateBookingId: (): string => {
       const now = new Date();
@@ -277,14 +285,14 @@ export const DataService = {
   },
 
   validateRoomAvailability: (roomId: string, startIso: string, endIso: string, excludeBookingId?: string): { valid: boolean; reason?: string } => {
-      const bookings = CACHE.bookings;
+      // Use strict getter to ensure we check against valid bookings only
+      const bookings = _getBookingsStrict(); 
       const newStart = new Date(startIso).getTime();
       const newEnd = new Date(endIso).getTime();
       const bufferMs = 30 * 60 * 1000; 
 
       const conflict = bookings.find(b => {
           if (b.id === excludeBookingId) return false;
-          // Note: No need to check for DELETED here as CACHE.bookings is guaranteed clean
           if (b.status === BookingStatus.CANCELLED) return false;
           if (b.roomId !== roomId) return false;
 
@@ -314,7 +322,7 @@ export const DataService = {
       const rIdx = CACHE.rooms.findIndex(r => r.id === booking.roomId);
       if(rIdx !== -1) {
           CACHE.rooms[rIdx].status = RoomStatus.OCCUPIED;
-          _saveNode('rooms', CACHE.rooms); // Explicitly save rooms if changed
+          _saveNode('rooms', CACHE.rooms);
       }
     }
 

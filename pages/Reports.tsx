@@ -203,32 +203,12 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return dateToCheck >= start && dateToCheck <= end;
   };
 
-  // --- Data Integrity Check ---
-  // Ensure we only show bookings where Room, Property and RoomType still exist
-  const isOrphanBooking = (b: Booking) => {
-      const room = rooms.find(r => r.id === b.roomId);
-      const property = properties.find(p => p.id === b.propertyId);
-      
-      // 1. If Property Deleted -> Hide
-      if (!property) return true;
-      
-      // 2. If Room Deleted -> Hide
-      if (!room) return true;
-
-      // 3. If RoomType Deleted (Room exists but points to invalid type) -> Hide or Allow?
-      // Strict mode: Hide to prevent errors.
-      const type = roomTypes.find(t => t.id === room.typeId);
-      if (!type) return true;
-
-      return false;
-  };
-
   // --- 1. Revenue Report (Báo cáo doanh thu phòng) ---
   // Criteria: Booking has ended (CHECKED_OUT) AND checkOutDate is within range
   const revenueData = useMemo(() => {
       return bookings
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
-        .filter(b => !isOrphanBooking(b)) // Remove phantom data
+        // No need for explicit orphan check here, 'bookings' prop is already clean via DataService
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData)
         .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
@@ -240,7 +220,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
       return bookings
-        .filter(b => !isOrphanBooking(b)) // Remove phantom data
+        // No need for explicit orphan check here, 'bookings' prop is already clean via DataService
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData)
         .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
