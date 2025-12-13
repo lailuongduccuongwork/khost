@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -208,7 +208,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   const revenueData = useMemo(() => {
       return bookings
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
-        .filter(b => b.status !== BookingStatus.DELETED) // Explicitly filter out deleted
+        // NOTE: No need to check for DELETED here because active bookings list 
+        // is guaranteed to be clean of soft-deleted items by DataService.
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData)
         .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
@@ -217,10 +218,10 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Tổng bill"], 0);
 
   // --- 2. Booking Report (Báo cáo đặt phòng phát sinh) ---
-  // Criteria: All non-deleted bookings AND createdAt is within range
+  // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
       return bookings
-        .filter(b => b.status !== BookingStatus.DELETED) // Explicitly filter out deleted
+        // Same here: Input 'bookings' array contains ONLY visible/active bookings.
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData)
         .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
@@ -287,10 +288,15 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
 
   return (
     <div className="space-y-6 pb-10 font-sans animate-fade-in">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
             <h2 className="text-2xl font-bold text-gray-800">Báo cáo & Thống kê</h2>
-            <p className="text-gray-500 mt-1">Hệ thống báo cáo chi tiết hoạt động kinh doanh</p>
+            <div className="flex items-center gap-2 mt-1">
+                <p className="text-gray-500 text-sm">Hệ thống báo cáo chi tiết hoạt động kinh doanh.</p>
+                <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded border border-orange-100 flex items-center gap-1">
+                    <Info size={10} /> Đồng bộ realtime với sơ đồ phòng
+                </span>
+            </div>
         </div>
       </div>
 

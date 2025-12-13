@@ -52,7 +52,20 @@ const App: React.FC = () => {
 
   // --- INITIALIZATION ---
   useEffect(() => {
-    // Kết nối tới Firebase và lắng nghe thay đổi
+    // 1. Restore Login Session
+    const savedUser = localStorage.getItem('k_host_user');
+    if (savedUser) {
+        try {
+            const parsedUser = JSON.parse(savedUser);
+            setCurrentUser(parsedUser);
+            if (parsedUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
+        } catch (e) {
+            console.error("Session parse error", e);
+            localStorage.removeItem('k_host_user');
+        }
+    }
+
+    // 2. Connect Firebase
     DataService.init(() => {
         // Callback này chạy mỗi khi Firebase có dữ liệu mới
         refreshData();
@@ -135,6 +148,7 @@ const App: React.FC = () => {
     const foundUser = users.find(u => u.username === loginUsername);
     if (foundUser) {
       setCurrentUser(foundUser);
+      localStorage.setItem('k_host_user', JSON.stringify(foundUser)); // Save Session
       if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
       else setViewMode('RECEPTION');
     } else {
@@ -146,12 +160,11 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setLoginUsername('');
     setViewMode('RECEPTION');
+    localStorage.removeItem('k_host_user'); // Clear Session
   };
 
   const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
     DataService.updateRoomStatus(roomId, status);
-    // No need to call refreshData() manually here, 
-    // DataService pushes to Firebase -> Listener Fires -> refreshData() called automatically
   };
 
   const toggleViewMode = () => {

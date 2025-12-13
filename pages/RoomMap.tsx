@@ -511,8 +511,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
      // --- Validation Logic ---
      for (const row of validRows) {
-         // Validate Collision & 30min Buffer
          const room = rooms.find(r => r.id === row.roomId);
+         
+         // 1. Check if Check-In is after Check-Out
+         const startTime = new Date(row.checkIn).getTime();
+         const endTime = new Date(row.checkOut).getTime();
+         
+         if (startTime >= endTime) {
+             alert(`Lỗi thời gian (Phòng ${room?.number || row.roomId}):\nThời gian Trả phòng phải lớn hơn thời gian Nhận phòng.\nVui lòng kiểm tra lại.`);
+             return;
+         }
+
+         // 2. Validate Collision & 30min Buffer
          const availability = DataService.validateRoomAvailability(row.roomId, row.checkIn, row.checkOut, bookingMeta.id);
          
          if (!availability.valid) {
