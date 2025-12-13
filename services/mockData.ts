@@ -1,9 +1,14 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS } from '../types';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag } from '../types';
 
 export const INITIAL_PROPERTIES: Property[] = [
   { id: 'p1', name: 'K-Host Hà Nội', address: '123 Kim Mã, Ba Đình, Hà Nội' },
   { id: 'p2', name: 'K-Host Đà Nẵng', address: '456 Võ Văn Kiệt, Sơn Trà, Đà Nẵng' },
+];
+
+export const INITIAL_TAGS: Tag[] = [
+  { id: 'tag1', name: 'Combo', color: '#22c55e' }, // Green-500
+  { id: 'tag2', name: 'Staycation', color: '#38bdf8' }, // Sky-400
 ];
 
 export const INITIAL_ROOM_TYPES: RoomType[] = [
@@ -44,7 +49,8 @@ export const INITIAL_BOOKINGS: Booking[] = [
     paidAmount: 500000,
     createdAt: new Date(Date.now() - 86400000).toISOString(),
     createdBy: 'u2',
-    notes: 'Khách quen, cần thêm gối'
+    notes: 'Khách quen, cần thêm gối',
+    tags: ['tag1']
   },
   {
     id: 'b2',
@@ -60,7 +66,8 @@ export const INITIAL_BOOKINGS: Booking[] = [
     paidAmount: 1500000,
     createdAt: new Date(Date.now() - 100000).toISOString(),
     createdBy: 'u1',
-    notes: ''
+    notes: '',
+    tags: ['tag2']
   }
 ];
 

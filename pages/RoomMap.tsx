@@ -1,14 +1,15 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property } from '../types';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon } from 'lucide-react';
 
 interface RoomMapProps {
   rooms: Room[];
   roomTypes: RoomType[];
   bookings: Booking[];
   customers: Customer[];
+  tags: Tag[];
   onUpdateStatus: (roomId: string, status: RoomStatus) => void;
   onRefresh: () => void;
   currentProperty: Property;
@@ -247,7 +248,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, onUpdateStatus, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, onUpdateStatus, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -263,20 +264,21 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // ADDED: Local confirm state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   
   // Data for the modal
   const [bookingMeta, setBookingMeta] = useState<{
       id?: string;
       guestName: string;
       guestPhone: string;
-      totalPrice: number; // ADDED: to allow manual override
+      totalPrice: number;
       paidAmount: number;
       notes: string;
       status: BookingStatus;
-      isManualPrice: boolean; // Flag to track if user edited price
+      isManualPrice: boolean;
+      tags: string[]; // Selected tag IDs
   }>({
-      guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false
+      guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: []
   });
 
   // Multiple Rows for Rooms
@@ -378,7 +380,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // --- Modal Opening Logic ---
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
       setIsEditMode(editMode);
-      setShowDeleteConfirm(false); // Reset delete confirmation state
+      setShowDeleteConfirm(false); 
       
       if (editMode && booking) {
           setBookingMeta({
@@ -389,7 +391,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               paidAmount: booking.paidAmount || 0,
               notes: booking.notes || '',
               status: booking.status || BookingStatus.CONFIRMED,
-              isManualPrice: true // Editing existing usually means preserve price
+              isManualPrice: true,
+              tags: booking.tags || [] // Load tags
           });
           setBookingRows([{
               tempId: 'init',
@@ -400,7 +403,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           }]);
       } else {
           setBookingMeta({
-              guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false
+              guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: []
           });
           
           let checkIn = defaultDates ? defaultDates.start : '';
@@ -512,8 +515,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      // --- Validation Logic ---
      for (const row of validRows) {
          const room = rooms.find(r => r.id === row.roomId);
-         
-         // 1. Check if Check-In is after Check-Out
          const startTime = new Date(row.checkIn).getTime();
          const endTime = new Date(row.checkOut).getTime();
          
@@ -522,9 +523,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
              return;
          }
 
-         // 2. Validate Collision & 30min Buffer
          const availability = DataService.validateRoomAvailability(row.roomId, row.checkIn, row.checkOut, bookingMeta.id);
-         
          if (!availability.valid) {
              alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${availability.reason}\n\nVui lòng chọn thời gian khác cách ít nhất 30 phút.`);
              return;
@@ -543,11 +542,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
              checkInDate: firstRow.checkIn,
              checkOutDate: firstRow.checkOut,
              status: bookingMeta.status,
-             totalPrice: bookingMeta.totalPrice, // Use editable total
+             totalPrice: bookingMeta.totalPrice, 
              paidAmount: bookingMeta.paidAmount,
              createdAt: new Date().toISOString(),
              createdBy: currentUser,
-             notes: bookingMeta.notes
+             notes: bookingMeta.notes,
+             tags: bookingMeta.tags // Save Tags
          };
          DataService.updateBooking(updatedMain);
          
@@ -564,11 +564,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  checkInDate: row.checkIn,
                  checkOutDate: row.checkOut,
                  status: bookingMeta.status,
-                 totalPrice: idx === 0 ? pricePerRoom + (bookingMeta.totalPrice % validRows.length) : pricePerRoom, // Distribute remainder
+                 totalPrice: idx === 0 ? pricePerRoom + (bookingMeta.totalPrice % validRows.length) : pricePerRoom,
                  paidAmount: idx === 0 ? bookingMeta.paidAmount : 0, 
                  createdAt: new Date().toISOString(),
                  createdBy: currentUser,
-                 notes: bookingMeta.notes
+                 notes: bookingMeta.notes,
+                 tags: bookingMeta.tags // Save Tags
              };
              DataService.addBooking(newB);
          });
@@ -578,14 +579,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   };
 
   const handleDeleteClick = () => {
-      // Trigger local confirmation instead of window.confirm
       setShowDeleteConfirm(true);
   };
 
   const handleConfirmDelete = () => {
       const idToDelete = bookingMeta.id;
-      console.log("Confirmed delete for:", idToDelete);
-
       if (!idToDelete) return;
 
       const success = DataService.deleteBooking(idToDelete, currentUser);
@@ -599,6 +597,16 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           alert("Không thể xóa đơn. Vui lòng kiểm tra console log.");
           setShowDeleteConfirm(false);
       }
+  };
+
+  const toggleTag = (tagId: string) => {
+      setBookingMeta(prev => {
+          const exists = prev.tags.includes(tagId);
+          return {
+              ...prev,
+              tags: exists ? prev.tags.filter(t => t !== tagId) : [...prev.tags, tagId]
+          };
+      });
   };
 
   const getBookingStyle = (booking: Booking) => {
@@ -629,7 +637,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   return (
     <div className="h-full flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
-      {/* Top Bar omitted for brevity, same as before */}
+       {/* Filters Header (Same as before) */}
        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-4 transition-all">
           <div className="flex flex-wrap justify-between items-center gap-4">
               <div className="flex bg-gray-100 p-1.5 rounded-xl">
@@ -717,9 +725,25 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
                                         const left = (offset / totalDuration) * 100;
                                         const width = (duration / totalDuration) * 100;
+                                        
+                                        // Tag styling
+                                        const bookingTags = tags.filter(t => b.tags?.includes(t.id));
+
                                         return (
                                             <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
+                                                {/* Note Indicator */}
+                                                {b.notes && (
+                                                    <div className="absolute top-0 right-0 bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white z-20 shadow-sm font-bold">!</div>
+                                                )}
+                                                
                                                 <div className="font-bold truncate text-xs">{b.guestName}</div>
+                                                
+                                                {/* Tag Indicators */}
+                                                <div className="flex gap-0.5 mt-1">
+                                                    {bookingTags.map(t => (
+                                                        <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         )
                                     })}
@@ -731,21 +755,25 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           ) : (
             <div className="overflow-auto">
                 <table className="w-full text-sm text-left">
+                    {/* Simplified List View */}
                     <thead className="bg-gray-50 text-gray-700 font-bold border-b">
-                        <tr><th className="p-4">Mã Đặt Phòng</th><th className="p-4">Phòng</th><th className="p-4">Khách hàng</th><th className="p-4">Thời gian</th><th className="p-4">Tài chính</th><th className="p-4">Trạng Thái</th><th className="p-4 text-right">Thao tác</th></tr>
+                        <tr><th className="p-4">Mã Đặt Phòng</th><th className="p-4">Phòng</th><th className="p-4">Khách hàng</th><th className="p-4">Tags</th><th className="p-4">Thời gian</th><th className="p-4 text-right">Thao tác</th></tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                         {filteredBookings.map((b) => {
                             const room = rooms.find(r => r.id === b.roomId);
-                            const isPaid = b.paidAmount >= b.totalPrice;
+                            const bookingTags = tags.filter(t => b.tags?.includes(t.id));
                             return (
                                 <tr key={b.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="p-4 font-mono text-blue-600 font-medium">{b.id}</td>
                                     <td className="p-4 font-bold text-gray-800">{room?.number}</td>
-                                    <td className="p-4"><div className="font-medium text-gray-900">{b.guestName}</div><div className="text-xs text-gray-500">{b.guestPhone}</div></td>
-                                    <td className="p-4 text-xs text-gray-600"><div className="flex items-center gap-1"><span className="text-gray-400">In:</span> {new Date(b.checkInDate).toLocaleString('vi-VN')}</div><div className="flex items-center gap-1"><span className="text-gray-400">Out:</span> {new Date(b.checkOutDate).toLocaleString('vi-VN')}</div></td>
-                                    <td className="p-4"><div className="font-bold text-gray-800">{b.totalPrice.toLocaleString()}</div><div className={`text-xs font-medium ${isPaid ? 'text-green-600' : 'text-red-500'}`}>{isPaid ? 'Đã thanh toán' : `Thiếu ${(b.totalPrice - b.paidAmount).toLocaleString()}`}</div></td>
-                                    <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${b.status === BookingStatus.CHECKED_IN ? 'bg-red-100 text-red-700' : b.status === BookingStatus.CONFIRMED ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>{b.status}</span></td>
+                                    <td className="p-4 font-medium text-gray-900">{b.guestName}</td>
+                                    <td className="p-4">
+                                        <div className="flex gap-1 flex-wrap">
+                                            {bookingTags.map(t => <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold" style={{backgroundColor: t.color}}>{t.name}</span>)}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-xs text-gray-600">{new Date(b.checkInDate).toLocaleString('vi-VN')}</td>
                                     <td className="p-4 text-right"><button onClick={() => openModal(b, true, undefined, undefined)} className="text-blue-600 hover:text-blue-800 font-medium">Chi tiết</button></td>
                                 </tr>
                             )
@@ -815,7 +843,28 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                   </span>
                               </div>
                           </div>
-                          <div><h4 className="font-bold text-gray-800 flex items-center gap-2 mb-2"><Info size={16}/> Ghi chú</h4><textarea className="w-full bg-white border border-gray-200 text-gray-900 p-3 rounded-xl h-32 focus:ring-2 focus:ring-gray-100 focus:border-gray-400 outline-none resize-none placeholder:text-gray-400 font-medium" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea></div>
+                          <div>
+                              <div className="mb-4">
+                                  <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-2"><TagIcon size={16}/> Thẻ (Tags)</h4>
+                                  <div className="flex flex-wrap gap-2">
+                                      {tags.map(t => {
+                                          const isSelected = bookingMeta.tags.includes(t.id);
+                                          return (
+                                              <button 
+                                                key={t.id}
+                                                onClick={() => toggleTag(t.id)}
+                                                className={`px-3 py-1 rounded-full text-xs font-bold transition-all border ${isSelected ? 'text-white' : 'text-gray-500 bg-white border-gray-200'}`}
+                                                style={isSelected ? {backgroundColor: t.color, borderColor: t.color} : {}}
+                                              >
+                                                  {t.name}
+                                              </button>
+                                          )
+                                      })}
+                                  </div>
+                              </div>
+                              <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-2"><Info size={16}/> Ghi chú</h4>
+                              <textarea className="w-full bg-white border border-gray-200 text-gray-900 p-3 rounded-xl h-24 focus:ring-2 focus:ring-gray-100 focus:border-gray-400 outline-none resize-none placeholder:text-gray-400 font-medium" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
+                          </div>
                       </div>
 
                       <div className="flex justify-between items-center pt-6 mt-6 border-t border-gray-100">

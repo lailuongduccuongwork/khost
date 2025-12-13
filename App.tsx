@@ -9,7 +9,7 @@ import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus } from './types';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag } from './types';
 import { Lock, Loader2, CloudOff } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -30,6 +30,7 @@ const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
 
   // Function to pull latest data from Service (Cache) into React State
   const refreshData = () => {
@@ -37,6 +38,7 @@ const App: React.FC = () => {
     setUsers(DataService.getUsers());
     setCustomers(DataService.getCustomers());
     setRoomTypes(DataService.getRoomTypes());
+    setTags(DataService.getTags());
     
     const allRooms = DataService.getRooms(); 
     const allBookings = DataService.getBookings();
@@ -273,6 +275,7 @@ const App: React.FC = () => {
               roomTypes={roomTypes} 
               bookings={bookings} 
               customers={customers}
+              tags={tags}
               onUpdateStatus={handleUpdateRoomStatus}
               onRefresh={refreshData} // Now redundant but kept for interface compat
               currentProperty={currentPropertyObj}
@@ -297,6 +300,7 @@ const App: React.FC = () => {
                 users={users} 
                 roomTypes={roomTypes} 
                 properties={properties} 
+                tags={tags}
               />
           )}
           
@@ -307,6 +311,7 @@ const App: React.FC = () => {
                     rooms={DataService.getRooms()} 
                     roomTypes={roomTypes} 
                     properties={properties} 
+                    tags={tags}
                     onRefresh={refreshData}
                  />
                  <div className="mt-8">

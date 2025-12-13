@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { Booking, BookingStatus, Room, User, RoomType, Property } from '../types';
+import { Booking, BookingStatus, Room, User, RoomType, Property, Tag } from '../types';
 import { DataService } from '../services/dataService';
 import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, AlertTriangle } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface ReportsProps {
   users: User[];
   roomTypes: RoomType[];
   properties: Property[];
+  tags: Tag[]; // Add tags prop
 }
 
 type DatePreset = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_30_DAYS' | 'THIS_QUARTER' | 'LAST_QUARTER' | 'THIS_YEAR' | 'LAST_YEAR' | 'CUSTOM';
@@ -30,7 +31,7 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties }) => {
+const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags }) => {
   const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
   
   // Filter States
@@ -174,9 +175,14 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       const property = properties.find(p => p.id === b.propertyId);
       const debt = b.totalPrice - b.paidAmount;
 
+      // Map tags
+      const bookingTags = (b.tags || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
+      const tagNames = bookingTags.map(t => t.name).join(", ");
+
       return {
           "Mã BK": b.id,
           "Khách hàng": b.guestName,
+          "Tags": tagNames, // For Excel Export and default string rendering
           "Phòng": room?.number || 'N/A',
           "Hạng phòng": type?.name || 'N/A',
           "Chi nhánh": property?.name || b.propertyId,
@@ -191,7 +197,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           _debtRaw: debt,
           _status: b.status,
           _checkOutDate: new Date(b.checkOutDate),
-          _createdAt: new Date(b.createdAt)
+          _createdAt: new Date(b.createdAt),
+          _tags: bookingTags // For UI Rendering
       };
   };
 
@@ -212,7 +219,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData)
         .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate]);
+  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags]);
 
   const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Tổng bill"], 0);
 
@@ -224,11 +231,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData)
         .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate]);
+  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags]);
 
 
   const handleExport = (data: any[], fileName: string) => {
-      const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _createdAt, ...rest }) => rest);
+      const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _createdAt, _tags, ...rest }) => rest);
       DataService.exportToExcel(cleanData, fileName);
   };
 
@@ -240,6 +247,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                   <tr>
                       <th className="p-4 border-b">Mã BK</th>
                       <th className="p-4 border-b">Khách hàng</th>
+                      <th className="p-4 border-b">Tags</th>
                       <th className="p-4 border-b">Phòng</th>
                       <th className="p-4 border-b">Hạng phòng</th>
                       <th className="p-4 border-b">Chi nhánh</th>
@@ -257,6 +265,18 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                       <tr key={idx} className="hover:bg-gray-50 transition-colors">
                           <td className="p-4 font-mono text-gray-500 text-xs font-semibold">{row["Mã BK"]}</td>
                           <td className="p-4 font-bold text-gray-800 whitespace-nowrap">{row["Khách hàng"]}</td>
+                          
+                          {/* Render Tags */}
+                          <td className="p-4">
+                              <div className="flex flex-wrap gap-1 max-w-[150px]">
+                                {row._tags && row._tags.length > 0 ? row._tags.map((t: Tag) => (
+                                    <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold whitespace-nowrap" style={{backgroundColor: t.color}}>
+                                        {t.name}
+                                    </span>
+                                )) : <span className="text-gray-300 text-xs italic">--</span>}
+                              </div>
+                          </td>
+
                           <td className="p-4 font-medium text-blue-600">{row["Phòng"]}</td>
                           <td className="p-4 text-gray-600">{row["Hạng phòng"]}</td>
                           <td className="p-4 text-gray-500 text-xs">{row["Chi nhánh"]}</td>
@@ -278,7 +298,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                       </tr>
                   ))}
                   {data.length === 0 && (
-                      <tr><td colSpan={12} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
+                      <tr><td colSpan={13} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
                   )}
               </tbody>
           </table>

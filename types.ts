@@ -22,6 +22,12 @@ export enum UserRole {
   HOUSEKEEPING = 'HOUSEKEEPING',
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  color: string; // Hex code
+}
+
 export interface Property {
   id: string;
   name: string;
@@ -71,6 +77,7 @@ export interface Booking {
   createdAt: string;
   createdBy: string; // User ID
   notes?: string;
+  tags?: string[]; // Array of Tag IDs
 }
 
 export interface User {

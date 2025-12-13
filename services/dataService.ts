@@ -1,6 +1,6 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog } from '../types';
-import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS } from './mockData';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag } from '../types';
+import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS } from './mockData';
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, get, child, query, limitToLast } from "firebase/database";
 
@@ -30,7 +30,8 @@ const CACHE = {
     bookings: [] as Booking[],
     customers: [] as Customer[],
     users: [] as User[],
-    history: [] as HistoryLog[]
+    history: [] as HistoryLog[],
+    tags: [] as Tag[]
 };
 
 // --- INITIALIZATION ---
@@ -49,11 +50,12 @@ const _initRealtimeConnection = (onDataChange: () => void) => {
              isFirebaseReady = true;
 
              // OPTIMIZATION: Listen to specific nodes instead of root to save bandwidth
-             // 1. Static/Config Data (Properties, RoomTypes)
+             // 1. Static/Config Data
              onValue(ref(db, 'properties'), (snap) => { CACHE.properties = snap.val() || []; onDataChange(); });
              onValue(ref(db, 'roomTypes'), (snap) => { CACHE.roomTypes = snap.val() || []; onDataChange(); });
+             onValue(ref(db, 'tags'), (snap) => { CACHE.tags = snap.val() || []; onDataChange(); });
              
-             // 2. Dynamic Data (Rooms, Bookings, Customers)
+             // 2. Dynamic Data
              onValue(ref(db, 'rooms'), (snap) => { CACHE.rooms = snap.val() || []; onDataChange(); });
              
              // Load Raw Bookings - Filtering happens in getter
@@ -65,20 +67,16 @@ const _initRealtimeConnection = (onDataChange: () => void) => {
              onValue(ref(db, 'customers'), (snap) => { CACHE.customers = snap.val() || []; onDataChange(); });
              onValue(ref(db, 'users'), (snap) => { CACHE.users = snap.val() || []; onDataChange(); });
 
-             // 3. Heavy Data (History) - BANDWIDTH SAVER: Only fetch last 50 logs
+             // 3. Heavy Data (History)
              const historyQuery = query(ref(db, 'history'), limitToLast(50));
              onValue(historyQuery, (snap) => {
-                 // Firebase returns object with keys, need to convert to array
                  const val = snap.val();
                  if (val) {
-                     // If array
                      if (Array.isArray(val)) {
                          CACHE.history = val.filter(x => x);
                      } else {
-                         // If object (pushed keys)
                          CACHE.history = Object.values(val);
                      }
-                     // Sort new to old
                      CACHE.history.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
                  } else {
                      CACHE.history = [];
@@ -113,6 +111,7 @@ const _loadFromMockOrStorage = () => {
     CACHE.customers = load('customers', INITIAL_CUSTOMERS);
     CACHE.users = load('users', INITIAL_USERS);
     CACHE.history = load('history', []);
+    CACHE.tags = load('tags', INITIAL_TAGS);
 };
 
 const _resetToMockData = () => {
@@ -122,6 +121,7 @@ const _resetToMockData = () => {
     CACHE.bookings = INITIAL_BOOKINGS;
     CACHE.customers = INITIAL_CUSTOMERS;
     CACHE.users = INITIAL_USERS;
+    CACHE.tags = INITIAL_TAGS;
     
     if (isFirebaseReady && db) {
         set(ref(db, 'properties'), CACHE.properties);
@@ -130,13 +130,13 @@ const _resetToMockData = () => {
         set(ref(db, 'bookings'), CACHE.bookings);
         set(ref(db, 'customers'), CACHE.customers);
         set(ref(db, 'users'), CACHE.users);
+        set(ref(db, 'tags'), CACHE.tags);
     }
 };
 
 // Helper to save specific node
 const _saveNode = (nodeName: string, data: any) => {
     if (isFirebaseReady && db) {
-        // Use JSON parse/stringify to remove undefined fields which Firebase hates
         const cleanData = JSON.parse(JSON.stringify(data));
         set(ref(db, nodeName), cleanData).catch(err => console.error(`Save ${nodeName} failed`, err));
     } else {
@@ -160,10 +160,8 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
         staffId
     };
     
-    // Add to local cache for immediate UI update
     CACHE.history.unshift(newLog);
     
-    // Cloud Sync
     if (isFirebaseReady && db) {
         if (CACHE.history.length > 300) CACHE.history.length = 300;
         _saveNode('history', CACHE.history);
@@ -184,20 +182,13 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
 
 // --- Strict Data Access ---
 const _getBookingsStrict = (propertyId?: string): Booking[] => {
-    // Optimization: Create sets for O(1) lookup speed
     const validRoomIds = new Set(CACHE.rooms.map(r => r.id));
     const validPropertyIds = new Set(CACHE.properties.map(p => p.id));
 
     let cleanList = CACHE.bookings.filter(b => {
-        // 1. Basic Status Check
         if (b.status === BookingStatus.DELETED) return false;
-
-        // 2. Referential Integrity Check (Orphan Logic)
-        // If the room doesn't exist, the booking is phantom -> Hide it
         const roomExists = validRoomIds.has(b.roomId);
-        // If the property doesn't exist -> Hide it
         const propertyExists = validPropertyIds.has(b.propertyId);
-
         return roomExists && propertyExists;
     });
 
@@ -222,7 +213,6 @@ const _deleteBooking = (bookingId: string, staffId: string): boolean => {
             const deletedSnapshot = { ...bookingToDelete, status: BookingStatus.DELETED };
             _logAction('DELETE', deletedSnapshot, `Xóa đơn ${bookingId} khỏi hệ thống`, staffId);
             
-            // HARD DELETE: Remove from array completely
             bookings.splice(index, 1);
             CACHE.bookings = bookings;
             _saveNode('bookings', CACHE.bookings);
@@ -248,6 +238,10 @@ export const DataService = {
   // Room Types
   getRoomTypes: (): RoomType[] => CACHE.roomTypes,
   saveRoomTypes: (types: RoomType[]) => { CACHE.roomTypes = types; _saveNode('roomTypes', types); },
+  
+  // Tags
+  getTags: (): Tag[] => CACHE.tags,
+  saveTags: (tags: Tag[]) => { CACHE.tags = tags; _saveNode('tags', tags); },
 
   // Rooms
   getRooms: (propertyId?: string): Room[] => {
@@ -272,7 +266,7 @@ export const DataService = {
     _saveNode('customers', newCustomers);
   },
 
-  // Bookings - USING STRICT MODE
+  // Bookings
   getBookings: _getBookingsStrict,
   
   generateBookingId: (): string => {
@@ -285,7 +279,6 @@ export const DataService = {
   },
 
   validateRoomAvailability: (roomId: string, startIso: string, endIso: string, excludeBookingId?: string): { valid: boolean; reason?: string } => {
-      // Use strict getter to ensure we check against valid bookings only
       const bookings = _getBookingsStrict(); 
       const newStart = new Date(startIso).getTime();
       const newEnd = new Date(endIso).getTime();
