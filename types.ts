@@ -67,6 +67,8 @@ export interface Booking {
   guestName: string;
   guestPhone: string;
   
+  groupId?: string; // New field: Links multiple bookings together as a group
+  
   checkInDate: string; // ISO Date string
   checkOutDate: string; // ISO Date string
   status: BookingStatus;
