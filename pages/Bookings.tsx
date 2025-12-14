@@ -18,14 +18,23 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
 
-  const getCustomerName = (id: string) => customers.find(c => c.id === id)?.name || 'Unknown';
+  // Helper to get display name: Prioritize booking snapshot, fallback to customer record
+  const getDisplayName = (b: Booking) => {
+      return b.guestName || customers.find(c => c.id === b.customerId)?.name || 'Khách lẻ';
+  };
+
   const getRoomNumber = (id: string) => rooms.find(r => r.id === id)?.number || 'N/A';
 
   const filteredBookings = bookings.filter(b => {
-    const customerName = getCustomerName(b.customerId).toLowerCase();
+    const customerName = getDisplayName(b).toLowerCase();
+    const customerPhone = (b.guestPhone || customers.find(c => c.id === b.customerId)?.phone || '').toLowerCase();
     const roomNumber = getRoomNumber(b.roomId).toLowerCase();
     const term = searchTerm.toLowerCase();
-    return customerName.includes(term) || roomNumber.includes(term) || b.id.toLowerCase().includes(term);
+    
+    return customerName.includes(term) || 
+           customerPhone.includes(term) || 
+           roomNumber.includes(term) || 
+           b.id.toLowerCase().includes(term);
   });
 
   const getStatusBadge = (status: BookingStatus) => {
@@ -83,7 +92,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input 
                 type="text" 
-                placeholder="Tìm theo tên khách, số phòng, mã đơn..."
+                placeholder="Tìm theo tên khách, số điện thoại, số phòng, mã đơn..."
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -108,7 +117,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
             {filteredBookings.map((booking) => (
               <tr key={booking.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 font-mono text-blue-600 font-medium">{booking.id}</td>
-                <td className="px-6 py-4 font-medium text-gray-900">{getCustomerName(booking.customerId)}</td>
+                <td className="px-6 py-4 font-medium text-gray-900">
+                    <div>{getDisplayName(booking)}</div>
+                    <div className="text-xs text-gray-400">{booking.guestPhone}</div>
+                </td>
                 <td className="px-6 py-4"><span className="bg-gray-100 px-2 py-1 rounded font-bold text-gray-700">{getRoomNumber(booking.roomId)}</span></td>
                 <td className="px-6 py-4">
                     <div className="flex flex-col text-xs">

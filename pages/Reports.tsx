@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -40,6 +40,9 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   
+  // Sort State
+  const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
+
   const canExport = currentUser.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT);
 
   // --- Date Logic Helpers ---
@@ -227,6 +230,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           _debtRaw: debt,
           _status: b.status,
           _checkOutDate: new Date(b.checkOutDate),
+          _checkInDate: new Date(b.checkInDate),
           _createdAt: new Date(b.createdAt),
           _tags: bookingTags // For UI Rendering
       };
@@ -243,25 +247,58 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // --- 1. Revenue Report (Báo cáo doanh thu phòng) ---
   // Criteria: Booking has ended (CHECKED_OUT) AND checkOutDate is within range
   const revenueData = useMemo(() => {
-      return bookings
+      let data = bookings
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
-        // No need for explicit orphan check here, 'bookings' prop is already clean via DataService
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
-        .map(getFullBookingData)
-        .sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags]);
+        .map(getFullBookingData);
+
+      if (sortConfig) {
+          data.sort((a: any, b: any) => {
+             let valA, valB;
+             // Map display keys to internal raw keys for sorting
+             if (sortConfig.key === 'Ngày tạo') { valA = a._createdAt; valB = b._createdAt; }
+             else if (sortConfig.key === 'TG Nhận phòng') { valA = a._checkInDate; valB = b._checkInDate; }
+             else if (sortConfig.key === 'TG Trả phòng') { valA = a._checkOutDate; valB = b._checkOutDate; }
+             else return 0;
+
+             if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+             if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+             return 0;
+          });
+      } else {
+          // Default Sort: Check-out Date DESC
+          data.sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
+      }
+      return data;
+  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
   const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Tổng bill"], 0);
 
   // --- 2. Booking Report (Báo cáo đặt phòng phát sinh) ---
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
-      return bookings
-        // No need for explicit orphan check here, 'bookings' prop is already clean via DataService
+      let data = bookings
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
-        .map(getFullBookingData)
-        .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags]);
+        .map(getFullBookingData);
+
+      if (sortConfig) {
+          data.sort((a: any, b: any) => {
+             let valA, valB;
+             if (sortConfig.key === 'Ngày tạo') { valA = a._createdAt; valB = b._createdAt; }
+             else if (sortConfig.key === 'TG Nhận phòng') { valA = a._checkInDate; valB = b._checkInDate; }
+             else if (sortConfig.key === 'TG Trả phòng') { valA = a._checkOutDate; valB = b._checkOutDate; }
+             else return 0;
+
+             if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+             if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+             return 0;
+          });
+      } else {
+           // Default Sort: Created Date DESC
+           data.sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
+      }
+      return data;
+  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
 
   const handleExport = (data: any[], fileName: string) => {
@@ -269,12 +306,32 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           alert("Bạn không có quyền tải xuống báo cáo này.");
           return;
       }
-      const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _createdAt, _tags, ...rest }) => rest);
+      const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _checkInDate, _createdAt, _tags, ...rest }) => rest);
       DataService.exportToExcel(cleanData, fileName);
   };
 
+  const handleSort = (key: string) => {
+      // Only allow sorting for specific columns
+      if (!['Ngày tạo', 'TG Nhận phòng', 'TG Trả phòng'].includes(key)) return;
+
+      let direction: 'asc' | 'desc' = 'desc'; // Default to newest/latest first
+      if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
+          direction = 'asc';
+      }
+      setSortConfig({ key, direction });
+  };
+
+  const SortIcon = ({ colKey }: { colKey: string }) => {
+      if (!['Ngày tạo', 'TG Nhận phòng', 'TG Trả phòng'].includes(colKey)) return null;
+      
+      if (sortConfig?.key !== colKey) return <ArrowUpDown size={14} className="ml-1 opacity-30 inline" />;
+      return sortConfig.direction === 'asc' 
+             ? <ArrowUp size={14} className="ml-1 text-blue-600 inline" /> 
+             : <ArrowDown size={14} className="ml-1 text-blue-600 inline" />;
+  };
+
   // --- Shared Table Component ---
-  const ReportTable = ({ data }: { data: any[] }) => (
+  const ReportTable = ({ data, onSort }: { data: any[], onSort: (key: string) => void }) => (
       <div className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="w-full text-sm text-left">
               <thead className="bg-gray-100 font-bold text-gray-700 text-xs uppercase whitespace-nowrap">
@@ -285,9 +342,17 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                       <th className="p-4 border-b">Phòng</th>
                       <th className="p-4 border-b">Hạng phòng</th>
                       <th className="p-4 border-b">Chi nhánh</th>
-                      <th className="p-4 border-b">Ngày tạo</th>
-                      <th className="p-4 border-b">TG Nhận phòng</th>
-                      <th className="p-4 border-b">TG Trả phòng</th>
+                      
+                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('Ngày tạo')}>
+                          Ngày tạo <SortIcon colKey="Ngày tạo"/>
+                      </th>
+                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Nhận phòng')}>
+                          TG Nhận phòng <SortIcon colKey="TG Nhận phòng"/>
+                      </th>
+                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Trả phòng')}>
+                          TG Trả phòng <SortIcon colKey="TG Trả phòng"/>
+                      </th>
+
                       <th className="p-4 border-b text-right text-green-700 bg-green-50">Tổng bill</th>
                       <th className="p-4 border-b text-right text-blue-700 bg-blue-50">Đã trả</th>
                       <th className="p-4 border-b text-right text-red-700 bg-red-50">Còn nợ</th>
@@ -398,7 +463,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 flex gap-1 w-fit">
           <button 
-             onClick={() => setActiveTab('REVENUE')}
+             onClick={() => { setActiveTab('REVENUE'); setSortConfig(null); }}
              className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${
                  activeTab === 'REVENUE' 
                  ? 'bg-green-100 text-green-700 shadow-sm' 
@@ -408,7 +473,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
               <TrendingUp size={18} /> Báo cáo Doanh thu phòng
           </button>
           <button 
-             onClick={() => setActiveTab('BOOKINGS')}
+             onClick={() => { setActiveTab('BOOKINGS'); setSortConfig(null); }}
              className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${
                  activeTab === 'BOOKINGS' 
                  ? 'bg-blue-100 text-blue-700 shadow-sm' 
@@ -445,7 +510,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
               </div>
           </div>
 
-          <ReportTable data={revenueData} />
+          <ReportTable data={revenueData} onSort={handleSort} />
       </div>
       )}
 
@@ -468,7 +533,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                 )}
              </div>
 
-             <ReportTable data={bookingReportData} />
+             <ReportTable data={bookingReportData} onSort={handleSort} />
           </div>
       )}
     </div>

@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -271,6 +271,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
   
+  // Real-time current time for indicator
+  const [now, setNow] = useState(new Date());
+
+  // SORTING STATE
+  const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
+
+  useEffect(() => {
+      // Update time every minute
+      const timer = setInterval(() => setNow(new Date()), 60000);
+      return () => clearInterval(timer);
+  }, []);
+
   // Permissions
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canEdit = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING);
@@ -278,6 +290,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   // Get latest properties for receipt printing
   const properties = DataService.getProperties();
+  const allUsers = DataService.getUsers();
 
   const [filters, setFilters] = useState({
       // Removed branchId filter from local state as it is controlled globally
@@ -347,6 +360,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     }
     return `${hours} giờ`;
   }
+  
+  // Determine if a slot is the current time/date
+  const isCurrentTimeSlot = (slot: Date) => {
+      if (timelineMode === 'DAY') {
+          // Compare Hour and Date
+          return slot.getDate() === now.getDate() && 
+                 slot.getMonth() === now.getMonth() &&
+                 slot.getFullYear() === now.getFullYear() &&
+                 slot.getHours() === now.getHours();
+      } else {
+          // Compare Date only (Week/Month view)
+          return slot.getDate() === now.getDate() && 
+                 slot.getMonth() === now.getMonth() &&
+                 slot.getFullYear() === now.getFullYear();
+      }
+  };
 
   // Auto-update price if not manual
   useEffect(() => {
@@ -394,6 +423,40 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     }
     return res;
   }, [bookings, filters, startDate, timelineMode]);
+
+  // --- SORTING LOGIC ---
+  const sortedBookings = useMemo(() => {
+      if (!sortConfig) return filteredBookings;
+      
+      return [...filteredBookings].sort((a, b) => {
+          let valA = a[sortConfig.key];
+          let valB = b[sortConfig.key];
+          
+          if (!valA) valA = '';
+          if (!valB) valB = '';
+
+          // String comparison for ISO Dates
+          if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+          if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+          return 0;
+      });
+  }, [filteredBookings, sortConfig]);
+
+  const handleSort = (key: keyof Booking) => {
+      let direction: 'asc' | 'desc' = 'desc'; // Default to newest first
+      if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
+          direction = 'asc';
+      }
+      setSortConfig({ key, direction });
+  };
+
+  const SortIcon = ({ colKey }: { colKey: keyof Booking }) => {
+      if (sortConfig?.key !== colKey) return <ArrowUpDown size={14} className="ml-1 opacity-30" />;
+      return sortConfig.direction === 'asc' 
+             ? <ArrowUp size={14} className="ml-1 text-blue-600" /> 
+             : <ArrowDown size={14} className="ml-1 text-blue-600" />;
+  };
+
 
   // --- Grid Calculation ---
   const gridColumns = useMemo(() => {
@@ -732,6 +795,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   const renderGridCell = (room: Room, slot: Date) => {
       let isSelected = false;
+      const isCurrent = isCurrentTimeSlot(slot);
+
       if (isDragging && dragStart && dragEnd && dragStart.roomId === room.id) {
           const s = dragStart.time < dragEnd.time ? dragStart.time : dragEnd.time;
           const e = dragStart.time < dragEnd.time ? dragEnd.time : dragStart.time;
@@ -740,7 +805,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       return (
           <div 
             key={slot.toISOString()}
-            className={`border-r h-full relative select-none transition-colors duration-75 ${isSelected ? 'bg-blue-100' : 'hover:bg-gray-50'}`}
+            className={`border-r h-full relative select-none transition-colors duration-75 ${isSelected ? 'bg-blue-100' : (isCurrent ? 'bg-amber-50' : 'hover:bg-gray-50')}`}
             onMouseDown={() => handleMouseDown(room.id, slot)}
             onMouseEnter={() => handleMouseEnter(room.id, slot)}
             onMouseUp={handleMouseUp}
@@ -757,7 +822,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
 
   return (
-    <div className="h-full flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
+    <div className="h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
        {/* Filters Header (Same as before) */}
        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-4 transition-all">
           <div className="flex flex-wrap justify-between items-center gap-4">
@@ -775,7 +840,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               <div className="flex-1 max-w-md relative">
                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18}/>
                    <input 
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none text-sm transition-all text-gray-900 placeholder:text-gray-400"
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm transition-all text-gray-900 placeholder:text-gray-400"
                       placeholder="Tìm tên khách, SĐT, Mã booking..."
                       value={filters.search}
                       onChange={e => setFilters({...filters, search: e.target.value})}
@@ -818,19 +883,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           {viewType === 'GRID' ? (
              <div className="flex-1 overflow-auto no-scrollbar relative">
                  <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative h-full min-h-full">
-                     <div className="sticky top-0 z-20 bg-gray-50 border-b flex h-14 shadow-sm">
-                         <div className="w-40 flex-shrink-0 border-r p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-30 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">Phòng</div>
+                     <div className="sticky top-0 z-40 bg-gray-50 border-b flex h-14 shadow-sm ring-1 ring-gray-200">
+                         <div className="w-40 flex-shrink-0 border-r p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-50 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">Phòng</div>
                          <div className="flex-1 grid" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
-                             {timeSlots.map((slot, i) => (
-                                 <div key={i} className={`border-r px-1 text-center text-xs flex flex-col justify-center font-medium ${slot.toDateString() === new Date().toDateString() ? 'bg-blue-50 text-blue-700' : 'text-gray-600'}`}>
-                                     {timelineMode === 'DAY' ? `${slot.getHours()}:00` : <><span className={slot.getDate() === new Date().getDate() ? 'font-bold text-base' : 'text-sm'}>{slot.getDate()}/{slot.getMonth()+1}</span></>}
-                                 </div>
-                             ))}
+                             {timeSlots.map((slot, i) => {
+                                 const isCurrent = isCurrentTimeSlot(slot);
+                                 return (
+                                     <div key={i} className={`border-r px-1 text-center text-xs flex flex-col justify-center font-medium ${isCurrent ? 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200' : (slot.toDateString() === new Date().toDateString() ? 'bg-blue-50 text-blue-700' : 'text-gray-600')}`}>
+                                         {timelineMode === 'DAY' ? `${slot.getHours()}:00` : <><span className={slot.getDate() === new Date().getDate() ? 'font-bold text-base' : 'text-sm'}>{slot.getDate()}/{slot.getMonth()+1}</span></>}
+                                     </div>
+                                 )
+                             })}
                          </div>
                      </div>
                      {filteredRooms.map(room => (
                          <div key={room.id} className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
-                             <div className="w-40 flex-shrink-0 border-r p-3 flex flex-col justify-center bg-white sticky left-0 z-10 border-r-gray-200 group-hover:bg-gray-50 transition-colors shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                             <div className="w-40 flex-shrink-0 border-r p-3 flex flex-col justify-center bg-white sticky left-0 z-30 border-r-gray-200 group-hover:bg-gray-50 transition-colors shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">
                                  <div className="font-bold text-lg text-gray-800">{room.number}</div>
                                  <div className="text-xs text-gray-500 truncate mt-1">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
                              </div>
@@ -852,7 +920,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         const isGroup = !!b.groupId;
 
                                         return (
-                                            <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
+                                            <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
                                                 <div className="absolute top-0 right-0 flex gap-0.5 z-20">
                                                     {isGroup && (
                                                         <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>
@@ -878,29 +946,76 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           ) : (
             <div className="overflow-auto">
                 {/* List View */}
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 text-gray-700 font-bold border-b">
-                        <tr><th className="p-4">Mã Đặt Phòng</th><th className="p-4">Phòng</th><th className="p-4">Khách hàng</th><th className="p-4">Tags</th><th className="p-4">Thời gian</th><th className="p-4 text-right">Thao tác</th></tr>
+                <table className="w-full text-sm text-left whitespace-nowrap">
+                    <thead className="bg-gray-100 text-gray-700 font-bold border-b text-xs uppercase">
+                        <tr>
+                            <th className="p-4">Mã BK</th>
+                            <th className="p-4">Khách hàng</th>
+                            <th className="p-4">Tags</th>
+                            <th className="p-4">Phòng</th>
+                            <th className="p-4">Hạng phòng</th>
+                            <th className="p-4">Chi nhánh</th>
+                            
+                            <th className="p-4 cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => handleSort('createdAt')}>
+                                <div className="flex items-center gap-1">Ngày tạo <SortIcon colKey="createdAt"/></div>
+                            </th>
+                            <th className="p-4 cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => handleSort('checkInDate')}>
+                                <div className="flex items-center gap-1">TG Nhận phòng <SortIcon colKey="checkInDate"/></div>
+                            </th>
+                            <th className="p-4 cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => handleSort('checkOutDate')}>
+                                <div className="flex items-center gap-1">TG Trả phòng <SortIcon colKey="checkOutDate"/></div>
+                            </th>
+
+                            <th className="p-4 text-right">Tổng bill</th>
+                            <th className="p-4 text-right">Đã trả</th>
+                            <th className="p-4 text-right">Còn nợ</th>
+                            <th className="p-4">Nhân viên</th>
+                            <th className="p-4 text-center">Thao tác</th>
+                        </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                        {filteredBookings.map((b) => {
+                        {sortedBookings.map((b) => {
                             const room = rooms.find(r => r.id === b.roomId);
+                            const type = roomTypes.find(t => t.id === room?.typeId);
+                            const prop = properties.find(p => p.id === b.propertyId);
+                            const creator = allUsers.find(u => u.id === b.createdBy);
                             const bookingTags = tags.filter(t => b.tags?.includes(t.id));
+                            const debt = b.totalPrice - b.paidAmount;
+
                             return (
                                 <tr key={b.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="p-4 font-mono text-blue-600 font-medium">
+                                    <td className="p-4 font-mono text-blue-600 font-medium text-xs">
                                         {b.id}
-                                        {b.groupId && <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800"><Users size={10} className="mr-1"/>Đoàn</span>}
+                                        {b.groupId && <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800"><Users size={10} className="mr-1"/>Grp</span>}
                                     </td>
-                                    <td className="p-4 font-bold text-gray-800">{room?.number}</td>
-                                    <td className="p-4 font-medium text-gray-900">{b.guestName}</td>
+                                    <td className="p-4 font-bold text-gray-800">
+                                        <div>{b.guestName}</div>
+                                        <div className="text-[10px] text-gray-400 font-normal">{b.guestPhone}</div>
+                                    </td>
                                     <td className="p-4">
-                                        <div className="flex gap-1 flex-wrap">
+                                        <div className="flex gap-1 flex-wrap w-32">
                                             {bookingTags.map(t => <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold" style={{backgroundColor: t.color}}>{t.name}</span>)}
                                         </div>
                                     </td>
-                                    <td className="p-4 text-xs text-gray-600">{new Date(b.checkInDate).toLocaleString('vi-VN')}</td>
-                                    <td className="p-4 text-right"><button onClick={() => openModal(b, true, undefined, undefined)} className="text-blue-600 hover:text-blue-800 font-medium">Chi tiết</button></td>
+                                    <td className="p-4 font-bold text-gray-800">{room?.number}</td>
+                                    <td className="p-4 text-gray-600 text-xs">{type?.name}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{prop?.name}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.createdAt).toLocaleString('vi-VN')}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.checkInDate).toLocaleString('vi-VN')}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.checkOutDate).toLocaleString('vi-VN')}</td>
+                                    
+                                    <td className="p-4 text-right font-medium text-gray-900">{formatNumber(b.totalPrice)}</td>
+                                    <td className="p-4 text-right font-medium text-blue-600">{formatNumber(b.paidAmount)}</td>
+                                    <td className={`p-4 text-right font-bold ${debt > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                                        {formatNumber(debt)}
+                                    </td>
+                                    
+                                    <td className="p-4 text-xs text-gray-600">{creator?.fullName || b.createdBy}</td>
+                                    <td className="p-4 text-center">
+                                        <button onClick={() => openModal(b, true, undefined, undefined)} className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
+                                            Chi tiết
+                                        </button>
+                                    </td>
                                 </tr>
                             )
                         })}

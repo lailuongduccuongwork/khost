@@ -16,7 +16,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
   const allMenuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
-    { id: 'bookings', label: 'Đặt phòng', icon: CalendarDays, permission: PERMISSIONS.MANAGE_BOOKINGS },
+    // Bookings page removed as requested
     { id: 'reports', label: 'Báo cáo', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
   ];
 

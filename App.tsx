@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import RoomMap from './pages/RoomMap';
-import Bookings from './pages/Bookings';
+// Removed Bookings import
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
@@ -88,7 +88,7 @@ const App: React.FC = () => {
              // Security check: If current page is forbidden, redirect
              const perms = freshUser.permissions || [];
              if (currentPage === 'dashboard' && !perms.includes(PERMISSIONS.VIEW_DASHBOARD)) setCurrentPage('room-map');
-             if (currentPage === 'bookings' && !perms.includes(PERMISSIONS.MANAGE_BOOKINGS)) setCurrentPage('room-map');
+             // Removed Bookings permission check
              if (currentPage === 'reports' && !perms.includes(PERMISSIONS.VIEW_REPORTS)) setCurrentPage('room-map');
         }
     }
@@ -346,15 +346,7 @@ const App: React.FC = () => {
             />
           )}
 
-          {currentPage === 'bookings' && currentUser.permissions?.includes(PERMISSIONS.MANAGE_BOOKINGS) && (
-            <Bookings 
-              bookings={bookings} 
-              rooms={rooms} 
-              customers={customers} 
-              onRefresh={manualRefresh}
-              currentUser={currentUser} // Pass full user object
-            />
-          )}
+          {/* Removed Bookings Page Component */}
 
           {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
               <Reports 

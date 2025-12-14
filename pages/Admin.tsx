@@ -118,7 +118,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
 
   const permissionOptions = [
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
-      { id: PERMISSIONS.MANAGE_BOOKINGS, label: 'Xem DS Đặt phòng' },
+      // Removed MANAGE_BOOKINGS (Danh sách đặt phòng)
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
       { divider: true },
       { id: PERMISSIONS.CAN_ADD_BOOKING, label: 'Được phép THÊM đơn' },
