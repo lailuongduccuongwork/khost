@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -25,6 +25,7 @@ type ViewMode = 'DAY' | 'WEEK' | 'MONTH';
 const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
 const addDays = (d: Date, days: number) => { const x = new Date(d); x.setDate(x.getDate() + days); return x; };
 const addHours = (d: Date, hours: number) => { const x = new Date(d); x.setTime(x.getTime() + hours * 3600000); return x; };
+const addMonths = (d: Date, months: number) => { const x = new Date(d); x.setMonth(x.getMonth() + months); return x; };
 
 // Format helper
 const formatNumber = (num: number) => {
@@ -38,7 +39,7 @@ const formatTicketDate = (isoStr: string) => {
     if (!isoStr) return '';
     const d = new Date(isoStr);
     const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
 // --- Custom Components ---
@@ -296,12 +297,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       // Removed branchId filter from local state as it is controlled globally
       typeId: 'ALL',
       roomId: 'ALL',
-      status: 'ALL', 
+      status: 'STAYING', // Default to STAYING (Thời gian lưu trú)
       search: ''
   });
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
+  const [showTicketModal, setShowTicketModal] = useState(false); // NEW STATE FOR TICKET
   const [isEditMode, setIsEditMode] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   
@@ -396,8 +398,32 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     });
   }, [rooms, filters]);
 
+  // Calculate View Range
+  const { viewStart, viewEnd } = useMemo(() => {
+      let vStart = new Date(startDate);
+      vStart.setHours(0,0,0,0);
+      let vEnd = new Date(vStart);
+      
+      if(timelineMode === 'DAY') {
+          vEnd = addDays(vStart, 1);
+      } else if(timelineMode === 'WEEK') {
+          // Week view starts from selected startDate and adds 7 days
+          vEnd = addDays(vStart, 7);
+      } else { 
+          // MONTH Mode: Strict 1st to Last Day
+          // 1. Force start to 1st of month
+          vStart.setDate(1); 
+          // 2. End is last day of the current month
+          vEnd = new Date(vStart.getFullYear(), vStart.getMonth() + 1, 0); 
+          vEnd.setHours(23, 59, 59, 999);
+      }
+
+      return { viewStart: vStart, viewEnd: vEnd };
+  }, [startDate, timelineMode]);
+
   const filteredBookings = useMemo(() => {
     let res = bookings.filter(b => b.status !== BookingStatus.DELETED); 
+    
     if (filters.search) {
         const lower = filters.search.toLowerCase();
         res = res.filter(b => 
@@ -406,23 +432,46 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
             b.id.toLowerCase().includes(lower)
         );
     }
-    const filterStart = startDate;
-    let filterEnd = new Date(startDate);
-    if(timelineMode === 'DAY') filterEnd = addDays(filterStart, 1);
-    else if(timelineMode === 'WEEK') filterEnd = addDays(filterStart, 7);
-    else filterEnd = addDays(filterStart, 30);
-    if (filters.status !== 'ALL') {
-        res = res.filter(b => {
-            const bStart = new Date(b.checkInDate);
-            const bEnd = new Date(b.checkOutDate);
-            if (filters.status === 'ARRIVING') return bStart >= filterStart && bStart < filterEnd;
-            if (filters.status === 'DEPARTING') return bEnd >= filterStart && bEnd < filterEnd;
-            if (filters.status === 'STAYING') return bStart < filterEnd && bEnd < filterStart;
-            return true;
-        });
-    }
+    
+    // Apply Time Range Filter based on selected STATUS (Filter Type)
+    res = res.filter(b => {
+        const bStart = new Date(b.checkInDate).getTime();
+        const bEnd = new Date(b.checkOutDate).getTime();
+        const fStart = viewStart.getTime();
+        const fEnd = viewEnd.getTime();
+
+        if (filters.status === 'ARRIVING') {
+            // "Thời gian nhận": Booking STARTS within the view range
+            return bStart >= fStart && bStart < fEnd;
+        } else if (filters.status === 'DEPARTING') {
+            // "Thời gian trả": Booking ENDS within the view range
+            return bEnd >= fStart && bEnd < fEnd;
+        } else {
+            // "Thời gian lưu trú" (STAYING/Default): Booking OVERLAPS with the view range
+            return bStart < fEnd && bEnd > fStart;
+        }
+    });
+
     return res;
-  }, [bookings, filters, startDate, timelineMode]);
+  }, [bookings, filters, viewStart, viewEnd]);
+
+  // --- Date Range Label Helper ---
+  const dateRangeLabel = useMemo(() => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      const fmt = (d: Date) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+      
+      if (timelineMode === 'DAY') {
+          return fmt(viewStart);
+      } else if (timelineMode === 'MONTH') {
+          return `Tháng ${viewStart.getMonth() + 1}/${viewStart.getFullYear()}`;
+      } else {
+          // WEEK: Show range start - end
+          const endDisplay = new Date(viewEnd);
+          endDisplay.setDate(endDisplay.getDate() - 1); // Display inclusive end date (e.g. Mon-Sun)
+          return `${fmt(viewStart)} - ${fmt(endDisplay)}`;
+      }
+  }, [viewStart, viewEnd, timelineMode]);
+
 
   // --- SORTING LOGIC ---
   const sortedBookings = useMemo(() => {
@@ -462,17 +511,42 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const gridColumns = useMemo(() => {
       if (timelineMode === 'DAY') return 24;
       if (timelineMode === 'WEEK') return 7;
-      return 30;
-  }, [timelineMode]);
+      
+      // MONTH: Calculate days in the specific month
+      return new Date(viewStart.getFullYear(), viewStart.getMonth() + 1, 0).getDate();
+  }, [timelineMode, viewStart]);
 
   const timeSlots = useMemo(() => {
       const slots = [];
+      // Use the calculated viewStart which is already 1st of month for MONTH mode
       for(let i=0; i<gridColumns; i++) {
-          if (timelineMode === 'DAY') slots.push(addHours(startDate, i));
-          else slots.push(addDays(startDate, i));
+          if (timelineMode === 'DAY') slots.push(addHours(viewStart, i));
+          else slots.push(addDays(viewStart, i));
       }
       return slots;
-  }, [gridColumns, timelineMode, startDate]);
+  }, [gridColumns, timelineMode, viewStart]);
+
+  // --- Date Navigator Handler ---
+  const handleNavigate = (direction: 'PREV' | 'NEXT') => {
+      const factor = direction === 'NEXT' ? 1 : -1;
+      
+      if (timelineMode === 'DAY') {
+          setStartDate(addDays(startDate, factor));
+      } else if (timelineMode === 'WEEK') {
+          setStartDate(addDays(startDate, factor * 7));
+      } else {
+          // MONTH: Move by 1 Month
+          setStartDate(addMonths(startDate, factor));
+      }
+  };
+
+  const handleDateInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.value) return;
+      const d = new Date(e.target.value);
+      if (!isNaN(d.getTime())) {
+          setStartDate(d);
+      }
+  };
 
   // --- Modal Opening Logic ---
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
@@ -661,9 +735,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      if (isEditMode && originalBookingIds.length > 0) {
          const currentIds = validRows.map(r => r.bookingId).filter(Boolean);
          const idsToDelete = originalBookingIds.filter(oid => !currentIds.includes(oid));
-         // Need delete permission to remove rooms from a group even during edit? 
-         // Assume 'canEdit' covers modification of group structure, but maybe check 'canDelete' if removing?
-         // For simplicity: ALLOW removing room from group if you can EDIT.
          idsToDelete.forEach(id => {
              DataService.deleteBooking(id, currentUser.id);
          });
@@ -677,6 +748,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
          if (row.bookingId) {
              // UPDATE Existing
+             // FIND ORIGINAL BOOKING TO PRESERVE createdAt
+             const existingBooking = bookings.find(b => b.id === row.bookingId);
+
              const updatedB: Booking = {
                  id: row.bookingId,
                  groupId: groupId, 
@@ -690,7 +764,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  status: bookingMeta.status,
                  totalPrice: thisPrice, 
                  paidAmount: thisPaid,
-                 createdAt: new Date().toISOString(), 
+                 // FIX: Preserve original createdAt
+                 createdAt: existingBooking?.createdAt || new Date().toISOString(), 
                  createdBy: currentUser.id,
                  notes: bookingMeta.notes,
                  tags: bookingMeta.tags
@@ -720,7 +795,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
          }
      });
 
-     // --- PREPARE RECEIPT DATA ---
+     // --- PREPARE RECEIPT DATA FOR TICKET ---
      const receiptRooms = validRows.map(row => {
          const room = rooms.find(r => r.id === row.roomId);
          const type = roomTypes.find(t => t.id === room?.typeId);
@@ -747,6 +822,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      });
 
      setShowModal(false);
+     setShowTicketModal(true); // Open Ticket Modal
      onRefresh();
   };
 
@@ -822,61 +898,88 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
 
   return (
-    <div className="h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
-       {/* Filters Header (Same as before) */}
-       <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-4 transition-all">
-          <div className="flex flex-wrap justify-between items-center gap-4">
-              <div className="flex bg-gray-100 p-1.5 rounded-xl">
-                  {(['DAY', 'WEEK', 'MONTH'] as ViewMode[]).map(mode => (
-                      <button
-                        key={mode}
-                        onClick={() => setTimelineMode(mode)}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${timelineMode === mode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                          {mode === 'DAY' ? 'Theo Ngày' : mode === 'WEEK' ? 'Theo Tuần' : 'Theo Tháng'}
-                      </button>
-                  ))}
+    <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
+       {/* New Filter Header */}
+       <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all">
+          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+              {/* Filter Type Dropdown */}
+              <div className="relative">
+                  <select 
+                    value={filters.status}
+                    onChange={e => setFilters({...filters, status: e.target.value})}
+                    className="w-full md:w-auto appearance-none pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                  >
+                      <option value="STAYING">Thời gian lưu trú</option>
+                      <option value="ARRIVING">Thời gian nhận</option>
+                      <option value="DEPARTING">Thời gian trả</option>
+                  </select>
+                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={16} />
               </div>
-              <div className="flex-1 max-w-md relative">
-                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18}/>
-                   <input 
-                      className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm transition-all text-gray-900 placeholder:text-gray-400"
-                      placeholder="Tìm tên khách, SĐT, Mã booking..."
-                      value={filters.search}
-                      onChange={e => setFilters({...filters, search: e.target.value})}
-                   />
+
+              {/* View Mode Dropdown */}
+              <div className="relative">
+                  <select 
+                    value={timelineMode}
+                    onChange={e => setTimelineMode(e.target.value as ViewMode)}
+                    className="w-full md:w-auto appearance-none pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                  >
+                      <option value="DAY">Ngày</option>
+                      <option value="WEEK">Tuần</option>
+                      <option value="MONTH">Tháng</option>
+                  </select>
+                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={16} />
               </div>
-              <div className="flex gap-3">
+
+              {/* Date Range Navigator */}
+              <div className="flex items-center bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden h-[42px] w-full md:w-auto">
+                   <button 
+                      onClick={() => handleNavigate('PREV')}
+                      className="h-full px-2 hover:bg-gray-100 text-gray-500 border-r border-gray-100 transition-colors"
+                   >
+                      <ChevronLeft size={20}/>
+                   </button>
+                   
+                   <div className="relative h-full flex-1 md:flex-none flex items-center justify-center px-4 min-w-[150px] md:min-w-[200px] cursor-pointer hover:bg-gray-50 transition-colors group">
+                       <span className="text-xs md:text-sm font-bold text-green-700 capitalize truncate">{dateRangeLabel}</span>
+                       <input 
+                          type={timelineMode === 'MONTH' ? "month" : "date"}
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                          onChange={handleDateInput}
+                       />
+                   </div>
+
+                   <button 
+                      onClick={() => handleNavigate('NEXT')}
+                      className="h-full px-2 hover:bg-gray-100 text-gray-500 border-l border-gray-100 transition-colors"
+                   >
+                      <ChevronRight size={20}/>
+                   </button>
+              </div>
+          </div>
+
+          <div className="flex gap-2 md:gap-3 items-center md:ml-auto">
+                 <div className="relative flex-1 md:flex-none">
+                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16}/>
+                     <input 
+                        className="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm transition-all text-gray-900 placeholder:text-gray-400 w-full md:w-48"
+                        placeholder="Tìm kiếm..."
+                        value={filters.search}
+                        onChange={e => setFilters({...filters, search: e.target.value})}
+                     />
+                 </div>
+                 
                  <div className="flex bg-gray-100 p-1 rounded-lg">
                       <button onClick={() => setViewType('GRID')} className={`p-2 rounded-md transition-all ${viewType==='GRID'?'bg-white shadow text-blue-600':'text-gray-500'}`}><LayoutGrid size={20}/></button>
                       <button onClick={() => setViewType('LIST')} className={`p-2 rounded-md transition-all ${viewType==='LIST'?'bg-white shadow text-blue-600':'text-gray-500'}`}><ListIcon size={20}/></button>
                  </div>
-                 {canAdd ? (
-                    <button onClick={handleManualCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-semibold shadow-md shadow-blue-200 transition-all active:scale-95"><Plus size={20} /> Đặt phòng</button>
-                 ) : (
-                    <button disabled className="bg-gray-100 text-gray-400 px-5 py-2.5 rounded-xl flex items-center gap-2 font-semibold cursor-not-allowed border border-gray-200"><Lock size={16} /> Đặt phòng</button>
+
+                 {canAdd && (
+                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                        <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
+                    </button>
                  )}
-              </div>
           </div>
-          {/* ... existing filters ... */}
-          <div className="flex flex-wrap gap-3 items-center pt-2 border-t border-gray-50">
-               <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}>
-                   <option value="ALL">Tất cả trạng thái</option>
-                   <option value="STAYING">Đang lưu trú</option>
-                   <option value="ARRIVING">Sắp đến</option>
-                   <option value="DEPARTING">Sắp đi</option>
-               </select>
-               <select className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-100 text-gray-700" value={filters.typeId} onChange={e => setFilters({...filters, typeId: e.target.value})}>
-                   <option value="ALL">Tất cả hạng phòng</option>
-                   {roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-               </select>
-               <div className="ml-auto flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1">
-                   <button onClick={() => setStartDate(timelineMode === 'DAY' ? addDays(startDate, -1) : timelineMode === 'WEEK' ? addDays(startDate, -7) : addDays(startDate, -30))} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-600"><ChevronLeft size={18}/></button>
-                   <div className="w-40"><div className="text-center font-bold text-sm text-gray-700 py-1.5 cursor-pointer hover:bg-gray-50 rounded">{startDate.toLocaleDateString('vi-VN')}</div></div>
-                   <button onClick={() => setStartDate(timelineMode === 'DAY' ? addDays(startDate, 1) : timelineMode === 'WEEK' ? addDays(startDate, 7) : addDays(startDate, 30))} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-600"><ChevronRight size={18}/></button>
-               </div>
-          </div>
-      </div>
+       </div>
 
       {/* MAIN CONTENT */}
       <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col relative">
@@ -884,7 +987,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
              <div className="flex-1 overflow-auto no-scrollbar relative">
                  <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative h-full min-h-full">
                      <div className="sticky top-0 z-40 bg-gray-50 border-b flex h-14 shadow-sm ring-1 ring-gray-200">
-                         <div className="w-40 flex-shrink-0 border-r p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-50 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">Phòng</div>
+                         <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-50 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base">Phòng</div>
                          <div className="flex-1 grid" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                              {timeSlots.map((slot, i) => {
                                  const isCurrent = isCurrentTimeSlot(slot);
@@ -898,9 +1001,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                      </div>
                      {filteredRooms.map(room => (
                          <div key={room.id} className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
-                             <div className="w-40 flex-shrink-0 border-r p-3 flex flex-col justify-center bg-white sticky left-0 z-30 border-r-gray-200 group-hover:bg-gray-50 transition-colors shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                                 <div className="font-bold text-lg text-gray-800">{room.number}</div>
-                                 <div className="text-xs text-gray-500 truncate mt-1">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
+                             <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center bg-white sticky left-0 z-30 border-r-gray-200 group-hover:bg-gray-50 transition-colors shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                                 <div className="font-bold text-base md:text-lg text-gray-800">{room.number}</div>
+                                 <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
                              </div>
                              <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                                  {timeSlots.map((slot) => renderGridCell(room, slot))}
@@ -909,7 +1012,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         const bStart = new Date(b.checkInDate);
                                         const bEnd = new Date(b.checkOutDate);
                                         const viewStart = timeSlots[0];
-                                        const viewEnd = timelineMode === 'DAY' ? addHours(viewStart, 24) : addDays(viewStart, gridColumns);
+                                        // Specific viewEnd calculation for render limits
+                                        const viewEnd = timelineMode === 'DAY' 
+                                            ? addHours(viewStart, 24) 
+                                            : addDays(viewStart, gridColumns);
+
                                         if (bEnd <= viewStart || bStart >= viewEnd) return null;
                                         const totalDuration = viewEnd.getTime() - viewStart.getTime();
                                         const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
@@ -929,7 +1036,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                                         <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>
                                                     )}
                                                 </div>
-                                                <div className="font-bold truncate text-xs">{b.guestName}</div>
+                                                <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
                                                 <div className="flex gap-0.5 mt-1">
                                                     {bookingTags.map(t => (
                                                         <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
@@ -1027,36 +1134,45 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
       {/* CREATE/EDIT MODAL */}
       {showModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-[1200px] overflow-hidden animate-fade-in border border-white/20">
-                  <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4">
+              <div className="bg-white md:rounded-3xl shadow-2xl w-full max-w-[1200px] h-full md:h-auto md:max-h-[95vh] overflow-hidden animate-fade-in border border-white/20 flex flex-col">
+                  <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-white flex-shrink-0">
                       <div>
-                          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                          <h3 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
                               {isEditMode ? 'Chi tiết đặt phòng' : 'Tạo đặt phòng mới'}
                               {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full flex items-center gap-1"><Users size={12}/> Khách đoàn</span>}
                           </h3>
-                          {bookingMeta.id && <p className="text-sm text-gray-400 font-mono mt-0.5">#{bookingMeta.id} {bookingMeta.groupId ? `(Nhóm: ${bookingMeta.groupId})` : ''}</p>}
+                          {bookingMeta.id && <p className="text-xs md:text-sm text-gray-400 font-mono mt-0.5">#{bookingMeta.id} {bookingMeta.groupId ? `(Nhóm: ${bookingMeta.groupId})` : ''}</p>}
                       </div>
                       <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 rounded-full p-2 hover:bg-gray-100"><X size={20} /></button>
                   </div>
-                  <div className="p-6 overflow-y-auto max-h-[80vh]">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+                  
+                  <div className="p-4 md:p-6 overflow-y-auto flex-1">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 mb-6 md:mb-8">
                           <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1.5 ml-1">Tên khách hàng</label><input type="text" disabled={isReadOnly} className="w-full bg-white border border-gray-200 text-gray-900 font-medium p-3 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none disabled:bg-gray-50 disabled:text-gray-500" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} /></div>
                           <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1.5 ml-1">Số điện thoại</label><input type="text" disabled={isReadOnly} className="w-full bg-white border border-gray-200 text-gray-900 font-medium p-3 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none disabled:bg-gray-50 disabled:text-gray-500" placeholder="Nhập số điện thoại..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} /></div>
                       </div>
 
-                      <div className="border border-emerald-100 rounded-xl mb-4 shadow-sm bg-white">
-                          <div className="bg-emerald-50 flex text-xs font-bold text-emerald-800 p-4 items-center uppercase tracking-wider">
+                      <div className="border border-emerald-100 rounded-xl mb-4 shadow-sm bg-white overflow-hidden">
+                          <div className="bg-emerald-50 flex text-xs font-bold text-emerald-800 p-3 md:p-4 items-center uppercase tracking-wider hidden md:flex">
                             <div className="w-[15%]">Hạng phòng</div><div className="w-[15%]">Phòng</div><div className="w-[22%]">Nhận phòng</div><div className="w-[22%]">Trả phòng</div><div className="w-[12%] text-center">Dự kiến</div><div className="w-[14%] text-right">Xóa</div>
                           </div>
                           {bookingRows.map((row, idx) => (
-                             <div key={row.tempId} className="flex items-center p-3 border-t border-emerald-100 bg-white hover:bg-emerald-50/20 transition-colors gap-3">
-                                <div className="w-[15%] text-sm font-semibold text-gray-600 truncate px-2">{rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}</div>
-                                <div className="w-[15%]"><select disabled={isReadOnly} className="w-full border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 bg-white disabled:bg-gray-50 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}><option value="">Chọn</option>{rooms.map(r => (<option key={r.id} value={r.id}>{r.number}</option>))}</select></div>
-                                <div className="w-[22%]"><DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} /></div>
-                                <div className="w-[22%]"><DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} /></div>
-                                <div className="w-[12%] text-center text-sm font-bold text-gray-800">{getDurationText(row.checkIn, row.checkOut)}</div>
-                                <div className="w-[14%] text-right px-2">
+                             <div key={row.tempId} className="flex flex-col md:flex-row items-start md:items-center p-3 border-t border-emerald-100 bg-white hover:bg-emerald-50/20 transition-colors gap-3 relative">
+                                <div className="md:w-[15%] text-sm font-semibold text-gray-600 truncate px-2 w-full flex justify-between md:block">
+                                    <span className="md:hidden text-xs text-gray-400 uppercase">Hạng:</span>
+                                    {rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}
+                                </div>
+                                <div className="md:w-[15%] w-full">
+                                    <select disabled={isReadOnly} className="w-full border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 bg-white disabled:bg-gray-50 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}><option value="">Chọn phòng</option>{rooms.map(r => (<option key={r.id} value={r.id}>{r.number}</option>))}</select>
+                                </div>
+                                <div className="md:w-[22%] w-full"><DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} /></div>
+                                <div className="md:w-[22%] w-full"><DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} /></div>
+                                <div className="md:w-[12%] w-full text-center text-sm font-bold text-gray-800 flex md:block justify-between items-center md:bg-transparent bg-gray-50 p-2 md:p-0 rounded">
+                                    <span className="md:hidden text-xs text-gray-500">Thời gian:</span>
+                                    {getDurationText(row.checkIn, row.checkOut)}
+                                </div>
+                                <div className="md:w-[14%] w-full text-right px-2 absolute top-2 right-2 md:static md:block">
                                     {!isReadOnly && (
                                         <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-red-50 rounded"><Trash2 size={18} /></button>
                                     )}
@@ -1066,7 +1182,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
 
                       {!isReadOnly && (
-                        <div className="mb-8"><button onClick={handleAddRow} className="flex items-center gap-2 px-4 py-2 border-2 border-green-500 text-green-600 rounded-full font-bold hover:bg-green-50 transition-colors text-sm"><PlusCircle size={18} /> Chọn thêm phòng (Thêm vào đoàn)</button></div>
+                        <div className="mb-8"><button onClick={handleAddRow} className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 border-2 border-green-500 text-green-600 rounded-full font-bold hover:bg-green-50 transition-colors text-sm"><PlusCircle size={18} /> Chọn thêm phòng (Thêm vào đoàn)</button></div>
                       )}
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1123,11 +1239,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                           </div>
                       </div>
 
-                      <div className="flex justify-between items-center pt-6 mt-6 border-t border-gray-100">
-                          <div className="flex gap-2 items-center">
+                      <div className="flex flex-col md:flex-row justify-between items-center pt-6 mt-6 border-t border-gray-100 gap-4">
+                          <div className="flex flex-wrap gap-2 items-center w-full md:w-auto">
                              {isEditMode && canEdit && (
                                 <>
-                                 <select className="border border-gray-200 p-3 rounded-xl font-semibold bg-gray-50 text-gray-700 outline-none focus:border-blue-500" value={bookingMeta.status} onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}>
+                                 <select className="border border-gray-200 p-3 rounded-xl font-semibold bg-gray-50 text-gray-700 outline-none focus:border-blue-500 w-full md:w-auto" value={bookingMeta.status} onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}>
                                      {!['CHECKED_IN', 'CHECKED_OUT'].includes(bookingMeta.status) && (
                                          <option value={bookingMeta.status} disabled>{bookingMeta.status}</option>
                                      )}
@@ -1144,37 +1260,41 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                                 e.stopPropagation();
                                                 handleDeleteClick();
                                             }}
-                                            className="flex items-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-2 bg-red-50 font-bold border border-red-100" 
+                                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-0 md:ml-2 bg-red-50 font-bold border border-red-100" 
                                             title={originalBookingIds.length > 1 ? "Xóa toàn bộ đoàn" : "Xóa đơn"}
                                         >
                                             <Trash2 size={20} /> {originalBookingIds.length > 1 ? "Xóa đoàn" : "Xóa đơn"}
                                         </button>
                                     ) : (
-                                        <div className="flex items-center gap-2 ml-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-fade-in">
-                                            <AlertTriangle size={18} className="text-red-600 ml-1" />
-                                            <span className="text-sm font-bold text-red-700 mr-1">Chắc chắn xóa?</span>
-                                            <button 
-                                                onClick={handleConfirmDelete} 
-                                                className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm transition-colors"
-                                            >
-                                                Có, xóa ngay
-                                            </button>
-                                            <button 
-                                                onClick={() => setShowDeleteConfirm(false)} 
-                                                className="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors"
-                                            >
-                                                Hủy
-                                            </button>
+                                        <div className="flex flex-col md:flex-row items-center gap-2 ml-0 md:ml-2 bg-red-50 p-2 rounded-xl border border-red-100 animate-fade-in w-full md:w-auto">
+                                            <div className="flex items-center">
+                                                <AlertTriangle size={18} className="text-red-600 ml-1" />
+                                                <span className="text-sm font-bold text-red-700 mr-1">Chắc chắn xóa?</span>
+                                            </div>
+                                            <div className="flex gap-2 w-full md:w-auto">
+                                                <button 
+                                                    onClick={handleConfirmDelete} 
+                                                    className="flex-1 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm transition-colors"
+                                                >
+                                                    Có
+                                                </button>
+                                                <button 
+                                                    onClick={() => setShowDeleteConfirm(false)} 
+                                                    className="flex-1 px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors"
+                                                >
+                                                    Hủy
+                                                </button>
+                                            </div>
                                         </div>
                                     )
                                  )}
                                 </>
                              )}
                           </div>
-                          <div className="flex gap-3">
-                              <button onClick={() => setShowModal(false)} className="px-6 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold transition-colors">Đóng</button>
+                          <div className="flex gap-3 w-full md:w-auto">
+                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-6 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold transition-colors bg-gray-50 md:bg-transparent">Đóng</button>
                               {!isReadOnly && (
-                                <button onClick={handleSaveBooking} className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-transform active:scale-95 flex items-center gap-2"><Check size={20} /> Lưu Booking</button>
+                                <button onClick={handleSaveBooking} className="flex-1 md:flex-none px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-transform active:scale-95 flex items-center justify-center gap-2"><Check size={20} /> Lưu</button>
                               )}
                           </div>
                       </div>
@@ -1182,7 +1302,97 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               </div>
           </div>
       )}
-      {/* Ticket Modal ... (kept same but omitted for brevity if no changes, but since file provided was full file, assuming I should include it if not already there, but here I'm using the provided full file approach) */}
+
+      {/* NEW: TICKET MODAL */}
+      {showTicketModal && receiptData && (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+               <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full animate-fade-in relative">
+                   <button onClick={() => setShowTicketModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1"><X size={20}/></button>
+                   
+                   <div id="print-area">
+                        <div className="text-center mb-6">
+                            <h2 className="text-xl font-bold uppercase text-gray-900">Xác Nhận Đặt Phòng</h2>
+                            <div className="w-20 h-1 bg-gray-200 mx-auto mt-2"></div>
+                        </div>
+
+                        <div className="text-sm text-gray-800 space-y-3">
+                            <div className="grid grid-cols-3 gap-2">
+                                <span className="font-bold text-gray-500">Khách hàng:</span>
+                                <span className="col-span-2 font-semibold">{receiptData.guestName}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                                <span className="font-bold text-gray-500">Số điện thoại:</span>
+                                <span className="col-span-2">{receiptData.guestPhone || '--'}</span>
+                            </div>
+
+                            <div className="border-t border-dashed border-gray-300 my-4 py-3 space-y-4">
+                                {receiptData.rooms.map((room: any, idx: number) => (
+                                    <div key={idx} className="pb-3 border-b border-dashed border-gray-200 last:border-0 last:pb-0">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="font-bold text-blue-600 text-base">{room.roomNumber}</span>
+                                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600">{room.typeName}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mb-2 italic">Chi nhánh: {room.branchName}</div>
+                                        
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                            <span className="text-gray-500">Nhận phòng:</span>
+                                            <span className="font-medium">{formatTicketDate(room.checkIn)}</span>
+                                            <span className="text-gray-500">Trả phòng:</span>
+                                            <span className="font-medium">{formatTicketDate(room.checkOut)}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="bg-gray-50 p-3 rounded-lg space-y-2 border border-gray-100">
+                                <div className="flex justify-between items-center">
+                                    <span className="font-bold text-gray-600">Tổng bill:</span>
+                                    <span className="font-bold text-lg text-gray-900">{formatNumber(receiptData.total)} đ</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="font-bold text-gray-600">Đã thanh toán:</span>
+                                    <span className="font-bold text-blue-600">{formatNumber(receiptData.paid)} đ</span>
+                                </div>
+                                <div className="border-t border-gray-200 pt-2 flex justify-between items-center">
+                                    <span className="font-bold text-gray-600">Còn lại:</span>
+                                    <span className={`font-bold ${receiptData.total - receiptData.paid > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                                        {formatNumber(receiptData.total - receiptData.paid)} đ
+                                    </span>
+                                </div>
+                            </div>
+
+                            {(receiptData.tags?.length > 0 || receiptData.notes) && (
+                                <div className="pt-2 space-y-2">
+                                    {receiptData.tags.length > 0 && (
+                                        <div className="flex gap-1 flex-wrap">
+                                            {receiptData.tags.map((t: Tag) => (
+                                                <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold" style={{backgroundColor: t.color}}>
+                                                    {t.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {receiptData.notes && (
+                                        <div className="text-xs italic text-gray-500 bg-yellow-50 p-2 rounded border border-yellow-100">
+                                            Ghi chú: {receiptData.notes}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <p className="text-xs text-center italic text-gray-400 mt-6">Cảm ơn quý khách đã sử dụng dịch vụ!</p>
+                   </div>
+                   
+                   <div className="mt-6 flex gap-3">
+                       <button onClick={() => setShowTicketModal(false)} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors">Đóng</button>
+                       <button className="flex-1 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-200">
+                           <Printer size={18}/> In phiếu
+                       </button>
+                   </div>
+               </div>
+          </div>
+      )}
     </div>
   );
 };

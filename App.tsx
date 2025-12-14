@@ -23,6 +23,9 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [viewMode, setViewMode] = useState<'RECEPTION' | 'MANAGEMENT'>('RECEPTION');
   
+  // --- Mobile Sidebar State ---
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
   // --- Data State ---
   const [isLoading, setIsLoading] = useState(true);
   const [dataTick, setDataTick] = useState(0); // Signal to refresh data with latest state
@@ -311,10 +314,12 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <Sidebar 
         currentPage={currentPage} 
-        onNavigate={setCurrentPage} 
+        onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
         onLogout={handleLogout}
         currentUser={currentUser}
         viewMode={viewMode}
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
       />
       
       <Header 
@@ -324,9 +329,11 @@ const App: React.FC = () => {
         onPropertyChange={setCurrentPropertyId}
         viewMode={viewMode}
         onToggleMode={toggleViewMode}
+        onMenuClick={() => setIsMobileMenuOpen(true)}
       />
 
-      <main className="ml-64 pt-16 p-6 min-h-screen">
+      {/* Adjust main content margin for mobile */}
+      <main className="md:ml-64 pt-16 p-3 md:p-6 min-h-screen transition-all duration-300">
         <div className="max-w-7xl mx-auto h-full">
           {currentPage === 'dashboard' && currentUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
             <Dashboard bookings={bookings} rooms={rooms} />
@@ -345,8 +352,6 @@ const App: React.FC = () => {
               currentUser={currentUser} // Pass full user object
             />
           )}
-
-          {/* Removed Bookings Page Component */}
 
           {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
               <Reports 

@@ -209,24 +209,24 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[500px]">
-      <div className="flex border-b overflow-x-auto">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[500px] flex flex-col">
+      <div className="flex border-b overflow-x-auto no-scrollbar">
          {['ROOMS', 'TYPES', 'BRANCHES', 'TAGS'].map((tab) => (
              <button 
                 key={tab}
                 onClick={() => { setActiveTab(tab as any); resetForms(); }}
-                className={`px-6 py-4 font-medium text-sm transition-colors border-b-2 whitespace-nowrap ${activeTab === tab ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
+                className={`px-4 md:px-6 py-4 font-medium text-sm transition-colors border-b-2 whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
              >
                  {tab === 'ROOMS' ? 'Quản lý Phòng' : tab === 'TYPES' ? 'Hạng phòng & Giá' : tab === 'TAGS' ? 'Quản lý Tag' : 'Chi nhánh'}
              </button>
          ))}
       </div>
 
-      <div className="p-6">
+      <div className="p-4 md:p-6 flex-1 overflow-hidden flex flex-col">
           {/* ROOMS TAB */}
           {activeTab === 'ROOMS' && (
-              <div className="space-y-6">
-                  <div className={`grid grid-cols-5 gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="space-y-6 flex-1 flex flex-col overflow-hidden">
+                  <div className={`grid grid-cols-1 md:grid-cols-5 gap-3 md:gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
                       <input placeholder="Số phòng" className="border p-2 rounded" value={newRoom.number || ''} onChange={e => setNewRoom({...newRoom, number: e.target.value})} />
                       <input placeholder="Tầng" type="number" className="border p-2 rounded" value={newRoom.floor || ''} onChange={e => setNewRoom({...newRoom, floor: Number(e.target.value)})} />
                       <select className="border p-2 rounded" value={newRoom.typeId || ''} onChange={e => setNewRoom({...newRoom, typeId: e.target.value})}>
@@ -238,7 +238,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                           {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                       <div className="flex gap-2">
-                        <button onClick={handleSaveRoom} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
+                        <button onClick={handleSaveRoom} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 py-2 md:py-0 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
                             {editingId ? <Save size={18}/> : <Plus size={18}/>} 
                             {editingId ? 'Lưu' : 'Thêm'}
                         </button>
@@ -249,8 +249,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                   </div>
                   <div className="overflow-auto max-h-[500px]">
                       <table className="w-full text-sm text-left">
-                          <thead className="bg-gray-100">
-                              <tr><th className="p-3">Thứ tự</th><th>Phòng</th><th>Tầng</th><th>Hạng</th><th>Chi nhánh</th><th className="text-right">Thao tác</th></tr>
+                          <thead className="bg-gray-100 sticky top-0">
+                              <tr><th className="p-3">Thứ tự</th><th className="p-3">Phòng</th><th className="p-3">Tầng</th><th className="p-3">Hạng</th><th className="p-3">Chi nhánh</th><th className="p-3 text-right">Thao tác</th></tr>
                           </thead>
                           <tbody>
                               {rooms.map((r, idx) => (
@@ -263,8 +263,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                                       </td>
                                       <td className="p-3 font-bold">{r.number}</td>
                                       <td className="p-3">{r.floor}</td>
-                                      <td className="p-3">{roomTypes.find(t => t.id === r.typeId)?.name}</td>
-                                      <td className="p-3">{properties.find(p => p.id === r.propertyId)?.name}</td>
+                                      <td className="p-3 min-w-[120px]">{roomTypes.find(t => t.id === r.typeId)?.name}</td>
+                                      <td className="p-3 min-w-[120px]">{properties.find(p => p.id === r.propertyId)?.name}</td>
                                       <td className="p-3 text-right">
                                           <div className="flex justify-end gap-2">
                                               <button onClick={() => startEditRoom(r)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded"><Pencil size={16}/></button>
@@ -281,13 +281,13 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
 
           {/* TYPES TAB */}
           {activeTab === 'TYPES' && (
-               <div className="space-y-6">
-               <div className={`grid grid-cols-4 gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+               <div className="space-y-6 flex-1 flex flex-col overflow-hidden">
+               <div className={`grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
                    <input placeholder="Tên hạng phòng" className="border p-2 rounded" value={newType.name || ''} onChange={e => setNewType({...newType, name: e.target.value})} />
                    <input placeholder="Giá (VNĐ)" type="number" className="border p-2 rounded" value={newType.price || ''} onChange={e => setNewType({...newType, price: Number(e.target.value)})} />
                    <input placeholder="Sức chứa" type="number" className="border p-2 rounded" value={newType.capacity || ''} onChange={e => setNewType({...newType, capacity: Number(e.target.value)})} />
                    <div className="flex gap-2">
-                        <button onClick={handleSaveType} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
+                        <button onClick={handleSaveType} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 py-2 md:py-0 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
                             {editingId ? <Save size={18}/> : <Plus size={18}/>} 
                             {editingId ? 'Lưu' : 'Thêm'}
                         </button>
@@ -296,9 +296,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                         )}
                    </div>
                </div>
-               <table className="w-full text-sm text-left">
-                       <thead className="bg-gray-100">
-                           <tr><th className="p-3">Thứ tự</th><th>Tên hạng</th><th>Giá chuẩn</th><th>Sức chứa</th><th className="text-right">Thao tác</th></tr>
+               <div className="overflow-auto max-h-[500px]">
+                   <table className="w-full text-sm text-left">
+                       <thead className="bg-gray-100 sticky top-0">
+                           <tr><th className="p-3">Thứ tự</th><th className="p-3">Tên hạng</th><th className="p-3">Giá chuẩn</th><th className="p-3">Sức chứa</th><th className="p-3 text-right">Thao tác</th></tr>
                        </thead>
                        <tbody>
                            {roomTypes.map((t, idx) => (
@@ -323,16 +324,17 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                        </tbody>
                    </table>
                </div>
+               </div>
           )}
 
           {/* BRANCHES TAB */}
            {activeTab === 'BRANCHES' && (
-               <div className="space-y-6">
-               <div className={`grid grid-cols-3 gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+               <div className="space-y-6 flex-1 flex flex-col overflow-hidden">
+               <div className={`grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 p-4 rounded-lg border ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
                    <input placeholder="Tên chi nhánh" className="border p-2 rounded" value={newProp.name || ''} onChange={e => setNewProp({...newProp, name: e.target.value})} />
                    <input placeholder="Địa chỉ" className="border p-2 rounded" value={newProp.address || ''} onChange={e => setNewProp({...newProp, address: e.target.value})} />
                    <div className="flex gap-2">
-                        <button onClick={handleSaveProp} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
+                        <button onClick={handleSaveProp} className={`flex-1 text-white rounded hover:opacity-90 flex items-center justify-center gap-2 py-2 md:py-0 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
                             {editingId ? <Save size={18}/> : <Plus size={18}/>} 
                             {editingId ? 'Lưu' : 'Thêm'}
                         </button>
@@ -341,9 +343,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                         )}
                    </div>
                </div>
-               <table className="w-full text-sm text-left">
-                       <thead className="bg-gray-100">
-                           <tr><th className="p-3">Thứ tự</th><th>Tên chi nhánh</th><th>Địa chỉ</th><th className="text-right">Thao tác</th></tr>
+               <div className="overflow-auto max-h-[500px]">
+                   <table className="w-full text-sm text-left">
+                       <thead className="bg-gray-100 sticky top-0">
+                           <tr><th className="p-3">Thứ tự</th><th className="p-3">Tên chi nhánh</th><th className="p-3">Địa chỉ</th><th className="p-3 text-right">Thao tác</th></tr>
                        </thead>
                        <tbody>
                            {properties.map((p, idx) => (
@@ -355,7 +358,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                                           </div>
                                    </td>
                                    <td className="p-3 font-bold">{p.name}</td>
-                                   <td className="p-3">{p.address}</td>
+                                   <td className="p-3 min-w-[200px]">{p.address}</td>
                                    <td className="p-3 text-right">
                                        <div className="flex justify-end gap-2">
                                            <button onClick={() => startEditProp(p)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded"><Pencil size={16}/></button>
@@ -367,25 +370,26 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                        </tbody>
                    </table>
                </div>
+               </div>
           )}
 
           {/* TAGS TAB */}
           {activeTab === 'TAGS' && (
                <div className="space-y-6">
-                   <div className={`flex gap-4 p-4 rounded-lg border items-end ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
-                       <div className="flex-1">
+                   <div className={`flex flex-col md:flex-row gap-4 p-4 rounded-lg border items-end ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                       <div className="flex-1 w-full">
                            <label className="text-xs font-bold text-gray-500 uppercase">Tên Tag</label>
                            <input placeholder="VD: Combo, Vip..." className="border p-2 rounded w-full mt-1" value={newTag.name || ''} onChange={e => setNewTag({...newTag, name: e.target.value})} />
                        </div>
-                       <div className="flex-1">
+                       <div className="flex-1 w-full">
                            <label className="text-xs font-bold text-gray-500 uppercase">Màu sắc</label>
                            <div className="flex gap-2 mt-1">
                                <input type="color" className="h-10 w-16 p-0 border rounded cursor-pointer" value={newTag.color} onChange={e => setNewTag({...newTag, color: e.target.value})} />
                                <input type="text" className="border p-2 rounded flex-1 uppercase" value={newTag.color} onChange={e => setNewTag({...newTag, color: e.target.value})} />
                            </div>
                        </div>
-                       <div className="flex gap-2 h-10">
-                            <button onClick={handleSaveTag} className={`px-6 text-white rounded font-bold hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
+                       <div className="flex gap-2 h-10 w-full md:w-auto">
+                            <button onClick={handleSaveTag} className={`flex-1 md:flex-none px-6 text-white rounded font-bold hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
                                 {editingId ? <Save size={18}/> : <Plus size={18}/>} 
                                 {editingId ? 'Lưu Tag' : 'Tạo Tag'}
                             </button>
@@ -395,7 +399,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                        </div>
                    </div>
                    
-                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                        {tags.map(t => (
                            <div key={t.id} className={`border rounded-lg p-3 flex justify-between items-center shadow-sm hover:shadow-md transition-shadow bg-white ${editingId === t.id ? 'ring-2 ring-orange-400' : ''}`}>
                                <div className="flex items-center gap-3 cursor-pointer flex-1" onClick={() => startEditTag(t)}>

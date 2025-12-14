@@ -255,12 +255,12 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
     <div className="space-y-6 animate-fade-in pb-10">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-              <h2 className="text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
-              <p className="text-gray-500 text-sm">Thống kê chi tiết theo thời gian thực</p>
+              <h2 className="text-xl md:text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
+              <p className="text-gray-500 text-xs md:text-sm">Thống kê chi tiết theo thời gian thực</p>
           </div>
           
           {/* FILTER BAR */}
-          <div className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-2 items-center">
+          <div className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row gap-2 items-stretch md:items-center">
              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg text-gray-700 font-semibold text-sm">
                  <Filter size={16} />
                  <span>Lọc:</span>
@@ -276,19 +276,19 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
                  ))}
              </select>
 
-             <div className="h-6 w-px bg-gray-300 mx-1"></div>
+             <div className="hidden md:block h-6 w-px bg-gray-300 mx-1"></div>
 
              <div className="flex items-center gap-2">
                  <input 
                     type="date" 
-                    className="border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
+                    className="flex-1 border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
                     value={startDate}
                     onChange={(e) => { setFilterPreset('CUSTOM'); setStartDate(e.target.value); }}
                  />
                  <span className="text-gray-400 font-bold">-</span>
                  <input 
                     type="date" 
-                    className="border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
+                    className="flex-1 border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
                     value={endDate}
                     onChange={(e) => { setFilterPreset('CUSTOM'); setEndDate(e.target.value); }}
                  />
@@ -297,33 +297,33 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       </div>
 
       {/* STATS GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
         
         {/* GROUP 1: CHECKED OUT STATS (Rounded-3xl for consistency) */}
-        <div className="bg-white rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="bg-green-50/50 p-6 border-b border-green-100 flex justify-between items-center">
+        <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
+             <div className="bg-green-50/50 p-4 md:p-6 border-b border-green-100 flex justify-between items-center">
                  <div>
-                     <h3 className="text-green-800 font-bold flex items-center gap-2"><CalendarCheck size={18}/> Khách đã trả phòng</h3>
-                     <p className="text-xs text-green-600 mt-1 font-medium">Dựa trên ngày check-out</p>
+                     <h3 className="text-green-800 font-bold flex items-center gap-2 text-sm md:text-base"><CalendarCheck size={18}/> Khách đã trả phòng</h3>
+                     <p className="text-[10px] md:text-xs text-green-600 mt-1 font-medium">Dựa trên ngày check-out</p>
                  </div>
                  <span className="bg-white text-green-700 font-bold px-3 py-1 rounded-full text-xs border border-green-200 shadow-sm">
                      {checkoutStats.count} Đơn
                  </span>
              </div>
-             <div className="p-6 space-y-4">
+             <div className="p-4 md:p-6 space-y-4">
                  <div className="flex justify-between items-end">
-                     <span className="text-gray-500 text-sm font-medium">Tổng Bill</span>
-                     <span className="text-2xl font-bold text-gray-800 tracking-tight">{formatVND(checkoutStats.totalBill)}</span>
+                     <span className="text-gray-500 text-xs md:text-sm font-medium">Tổng Bill</span>
+                     <span className="text-xl md:text-2xl font-bold text-gray-800 tracking-tight">{formatVND(checkoutStats.totalBill)}</span>
                  </div>
                  <div className="h-px bg-gray-100"></div>
                  <div className="grid grid-cols-2 gap-4">
                      <div>
-                         <span className="text-[11px] text-gray-400 font-bold uppercase block mb-1">Thực thu</span>
-                         <span className="text-green-600 font-bold text-lg">{formatVND(checkoutStats.paid)}</span>
+                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Thực thu</span>
+                         <span className="text-green-600 font-bold text-base md:text-lg">{formatVND(checkoutStats.paid)}</span>
                      </div>
                      <div className="text-right">
-                         <span className="text-[11px] text-gray-400 font-bold uppercase block mb-1">Công nợ</span>
-                         <span className={`${checkoutStats.debt > 0 ? 'text-red-500' : 'text-gray-400'} font-bold text-lg`}>
+                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Công nợ</span>
+                         <span className={`${checkoutStats.debt > 0 ? 'text-red-500' : 'text-gray-400'} font-bold text-base md:text-lg`}>
                              {formatVND(checkoutStats.debt)}
                          </span>
                      </div>
@@ -332,30 +332,30 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
         </div>
 
         {/* GROUP 2: CREATED BOOKINGS STATS (Rounded-3xl for consistency) */}
-        <div className="bg-white rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="bg-blue-50/50 p-6 border-b border-blue-100 flex justify-between items-center">
+        <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
+             <div className="bg-blue-50/50 p-4 md:p-6 border-b border-blue-100 flex justify-between items-center">
                  <div>
-                     <h3 className="text-blue-800 font-bold flex items-center gap-2"><CreditCard size={18}/> Đặt phòng phát sinh</h3>
-                     <p className="text-xs text-blue-600 mt-1 font-medium">Dựa trên ngày tạo đơn</p>
+                     <h3 className="text-blue-800 font-bold flex items-center gap-2 text-sm md:text-base"><CreditCard size={18}/> Đặt phòng phát sinh</h3>
+                     <p className="text-[10px] md:text-xs text-blue-600 mt-1 font-medium">Dựa trên ngày tạo đơn</p>
                  </div>
                  <span className="bg-white text-blue-700 font-bold px-3 py-1 rounded-full text-xs border border-blue-200 shadow-sm">
                      {createdStats.count} Đơn
                  </span>
              </div>
-             <div className="p-6 space-y-4">
+             <div className="p-4 md:p-6 space-y-4">
                  <div className="flex justify-between items-end">
-                     <span className="text-gray-500 text-sm font-medium">Tổng giá trị</span>
-                     <span className="text-2xl font-bold text-gray-800 tracking-tight">{formatVND(createdStats.totalBill)}</span>
+                     <span className="text-gray-500 text-xs md:text-sm font-medium">Tổng giá trị</span>
+                     <span className="text-xl md:text-2xl font-bold text-gray-800 tracking-tight">{formatVND(createdStats.totalBill)}</span>
                  </div>
                  <div className="h-px bg-gray-100"></div>
                  <div className="grid grid-cols-2 gap-4">
                      <div>
-                         <span className="text-[11px] text-gray-400 font-bold uppercase block mb-1">Đã cọc/TT</span>
-                         <span className="text-blue-600 font-bold text-lg">{formatVND(createdStats.paid)}</span>
+                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Đã cọc/TT</span>
+                         <span className="text-blue-600 font-bold text-base md:text-lg">{formatVND(createdStats.paid)}</span>
                      </div>
                      <div className="text-right">
-                         <span className="text-[11px] text-gray-400 font-bold uppercase block mb-1">Chưa thu</span>
-                         <span className={`${createdStats.debt > 0 ? 'text-orange-500' : 'text-gray-400'} font-bold text-lg`}>
+                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Chưa thu</span>
+                         <span className={`${createdStats.debt > 0 ? 'text-orange-500' : 'text-gray-400'} font-bold text-base md:text-lg`}>
                              {formatVND(createdStats.debt)}
                          </span>
                      </div>
@@ -364,40 +364,40 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
         </div>
 
         {/* GROUP 3: PERFORMANCE STATS - iOS WIDGET STYLE */}
-        <div className="bg-white rounded-[32px] shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] border border-gray-100 overflow-hidden lg:col-span-2 xl:col-span-1 flex flex-col">
-             <div className="px-8 pt-8 pb-4">
-                 <h3 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+        <div className="bg-white rounded-2xl md:rounded-[32px] shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] border border-gray-100 overflow-hidden md:col-span-2 xl:col-span-1 flex flex-col">
+             <div className="px-6 md:px-8 pt-6 md:pt-8 pb-4">
+                 <h3 className="text-xl md:text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
                     Hiệu suất
                  </h3>
                  <p className="text-[13px] font-medium text-gray-400 mt-1">Chỉ số vận hành 24h</p>
              </div>
 
-             <div className="p-6 pt-2 grid grid-cols-2 gap-5 h-full">
+             <div className="p-4 md:p-6 pt-2 grid grid-cols-2 gap-4 md:gap-5 h-full">
                  {/* OCC Widget */}
-                 <div className="bg-[#F5F5F7] rounded-[24px] p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
-                     <div className="mb-4 p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-purple-600 border border-purple-50/50">
-                        <BedDouble size={28} strokeWidth={2}/>
+                 <div className="bg-[#F5F5F7] rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
+                     <div className="mb-4 p-2 md:p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-purple-600 border border-purple-50/50">
+                        <BedDouble size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
                      </div>
 
-                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Công suất</p>
-                     <p className="text-4xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.occ}%</p>
+                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Công suất</p>
+                     <p className="text-2xl md:text-4xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.occ}%</p>
                      <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
-                        <p className="text-[11px] font-semibold text-gray-500">
+                        <p className="text-[10px] md:text-[11px] font-semibold text-gray-500 whitespace-nowrap">
                             {performanceStats.occupiedInventory}/{performanceStats.totalInventory} Phòng
                         </p>
                      </div>
                  </div>
                  
                  {/* ADR Widget */}
-                 <div className="bg-[#F5F5F7] rounded-[24px] p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
-                     <div className="mb-4 p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-teal-600 border border-teal-50/50">
-                        <DollarSign size={28} strokeWidth={2}/>
+                 <div className="bg-[#F5F5F7] rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
+                     <div className="mb-4 p-2 md:p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-teal-600 border border-teal-50/50">
+                        <DollarSign size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
                      </div>
 
-                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Bình quân</p>
-                     <p className="text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.adr.toLocaleString('vi-VN')}</p>
+                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Bình quân</p>
+                     <p className="text-xl md:text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.adr.toLocaleString('vi-VN')}</p>
                      <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
-                        <p className="text-[11px] font-semibold text-gray-500">
+                        <p className="text-[10px] md:text-[11px] font-semibold text-gray-500">
                             VNĐ / Đêm
                         </p>
                      </div>
@@ -408,51 +408,55 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       </div>
 
       {/* LINE CHART SECTION (Consistent Radius) */}
-      <div className="bg-white p-6 rounded-[24px] shadow-sm border border-gray-200 w-full">
+      <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 w-full overflow-hidden">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <div>
-                  <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">Biểu đồ doanh thu thực tế</h3>
-                  <p className="text-sm text-gray-500 mt-1">
+                  <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">Biểu đồ doanh thu thực tế</h3>
+                  <p className="text-xs md:text-sm text-gray-500 mt-1">
                       Thống kê theo ngày khách trả phòng (Check-out)
                   </p>
               </div>
-              <div className="flex gap-4 text-xs font-medium bg-gray-50 px-3 py-2 rounded-lg border border-gray-100">
+              <div className="flex gap-4 text-xs font-medium bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 w-full md:w-auto justify-between md:justify-start">
                    <div className="flex items-center gap-2 text-green-700">
                        <ArrowUpCircle size={14} className="text-red-500" />
-                       <span>Cao nhất: {formatCompactVND(maxVal)}</span>
+                       <span className="hidden sm:inline">Cao nhất: </span>
+                       <span>{formatCompactVND(maxVal)}</span>
                    </div>
                    <div className="w-px h-4 bg-gray-300"></div>
                    <div className="flex items-center gap-2 text-orange-700">
                        <ArrowDownCircle size={14} className="text-orange-500" />
-                       <span>Thấp nhất: {formatCompactVND(minVal)}</span>
+                       <span className="hidden sm:inline">Thấp nhất: </span>
+                       <span>{formatCompactVND(minVal)}</span>
                    </div>
               </div>
           </div>
 
-          <div className="h-[350px] w-full">
+          <div className="h-[250px] md:h-[350px] w-full -ml-2 md:ml-0">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                 <XAxis 
                     dataKey="name" 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{fill: '#9ca3af', fontSize: 12}} 
+                    tick={{fill: '#9ca3af', fontSize: 10}} 
                     dy={10} 
-                    padding={{left: 20, right: 20}}
+                    padding={{left: 10, right: 10}}
+                    interval="preserveStartEnd"
                 />
                 <YAxis 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{fill: '#9ca3af', fontSize: 12}} 
+                    tick={{fill: '#9ca3af', fontSize: 10}} 
                     tickFormatter={(val) => formatCompactVND(val)} 
+                    width={30}
                 />
                 <Tooltip 
                     formatter={(value: number) => formatVND(value)} 
                     contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} 
                     labelStyle={{color: '#6b7280', marginBottom: '0.25rem', fontSize: '0.75rem'}}
                 />
-                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px'}} />
+                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '12px'}} />
                 
                 {/* Tổng Bill - Green Line */}
                 <Line 
