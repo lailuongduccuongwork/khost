@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -902,41 +902,44 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
        {/* New Filter Header */}
        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all">
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-              {/* Filter Type Dropdown */}
-              <div className="relative">
-                  <select 
-                    value={filters.status}
-                    onChange={e => setFilters({...filters, status: e.target.value})}
-                    className="w-full md:w-auto appearance-none pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
-                  >
-                      <option value="STAYING">Thời gian lưu trú</option>
-                      <option value="ARRIVING">Thời gian nhận</option>
-                      <option value="DEPARTING">Thời gian trả</option>
-                  </select>
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={16} />
-              </div>
+              
+              <div className="flex gap-2 w-full md:w-auto">
+                  {/* Filter Type Dropdown */}
+                  <div className="relative flex-1 md:flex-none">
+                      <select 
+                        value={filters.status}
+                        onChange={e => setFilters({...filters, status: e.target.value})}
+                        className="w-full appearance-none pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                      >
+                          <option value="STAYING">Lưu trú</option>
+                          <option value="ARRIVING">Đến</option>
+                          <option value="DEPARTING">Đi</option>
+                      </select>
+                      <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={14} />
+                  </div>
 
-              {/* View Mode Dropdown */}
-              <div className="relative">
-                  <select 
-                    value={timelineMode}
-                    onChange={e => setTimelineMode(e.target.value as ViewMode)}
-                    className="w-full md:w-auto appearance-none pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
-                  >
-                      <option value="DAY">Ngày</option>
-                      <option value="WEEK">Tuần</option>
-                      <option value="MONTH">Tháng</option>
-                  </select>
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={16} />
+                  {/* View Mode Dropdown */}
+                  <div className="relative flex-1 md:flex-none">
+                      <select 
+                        value={timelineMode}
+                        onChange={e => setTimelineMode(e.target.value as ViewMode)}
+                        className="w-full appearance-none pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                      >
+                          <option value="DAY">Ngày</option>
+                          <option value="WEEK">Tuần</option>
+                          <option value="MONTH">Tháng</option>
+                      </select>
+                      <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={14} />
+                  </div>
               </div>
 
               {/* Date Range Navigator */}
-              <div className="flex items-center bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden h-[42px] w-full md:w-auto">
+              <div className="flex items-center bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden h-[40px] md:h-[42px] w-full md:w-auto">
                    <button 
                       onClick={() => handleNavigate('PREV')}
-                      className="h-full px-2 hover:bg-gray-100 text-gray-500 border-r border-gray-100 transition-colors"
+                      className="h-full px-3 hover:bg-gray-100 text-gray-500 border-r border-gray-100 transition-colors"
                    >
-                      <ChevronLeft size={20}/>
+                      <ChevronLeft size={18}/>
                    </button>
                    
                    <div className="relative h-full flex-1 md:flex-none flex items-center justify-center px-4 min-w-[150px] md:min-w-[200px] cursor-pointer hover:bg-gray-50 transition-colors group">
@@ -950,9 +953,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
                    <button 
                       onClick={() => handleNavigate('NEXT')}
-                      className="h-full px-2 hover:bg-gray-100 text-gray-500 border-l border-gray-100 transition-colors"
+                      className="h-full px-3 hover:bg-gray-100 text-gray-500 border-l border-gray-100 transition-colors"
                    >
-                      <ChevronRight size={20}/>
+                      <ChevronRight size={18}/>
                    </button>
               </div>
           </div>
@@ -961,20 +964,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  <div className="relative flex-1 md:flex-none">
                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16}/>
                      <input 
-                        className="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm transition-all text-gray-900 placeholder:text-gray-400 w-full md:w-48"
+                        className="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-xs md:text-sm transition-all text-gray-900 placeholder:text-gray-400 w-full md:w-48"
                         placeholder="Tìm kiếm..."
                         value={filters.search}
                         onChange={e => setFilters({...filters, search: e.target.value})}
                      />
                  </div>
                  
-                 <div className="flex bg-gray-100 p-1 rounded-lg">
+                 <div className="flex bg-gray-100 p-1 rounded-lg hidden sm:flex">
                       <button onClick={() => setViewType('GRID')} className={`p-2 rounded-md transition-all ${viewType==='GRID'?'bg-white shadow text-blue-600':'text-gray-500'}`}><LayoutGrid size={20}/></button>
                       <button onClick={() => setViewType('LIST')} className={`p-2 rounded-md transition-all ${viewType==='LIST'?'bg-white shadow text-blue-600':'text-gray-500'}`}><ListIcon size={20}/></button>
                  </div>
 
                  {canAdd && (
-                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
                         <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
                     </button>
                  )}
@@ -1132,91 +1135,129 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           )}
       </div>
 
-      {/* CREATE/EDIT MODAL */}
+      {/* CREATE/EDIT MODAL - OPTIMIZED FOR MOBILE */}
       {showModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-0 md:p-4">
-              <div className="bg-white md:rounded-3xl shadow-2xl w-full max-w-[1200px] h-full md:h-auto md:max-h-[95vh] overflow-hidden animate-fade-in border border-white/20 flex flex-col">
-                  <div className="p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-white flex-shrink-0">
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+              {/* Overlay */}
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowModal(false)}></div>
+              
+              {/* Modal Content */}
+              <div className="relative bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-[1200px] md:rounded-3xl shadow-2xl flex flex-col animate-fade-in md:border md:border-white/20">
+                  
+                  {/* Modal Header - Sticky */}
+                  <div className="flex-shrink-0 p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-3xl">
                       <div>
                           <h3 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
-                              {isEditMode ? 'Chi tiết đặt phòng' : 'Tạo đặt phòng mới'}
-                              {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full flex items-center gap-1"><Users size={12}/> Khách đoàn</span>}
+                              {isEditMode ? 'Chi tiết' : 'Tạo mới'}
+                              {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
                           </h3>
-                          {bookingMeta.id && <p className="text-xs md:text-sm text-gray-400 font-mono mt-0.5">#{bookingMeta.id} {bookingMeta.groupId ? `(Nhóm: ${bookingMeta.groupId})` : ''}</p>}
+                          {bookingMeta.id && <p className="text-xs text-gray-400 font-mono mt-0.5">#{bookingMeta.id}</p>}
                       </div>
                       <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 rounded-full p-2 hover:bg-gray-100"><X size={20} /></button>
                   </div>
                   
-                  <div className="p-4 md:p-6 overflow-y-auto flex-1">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 mb-6 md:mb-8">
-                          <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1.5 ml-1">Tên khách hàng</label><input type="text" disabled={isReadOnly} className="w-full bg-white border border-gray-200 text-gray-900 font-medium p-3 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none disabled:bg-gray-50 disabled:text-gray-500" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} /></div>
-                          <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1.5 ml-1">Số điện thoại</label><input type="text" disabled={isReadOnly} className="w-full bg-white border border-gray-200 text-gray-900 font-medium p-3 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none disabled:bg-gray-50 disabled:text-gray-500" placeholder="Nhập số điện thoại..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} /></div>
-                      </div>
-
-                      <div className="border border-emerald-100 rounded-xl mb-4 shadow-sm bg-white overflow-hidden">
-                          <div className="bg-emerald-50 flex text-xs font-bold text-emerald-800 p-3 md:p-4 items-center uppercase tracking-wider hidden md:flex">
-                            <div className="w-[15%]">Hạng phòng</div><div className="w-[15%]">Phòng</div><div className="w-[22%]">Nhận phòng</div><div className="w-[22%]">Trả phòng</div><div className="w-[12%] text-center">Dự kiến</div><div className="w-[14%] text-right">Xóa</div>
+                  {/* Modal Body - Scrollable */}
+                  <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50/30">
+                      {/* Guest Info */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                          <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+                              <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Khách hàng</label>
+                              <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} />
                           </div>
-                          {bookingRows.map((row, idx) => (
-                             <div key={row.tempId} className="flex flex-col md:flex-row items-start md:items-center p-3 border-t border-emerald-100 bg-white hover:bg-emerald-50/20 transition-colors gap-3 relative">
-                                <div className="md:w-[15%] text-sm font-semibold text-gray-600 truncate px-2 w-full flex justify-between md:block">
-                                    <span className="md:hidden text-xs text-gray-400 uppercase">Hạng:</span>
-                                    {rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}
-                                </div>
-                                <div className="md:w-[15%] w-full">
-                                    <select disabled={isReadOnly} className="w-full border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 bg-white disabled:bg-gray-50 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}><option value="">Chọn phòng</option>{rooms.map(r => (<option key={r.id} value={r.id}>{r.number}</option>))}</select>
-                                </div>
-                                <div className="md:w-[22%] w-full"><DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} /></div>
-                                <div className="md:w-[22%] w-full"><DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} /></div>
-                                <div className="md:w-[12%] w-full text-center text-sm font-bold text-gray-800 flex md:block justify-between items-center md:bg-transparent bg-gray-50 p-2 md:p-0 rounded">
-                                    <span className="md:hidden text-xs text-gray-500">Thời gian:</span>
-                                    {getDurationText(row.checkIn, row.checkOut)}
-                                </div>
-                                <div className="md:w-[14%] w-full text-right px-2 absolute top-2 right-2 md:static md:block">
-                                    {!isReadOnly && (
-                                        <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-red-50 rounded"><Trash2 size={18} /></button>
-                                    )}
-                                </div>
-                             </div>
-                          ))}
+                          <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+                              <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Số điện thoại</label>
+                              <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập SĐT..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} />
+                          </div>
                       </div>
 
-                      {!isReadOnly && (
-                        <div className="mb-8"><button onClick={handleAddRow} className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 border-2 border-green-500 text-green-600 rounded-full font-bold hover:bg-green-50 transition-colors text-sm"><PlusCircle size={18} /> Chọn thêm phòng (Thêm vào đoàn)</button></div>
-                      )}
+                      {/* Rooms List */}
+                      <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
+                          <div className="bg-gray-50 flex text-xs font-bold text-gray-500 p-3 items-center uppercase tracking-wider hidden md:flex border-b border-gray-200">
+                            <div className="w-[15%]">Hạng</div><div className="w-[15%]">Phòng</div><div className="w-[22%]">Nhận</div><div className="w-[22%]">Trả</div><div className="w-[12%] text-center">Thời gian</div><div className="w-[14%] text-right">#</div>
+                          </div>
+                          <div className="divide-y divide-gray-100">
+                            {bookingRows.map((row, idx) => (
+                                <div key={row.tempId} className="p-3 md:p-3 hover:bg-gray-50 transition-colors flex flex-col md:flex-row gap-3 relative group">
+                                    {/* Mobile Header for Room */}
+                                    <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 mb-1">
+                                        <span className="font-bold text-blue-600">Phòng {idx + 1}</span>
+                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-xs flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
+                                    </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                          <div className="space-y-4">
-                              <h4 className="font-bold text-gray-800 flex items-center gap-2"><Info size={16}/> Thông tin thanh toán (Toàn đoàn)</h4>
+                                    <div className="md:w-[15%] flex justify-between md:block items-center">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase">Hạng</span>
+                                        <span className="text-sm font-medium text-gray-600 truncate">{rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}</span>
+                                    </div>
+                                    <div className="md:w-[15%]">
+                                        <select disabled={isReadOnly} className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}><option value="">Chọn phòng</option>{rooms.map(r => (<option key={r.id} value={r.id}>{r.number}</option>))}</select>
+                                    </div>
+                                    <div className="md:w-[22%] space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Nhận phòng</span>
+                                        <DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} />
+                                    </div>
+                                    <div className="md:w-[22%] space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Trả phòng</span>
+                                        <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
+                                    </div>
+                                    <div className="md:w-[12%] text-center text-sm font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1 md:py-0 mt-1 md:mt-0 flex justify-between md:block px-2 md:px-0">
+                                        <span className="md:hidden text-xs text-gray-400">Thời lượng:</span>
+                                        {getDurationText(row.checkIn, row.checkOut)}
+                                    </div>
+                                    <div className="hidden md:block md:w-[14%] text-right">
+                                        {!isReadOnly && (
+                                            <button onClick={() => handleRemoveRow(idx)} className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-full hover:bg-red-50"><Trash2 size={18} /></button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                          </div>
+                          {!isReadOnly && (
+                            <button onClick={handleAddRow} className="w-full py-3 text-center text-sm font-bold text-green-600 hover:bg-green-50 transition-colors border-t border-gray-100 flex items-center justify-center gap-2">
+                                <PlusCircle size={16} /> Thêm phòng vào đoàn
+                            </button>
+                          )}
+                      </div>
+
+                      {/* Payment & Extras */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20 md:pb-0">
+                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
+                              <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2 uppercase tracking-wide border-b pb-2"><Info size={14}/> Thanh toán</h4>
                               <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-xs font-bold uppercase text-green-700 mb-1.5">Tổng tiền (VNĐ)</label>
+                                    <label className="block text-[10px] md:text-xs font-bold uppercase text-green-700 mb-1">Tổng tiền</label>
                                     <MoneyInput 
-                                        className="w-full bg-white border border-gray-200 text-gray-900 p-3 rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-green-100 focus:border-green-400 disabled:bg-gray-50 disabled:text-gray-400"
+                                        className="w-full bg-green-50/50 border border-green-100 text-green-800 p-2.5 rounded-lg font-bold text-base outline-none focus:ring-2 focus:ring-green-200"
                                         value={bookingMeta.totalPrice}
                                         onChange={(val) => setBookingMeta(prev => ({ ...prev, totalPrice: val, isManualPrice: true }))}
                                         disabled={isReadOnly}
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold uppercase text-blue-700 mb-1.5">Đã thanh toán (VNĐ)</label>
+                                    <label className="block text-[10px] md:text-xs font-bold uppercase text-blue-700 mb-1">Đã trả</label>
                                     <MoneyInput 
-                                        className="w-full bg-white border border-gray-200 text-gray-900 p-3 rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 disabled:bg-gray-50 disabled:text-gray-400"
+                                        className="w-full bg-blue-50/50 border border-blue-100 text-blue-800 p-2.5 rounded-lg font-bold text-base outline-none focus:ring-2 focus:ring-blue-200"
                                         value={bookingMeta.paidAmount || 0}
                                         onChange={(val) => setBookingMeta(prev => ({ ...prev, paidAmount: val }))}
                                         disabled={isReadOnly}
                                     />
                                 </div>
                               </div>
-                              <div className="text-right border-t pt-3">
+                              <div className="flex justify-between items-center pt-2 border-t border-dashed">
+                                  <span className="text-xs text-gray-500 font-medium">Còn lại cần thu:</span>
                                   <span className={`text-base font-bold ${bookingMeta.totalPrice - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                      Cần thanh toán: {formatNumber(bookingMeta.totalPrice - (bookingMeta.paidAmount||0))} VNĐ
+                                      {formatNumber(bookingMeta.totalPrice - (bookingMeta.paidAmount||0))}
                                   </span>
                               </div>
                           </div>
-                          <div>
-                              <div className="mb-4">
-                                  <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-2"><TagIcon size={16}/> Thẻ (Tags)</h4>
+                          
+                          <div className="space-y-4">
+                              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Ghi chú</label>
+                                  <textarea disabled={isReadOnly} className="w-full bg-gray-50 border-0 rounded-lg p-3 text-sm h-20 outline-none focus:ring-2 focus:ring-gray-200 resize-none" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
+                              </div>
+                              
+                              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Thẻ (Tags)</label>
                                   <div className="flex flex-wrap gap-2">
                                       {tags.map(t => {
                                           const isSelected = bookingMeta.tags.includes(t.id);
@@ -1225,7 +1266,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                                 key={t.id}
                                                 onClick={() => !isReadOnly && toggleTag(t.id)}
                                                 disabled={isReadOnly}
-                                                className={`px-3 py-1 rounded-full text-xs font-bold transition-all border ${isSelected ? 'text-white' : 'text-gray-500 bg-white border-gray-200'} ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${isSelected ? 'text-white shadow-sm' : 'text-gray-500 bg-white border-gray-200'} ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                                                 style={isSelected ? {backgroundColor: t.color, borderColor: t.color} : {}}
                                               >
                                                   {t.name}
@@ -1234,22 +1275,29 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                       })}
                                   </div>
                               </div>
-                              <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-2"><Info size={16}/> Ghi chú</h4>
-                              <textarea disabled={isReadOnly} className="w-full bg-white border border-gray-200 text-gray-900 p-3 rounded-xl h-24 focus:ring-2 focus:ring-gray-100 focus:border-gray-400 outline-none resize-none placeholder:text-gray-400 font-medium disabled:bg-gray-50" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
                           </div>
                       </div>
+                  </div>
 
-                      <div className="flex flex-col md:flex-row justify-between items-center pt-6 mt-6 border-t border-gray-100 gap-4">
-                          <div className="flex flex-wrap gap-2 items-center w-full md:w-auto">
+                  {/* Modal Footer - Sticky */}
+                  <div className="flex-shrink-0 p-4 border-t border-gray-100 bg-white z-10 md:rounded-b-3xl">
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                          <div className="flex items-center gap-3 w-full md:w-auto">
                              {isEditMode && canEdit && (
                                 <>
-                                 <select className="border border-gray-200 p-3 rounded-xl font-semibold bg-gray-50 text-gray-700 outline-none focus:border-blue-500 w-full md:w-auto" value={bookingMeta.status} onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}>
-                                     {!['CHECKED_IN', 'CHECKED_OUT'].includes(bookingMeta.status) && (
-                                         <option value={bookingMeta.status} disabled>{bookingMeta.status}</option>
-                                     )}
-                                     <option value={BookingStatus.CHECKED_IN}>CHECKED_IN</option>
-                                     <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
-                                 </select>
+                                 <div className="relative flex-1 md:flex-none">
+                                     <select 
+                                        className="w-full md:w-40 appearance-none bg-gray-100 border border-gray-200 text-gray-700 font-bold py-3 pl-4 pr-8 rounded-xl outline-none focus:ring-2 focus:ring-blue-100" 
+                                        value={bookingMeta.status} 
+                                        onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}
+                                     >
+                                         <option value={BookingStatus.CONFIRMED}>CONFIRMED</option>
+                                         <option value={BookingStatus.CHECKED_IN}>CHECKED_IN</option>
+                                         <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
+                                         <option value={BookingStatus.CANCELLED}>CANCELLED</option>
+                                     </select>
+                                     <ArrowUpDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                                 </div>
                                  
                                  {canDelete && (
                                      !showDeleteConfirm ? (
@@ -1260,41 +1308,37 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                                 e.stopPropagation();
                                                 handleDeleteClick();
                                             }}
-                                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors ml-0 md:ml-2 bg-red-50 font-bold border border-red-100" 
-                                            title={originalBookingIds.length > 1 ? "Xóa toàn bộ đoàn" : "Xóa đơn"}
+                                            className="px-4 py-3 text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors font-bold border border-red-100 flex-shrink-0"
                                         >
-                                            <Trash2 size={20} /> {originalBookingIds.length > 1 ? "Xóa đoàn" : "Xóa đơn"}
+                                            <Trash2 size={20} />
                                         </button>
                                     ) : (
-                                        <div className="flex flex-col md:flex-row items-center gap-2 ml-0 md:ml-2 bg-red-50 p-2 rounded-xl border border-red-100 animate-fade-in w-full md:w-auto">
-                                            <div className="flex items-center">
-                                                <AlertTriangle size={18} className="text-red-600 ml-1" />
-                                                <span className="text-sm font-bold text-red-700 mr-1">Chắc chắn xóa?</span>
-                                            </div>
-                                            <div className="flex gap-2 w-full md:w-auto">
-                                                <button 
-                                                    onClick={handleConfirmDelete} 
-                                                    className="flex-1 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 shadow-sm transition-colors"
-                                                >
-                                                    Có
-                                                </button>
-                                                <button 
-                                                    onClick={() => setShowDeleteConfirm(false)} 
-                                                    className="flex-1 px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-100 transition-colors"
-                                                >
-                                                    Hủy
-                                                </button>
-                                            </div>
+                                        <div className="flex items-center gap-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-fade-in">
+                                            <button 
+                                                onClick={handleConfirmDelete} 
+                                                className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg"
+                                            >
+                                                Xóa thật
+                                            </button>
+                                            <button 
+                                                onClick={() => setShowDeleteConfirm(false)} 
+                                                className="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg"
+                                            >
+                                                Hủy
+                                            </button>
                                         </div>
                                     )
                                  )}
                                 </>
                              )}
                           </div>
+                          
                           <div className="flex gap-3 w-full md:w-auto">
-                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-6 py-3 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold transition-colors bg-gray-50 md:bg-transparent">Đóng</button>
+                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-6 py-3 text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-xl font-bold transition-colors">Đóng</button>
                               {!isReadOnly && (
-                                <button onClick={handleSaveBooking} className="flex-1 md:flex-none px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-transform active:scale-95 flex items-center justify-center gap-2"><Check size={20} /> Lưu</button>
+                                <button onClick={handleSaveBooking} className="flex-[2] md:flex-none px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-transform active:scale-95 flex items-center justify-center gap-2">
+                                    <Check size={20} /> Lưu
+                                </button>
                               )}
                           </div>
                       </div>

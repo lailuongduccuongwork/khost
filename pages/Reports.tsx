@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -332,102 +332,101 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
 
   // --- Shared Table Component ---
   const ReportTable = ({ data, onSort }: { data: any[], onSort: (key: string) => void }) => (
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="w-full text-sm text-left">
-              <thead className="bg-gray-100 font-bold text-gray-700 text-xs uppercase whitespace-nowrap">
-                  <tr>
-                      <th className="p-4 border-b">Mã BK</th>
-                      <th className="p-4 border-b">Khách hàng</th>
-                      <th className="p-4 border-b">Tags</th>
-                      <th className="p-4 border-b">Phòng</th>
-                      <th className="p-4 border-b">Hạng phòng</th>
-                      <th className="p-4 border-b">Chi nhánh</th>
-                      
-                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('Ngày tạo')}>
-                          Ngày tạo <SortIcon colKey="Ngày tạo"/>
-                      </th>
-                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Nhận phòng')}>
-                          TG Nhận phòng <SortIcon colKey="TG Nhận phòng"/>
-                      </th>
-                      <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Trả phòng')}>
-                          TG Trả phòng <SortIcon colKey="TG Trả phòng"/>
-                      </th>
+      <div className="relative rounded-lg border border-gray-200">
+          <div className="overflow-x-auto shadow-[inset_-12px_0_12px_-12px_rgba(0,0,0,0.1)]">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-gray-100 font-bold text-gray-700 text-xs uppercase whitespace-nowrap">
+                    <tr>
+                        <th className="p-4 border-b">Mã BK</th>
+                        <th className="p-4 border-b">Khách hàng</th>
+                        <th className="p-4 border-b">Tags</th>
+                        <th className="p-4 border-b">Phòng</th>
+                        <th className="p-4 border-b">Hạng phòng</th>
+                        <th className="p-4 border-b">Chi nhánh</th>
+                        
+                        <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('Ngày tạo')}>
+                            Ngày tạo <SortIcon colKey="Ngày tạo"/>
+                        </th>
+                        <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Nhận phòng')}>
+                            TG Nhận phòng <SortIcon colKey="TG Nhận phòng"/>
+                        </th>
+                        <th className="p-4 border-b cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => onSort('TG Trả phòng')}>
+                            TG Trả phòng <SortIcon colKey="TG Trả phòng"/>
+                        </th>
 
-                      <th className="p-4 border-b text-right text-green-700 bg-green-50">Tổng bill</th>
-                      <th className="p-4 border-b text-right text-blue-700 bg-blue-50">Đã trả</th>
-                      <th className="p-4 border-b text-right text-red-700 bg-red-50">Còn nợ</th>
-                      <th className="p-4 border-b">Nhân viên</th>
-                  </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                  {data.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                          <td className="p-4 font-mono text-gray-500 text-xs font-semibold">{row["Mã BK"]}</td>
-                          <td className="p-4 font-bold text-gray-800 whitespace-nowrap">{row["Khách hàng"]}</td>
-                          
-                          {/* Render Tags */}
-                          <td className="p-4">
-                              <div className="flex flex-wrap gap-1 max-w-[150px]">
-                                {row._tags && row._tags.length > 0 ? row._tags.map((t: Tag) => (
-                                    <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold whitespace-nowrap" style={{backgroundColor: t.color}}>
-                                        {t.name}
-                                    </span>
-                                )) : <span className="text-gray-300 text-xs italic">--</span>}
-                              </div>
-                          </td>
+                        <th className="p-4 border-b text-right text-green-700 bg-green-50">Tổng bill</th>
+                        <th className="p-4 border-b text-right text-blue-700 bg-blue-50">Đã trả</th>
+                        <th className="p-4 border-b text-right text-red-700 bg-red-50">Còn nợ</th>
+                        <th className="p-4 border-b">Nhân viên</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                    {data.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-4 font-mono text-gray-500 text-xs font-semibold">{row["Mã BK"]}</td>
+                            <td className="p-4 font-bold text-gray-800 whitespace-nowrap">{row["Khách hàng"]}</td>
+                            
+                            {/* Render Tags */}
+                            <td className="p-4">
+                                <div className="flex flex-wrap gap-1 max-w-[150px]">
+                                    {row._tags && row._tags.length > 0 ? row._tags.map((t: Tag) => (
+                                        <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold whitespace-nowrap" style={{backgroundColor: t.color}}>
+                                            {t.name}
+                                        </span>
+                                    )) : <span className="text-gray-300 text-xs italic">--</span>}
+                                </div>
+                            </td>
 
-                          <td className="p-4 font-medium text-blue-600">{row["Phòng"]}</td>
-                          <td className="p-4 text-gray-600">{row["Hạng phòng"]}</td>
-                          <td className="p-4 text-gray-500 text-xs">{row["Chi nhánh"]}</td>
-                          <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Ngày tạo"]}</td>
-                          <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian nhận phòng"]}</td>
-                          <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian trả phòng"]}</td>
-                          
-                          <td className="p-4 text-right font-bold text-green-600 bg-green-50/30">
-                              {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
-                          </td>
-                          <td className="p-4 text-right font-semibold text-blue-600 bg-blue-50/30">
-                              {row["Đã trả"] > 0 ? row["Đã trả"].toLocaleString() : '-'}
-                          </td>
-                          <td className={`p-4 text-right font-bold bg-red-50/30 ${row._debtRaw > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                              {row._debtRaw > 0 ? row._debtRaw.toLocaleString() : '-'}
-                          </td>
-                          
-                          <td className="p-4 text-gray-600 text-xs font-medium">{row["Nhân viên tạo đơn"]}</td>
-                      </tr>
-                  ))}
-                  {data.length === 0 && (
-                      <tr><td colSpan={13} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
-                  )}
-              </tbody>
-          </table>
+                            <td className="p-4 font-medium text-blue-600">{row["Phòng"]}</td>
+                            <td className="p-4 text-gray-600">{row["Hạng phòng"]}</td>
+                            <td className="p-4 text-gray-500 text-xs">{row["Chi nhánh"]}</td>
+                            <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Ngày tạo"]}</td>
+                            <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian nhận phòng"]}</td>
+                            <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian trả phòng"]}</td>
+                            
+                            <td className="p-4 text-right font-bold text-green-600 bg-green-50/30">
+                                {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
+                            </td>
+                            <td className="p-4 text-right font-semibold text-blue-600 bg-blue-50/30">
+                                {row["Đã trả"] > 0 ? row["Đã trả"].toLocaleString() : '-'}
+                            </td>
+                            <td className={`p-4 text-right font-bold bg-red-50/30 ${row._debtRaw > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                                {row._debtRaw > 0 ? row._debtRaw.toLocaleString() : '-'}
+                            </td>
+                            
+                            <td className="p-4 text-gray-600 text-xs font-medium">{row["Nhân viên tạo đơn"]}</td>
+                        </tr>
+                    ))}
+                    {data.length === 0 && (
+                        <tr><td colSpan={13} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
+                    )}
+                </tbody>
+            </table>
+          </div>
       </div>
   );
 
   return (
-    <div className="space-y-6 pb-10 font-sans animate-fade-in">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+    <div className="space-y-4 md:space-y-6 pb-20 font-sans animate-fade-in">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 md:gap-4">
         <div>
-            <h2 className="text-2xl font-bold text-gray-800">Báo cáo & Thống kê</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-gray-800">Báo cáo & Thống kê</h2>
             <div className="flex items-center gap-2 mt-1">
-                <p className="text-gray-500 text-sm">Hệ thống báo cáo chi tiết hoạt động kinh doanh.</p>
-                <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded border border-orange-100 flex items-center gap-1">
-                    <Info size={10} /> Dữ liệu đã được đồng bộ hóa sạch
-                </span>
+                <p className="text-gray-500 text-xs md:text-sm">Hệ thống báo cáo chi tiết hoạt động kinh doanh.</p>
             </div>
         </div>
       </div>
 
       {/* Filter Toolbar */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-4 items-center">
-         <div className="flex items-center gap-2 text-gray-700 font-semibold mr-2">
-             <Filter size={20} />
-             <span>Bộ lọc thời gian:</span>
+      <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+         <div className="flex items-center gap-2 text-gray-700 font-semibold md:mr-2">
+             <Filter size={18} />
+             <span className="text-sm">Bộ lọc thời gian:</span>
          </div>
          
-         <div className="flex flex-col sm:flex-row gap-4 flex-1">
+         <div className="flex flex-col sm:flex-row gap-2 md:gap-4 flex-1">
              <select 
-                className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-medium min-w-[180px]"
+                className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-medium w-full md:min-w-[180px]"
                 value={filterPreset}
                 onChange={(e) => setFilterPreset(e.target.value as DatePreset)}
              >
@@ -436,8 +435,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                  ))}
              </select>
 
-             <div className="flex items-center gap-2">
-                 <div className="relative">
+             <div className="flex items-center gap-2 w-full md:w-auto">
+                 <div className="relative flex-1">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500"><Calendar size={14}/></div>
                     <input 
                         type="date" 
@@ -447,7 +446,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                     />
                  </div>
                  <span className="text-gray-400 font-bold">-</span>
-                 <div className="relative">
+                 <div className="relative flex-1">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500"><Calendar size={14}/></div>
                     <input 
                         type="date" 
@@ -461,50 +460,50 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 flex gap-1 w-fit">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 flex w-full overflow-x-auto no-scrollbar">
           <button 
              onClick={() => { setActiveTab('REVENUE'); setSortConfig(null); }}
-             className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${
+             className={`flex-1 md:flex-none px-4 md:px-5 py-2.5 rounded-lg font-semibold text-xs md:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap ${
                  activeTab === 'REVENUE' 
                  ? 'bg-green-100 text-green-700 shadow-sm' 
                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
              }`}
           >
-              <TrendingUp size={18} /> Báo cáo Doanh thu phòng
+              <TrendingUp size={16} /> Báo cáo Doanh thu
           </button>
           <button 
              onClick={() => { setActiveTab('BOOKINGS'); setSortConfig(null); }}
-             className={`px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2 transition-all ${
+             className={`flex-1 md:flex-none px-4 md:px-5 py-2.5 rounded-lg font-semibold text-xs md:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap ${
                  activeTab === 'BOOKINGS' 
                  ? 'bg-blue-100 text-blue-700 shadow-sm' 
                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
              }`}
           >
-              <Calendar size={18} /> Báo cáo Đặt phòng phát sinh
+              <Calendar size={16} /> Báo cáo Đặt phòng
           </button>
       </div>
 
       {/* REVENUE TAB */}
       {activeTab === 'REVENUE' && (
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-fade-in">
-          <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
+      <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-200 animate-fade-in">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
               <div>
-                  <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">
                       Báo cáo Doanh thu phòng (Đã Check-out)
                   </h3>
-                  <p className="text-sm text-gray-400 mt-0.5">
+                  <p className="text-xs text-gray-400 mt-0.5 hidden md:block">
                       Lọc theo thời gian khách trả phòng: <span className="font-semibold text-gray-700">{startDate ? new Date(startDate).toLocaleDateString('vi-VN') : '...'}</span> đến <span className="font-semibold text-gray-700">{endDate ? new Date(endDate).toLocaleDateString('vi-VN') : '...'}</span>
                   </p>
               </div>
               
-              <div className="flex items-center gap-4">
-                  <div className="px-4 py-2 bg-green-50 rounded-lg border border-green-100 text-right">
+              <div className="flex flex-col-reverse md:flex-row items-stretch md:items-center gap-2 w-full md:w-auto">
+                  <div className="px-4 py-2 bg-green-50 rounded-lg border border-green-100 text-right flex justify-between md:block items-center">
                       <span className="text-xs text-green-600 font-bold uppercase block">Tổng doanh thu</span>
-                      <span className="text-xl font-bold text-green-700">{totalRevenue.toLocaleString()} VNĐ</span>
+                      <span className="text-lg md:text-xl font-bold text-green-700">{totalRevenue.toLocaleString()} VNĐ</span>
                   </div>
                   {canExport && (
-                      <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10">
-                          <FileSpreadsheet size={18} /> Tải Excel
+                      <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto">
+                          <FileSpreadsheet size={18} /> <span className="md:hidden">Xuất Excel</span><span className="hidden md:inline">Tải Excel</span>
                       </button>
                   )}
               </div>
@@ -516,19 +515,19 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
 
       {/* BOOKING REPORT TAB */}
       {activeTab === 'BOOKINGS' && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 animate-fade-in">
-             <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
+          <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-200 animate-fade-in">
+             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                 <div>
-                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">
                         Báo cáo Đặt phòng phát sinh
                     </h3>
-                    <p className="text-sm text-gray-400 mt-0.5">
+                    <p className="text-xs text-gray-400 mt-0.5 hidden md:block">
                         Lọc theo thời gian tạo đơn: <span className="font-semibold text-gray-700">{startDate ? new Date(startDate).toLocaleDateString('vi-VN') : '...'}</span> đến <span className="font-semibold text-gray-700">{endDate ? new Date(endDate).toLocaleDateString('vi-VN') : '...'}</span>
                     </p>
                 </div>
                 {canExport && (
-                    <button onClick={() => handleExport(bookingReportData, 'Bao_cao_dat_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10">
-                        <FileSpreadsheet size={18} /> Tải Excel
+                    <button onClick={() => handleExport(bookingReportData, 'Bao_cao_dat_phong.xlsx')} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto">
+                        <FileSpreadsheet size={18} /> <span className="md:hidden">Xuất Excel</span><span className="hidden md:inline">Tải Excel</span>
                     </button>
                 )}
              </div>

@@ -209,7 +209,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[500px] flex flex-col">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[500px] flex flex-col pb-20 md:pb-0">
       <div className="flex border-b overflow-x-auto no-scrollbar">
          {['ROOMS', 'TYPES', 'BRANCHES', 'TAGS'].map((tab) => (
              <button 
@@ -247,7 +247,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                         )}
                       </div>
                   </div>
-                  <div className="overflow-auto max-h-[500px]">
+                  <div className="overflow-auto max-h-[500px] shadow-[inset_-12px_0_12px_-12px_rgba(0,0,0,0.1)] border rounded">
                       <table className="w-full text-sm text-left">
                           <thead className="bg-gray-100 sticky top-0">
                               <tr><th className="p-3">Thứ tự</th><th className="p-3">Phòng</th><th className="p-3">Tầng</th><th className="p-3">Hạng</th><th className="p-3">Chi nhánh</th><th className="p-3 text-right">Thao tác</th></tr>
@@ -296,7 +296,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                         )}
                    </div>
                </div>
-               <div className="overflow-auto max-h-[500px]">
+               <div className="overflow-auto max-h-[500px] shadow-[inset_-12px_0_12px_-12px_rgba(0,0,0,0.1)] border rounded">
                    <table className="w-full text-sm text-left">
                        <thead className="bg-gray-100 sticky top-0">
                            <tr><th className="p-3">Thứ tự</th><th className="p-3">Tên hạng</th><th className="p-3">Giá chuẩn</th><th className="p-3">Sức chứa</th><th className="p-3 text-right">Thao tác</th></tr>
@@ -343,7 +343,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                         )}
                    </div>
                </div>
-               <div className="overflow-auto max-h-[500px]">
+               <div className="overflow-auto max-h-[500px] shadow-[inset_-12px_0_12px_-12px_rgba(0,0,0,0.1)] border rounded">
                    <table className="w-full text-sm text-left">
                        <thead className="bg-gray-100 sticky top-0">
                            <tr><th className="p-3">Thứ tự</th><th className="p-3">Tên chi nhánh</th><th className="p-3">Địa chỉ</th><th className="p-3 text-right">Thao tác</th></tr>

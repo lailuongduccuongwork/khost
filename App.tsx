@@ -21,7 +21,6 @@ const App: React.FC = () => {
   // --- App View State ---
   const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); // Can be 'ALL'
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [viewMode, setViewMode] = useState<'RECEPTION' | 'MANAGEMENT'>('RECEPTION');
   
   // --- Mobile Sidebar State ---
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -47,7 +46,6 @@ const App: React.FC = () => {
             const parsedUser = JSON.parse(savedUser);
             // We'll verify against DB users later, but set initial state now
             setCurrentUser(parsedUser);
-            if (parsedUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
             
             // Set default page based on role/permissions logic
             // If they don't have dashboard access, default to Room Map
@@ -207,8 +205,6 @@ const App: React.FC = () => {
     if (foundUser) {
       setCurrentUser(foundUser);
       localStorage.setItem('k_host_user', JSON.stringify(foundUser));
-      if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
-      else setViewMode('RECEPTION');
       
       setCurrentPropertyId(''); // Reset to trigger validation logic
       
@@ -228,18 +224,12 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setLoginUsername('');
     setLoginPassword('');
-    setViewMode('RECEPTION');
     setCurrentPage('dashboard');
     localStorage.removeItem('k_host_user');
   };
 
   const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
     DataService.updateRoomStatus(roomId, status);
-  };
-
-  const toggleViewMode = () => {
-      setViewMode(prev => prev === 'MANAGEMENT' ? 'RECEPTION' : 'MANAGEMENT');
-      setCurrentPage('dashboard');
   };
 
   const manualRefresh = () => setDataTick(t => t + 1);
@@ -317,71 +307,70 @@ const App: React.FC = () => {
         onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
         onLogout={handleLogout}
         currentUser={currentUser}
-        viewMode={viewMode}
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
       />
       
-      <Header 
-        user={currentUser}
-        properties={properties}
-        currentPropertyId={currentPropertyId}
-        onPropertyChange={setCurrentPropertyId}
-        viewMode={viewMode}
-        onToggleMode={toggleViewMode}
-        onMenuClick={() => setIsMobileMenuOpen(true)}
-      />
+      <div className="md:ml-64 min-h-screen flex flex-col transition-all duration-300">
+        <Header 
+          user={currentUser}
+          properties={properties}
+          currentPropertyId={currentPropertyId}
+          onPropertyChange={setCurrentPropertyId}
+          onMenuClick={() => setIsMobileMenuOpen(true)}
+        />
 
-      {/* Adjust main content margin for mobile */}
-      <main className="md:ml-64 pt-16 p-3 md:p-6 min-h-screen transition-all duration-300">
-        <div className="max-w-7xl mx-auto h-full">
-          {currentPage === 'dashboard' && currentUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
-            <Dashboard bookings={bookings} rooms={rooms} />
-          )}
-          
-          {currentPage === 'room-map' && (
-            <RoomMap 
-              rooms={rooms} 
-              roomTypes={roomTypes} 
-              bookings={bookings} 
-              customers={customers}
-              tags={tags}
-              onUpdateStatus={handleUpdateRoomStatus}
-              onRefresh={manualRefresh}
-              currentProperty={currentPropertyObj}
-              currentUser={currentUser} // Pass full user object
-            />
-          )}
-
-          {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
-              <Reports 
-                bookings={bookings} 
+        {/* Content Wrapper */}
+        <main className="flex-1 p-3 md:p-6">
+          <div className="max-w-7xl mx-auto h-full">
+            {currentPage === 'dashboard' && currentUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
+              <Dashboard bookings={bookings} rooms={rooms} />
+            )}
+            
+            {currentPage === 'room-map' && (
+              <RoomMap 
                 rooms={rooms} 
-                users={users} 
                 roomTypes={roomTypes} 
-                properties={properties} 
+                bookings={bookings} 
+                customers={customers}
                 tags={tags}
+                onUpdateStatus={handleUpdateRoomStatus}
+                onRefresh={manualRefresh}
+                currentProperty={currentPropertyObj}
                 currentUser={currentUser} // Pass full user object
               />
-          )}
-          
-          {currentPage === 'management' && viewMode === 'MANAGEMENT' && (
-             <div className="space-y-8">
-                 <Management 
-                    users={users} 
-                    rooms={DataService.getRooms()} 
-                    roomTypes={roomTypes} 
-                    properties={properties} 
-                    tags={tags}
-                    onRefresh={manualRefresh}
-                 />
-                 <div className="mt-8">
-                     <Admin users={users} properties={properties} onRefresh={manualRefresh} />
-                 </div>
-             </div>
-          )}
-        </div>
-      </main>
+            )}
+
+            {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
+                <Reports 
+                  bookings={bookings} 
+                  rooms={rooms} 
+                  users={users} 
+                  roomTypes={roomTypes} 
+                  properties={properties} 
+                  tags={tags}
+                  currentUser={currentUser} // Pass full user object
+                />
+            )}
+            
+            {currentPage === 'management' && currentUser.role === UserRole.ADMIN && (
+               <div className="space-y-8">
+                   <Management 
+                      users={users} 
+                      rooms={DataService.getRooms()} 
+                      roomTypes={roomTypes} 
+                      properties={properties} 
+                      tags={tags}
+                      onRefresh={manualRefresh}
+                   />
+                   <div className="mt-8">
+                       <Admin users={users} properties={properties} onRefresh={manualRefresh} />
+                   </div>
+               </div>
+            )}
+          </div>
+        </main>
+      </div>
     </div>
   );
 };
