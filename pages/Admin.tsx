@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { User, UserRole, Property } from '../types';
-import { Trash2, UserPlus, Shield, Pencil } from 'lucide-react';
+import { User, UserRole, Property, PERMISSIONS } from '../types';
+import { Trash2, UserPlus, Shield, Pencil, CheckSquare, Square } from 'lucide-react';
 import { DataService } from '../services/dataService';
 
 interface AdminProps {
@@ -31,7 +31,12 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       setEditingUserId(null);
       setUserData({
           role: UserRole.RECEPTIONIST,
-          permissions: [],
+          // Default permissions for new users
+          permissions: [
+              PERMISSIONS.MANAGE_ROOMS,
+              PERMISSIONS.CAN_ADD_BOOKING, 
+              PERMISSIONS.CAN_EDIT_BOOKING
+          ],
           password: '',
           allowedPropertyIds: []
       });
@@ -40,7 +45,11 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
 
   const openEditModal = (user: User) => {
       setEditingUserId(user.id);
-      setUserData({ ...user, allowedPropertyIds: user.allowedPropertyIds || [] });
+      setUserData({ 
+          ...user, 
+          allowedPropertyIds: user.allowedPropertyIds || [],
+          permissions: user.permissions || [] 
+      });
       setShowModal(true);
   };
 
@@ -55,20 +64,37 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       });
   };
 
+  const togglePermission = (perm: string) => {
+      setUserData(prev => {
+          const current = prev.permissions || [];
+          if (current.includes(perm)) {
+              return { ...prev, permissions: current.filter(p => p !== perm) };
+          } else {
+              return { ...prev, permissions: [...current, perm] };
+          }
+      });
+  };
+
   const handleSaveUser = () => {
     if (!userData.username || !userData.fullName || !userData.password) {
         alert("Thiếu thông tin bắt buộc (Họ tên, Username, Mật khẩu)");
         return;
     }
     
+    // Ensure Admin always has all permissions
+    let finalPermissions = userData.permissions || [];
+    if (userData.role === UserRole.ADMIN) {
+        finalPermissions = Object.values(PERMISSIONS);
+    }
+
     if (editingUserId) {
         // Edit Mode
         const updatedUser: User = {
             ...userData,
             id: editingUserId,
+            permissions: finalPermissions
         } as User;
         
-        // Ensure role is valid
         if(!updatedUser.role) updatedUser.role = UserRole.RECEPTIONIST;
 
         DataService.updateUser(updatedUser);
@@ -81,7 +107,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
             role: userData.role as UserRole,
             password: userData.password,
             allowedPropertyIds: userData.allowedPropertyIds || [],
-            permissions: [] 
+            permissions: finalPermissions
         };
         DataService.addUser(userToAdd);
     }
@@ -89,6 +115,17 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
     setShowModal(false);
     onRefresh();
   };
+
+  const permissionOptions = [
+      { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
+      { id: PERMISSIONS.MANAGE_BOOKINGS, label: 'Xem DS Đặt phòng' },
+      { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
+      { divider: true },
+      { id: PERMISSIONS.CAN_ADD_BOOKING, label: 'Được phép THÊM đơn' },
+      { id: PERMISSIONS.CAN_EDIT_BOOKING, label: 'Được phép SỬA đơn' },
+      { id: PERMISSIONS.CAN_DELETE_BOOKING, label: 'Được phép XOÁ đơn' },
+      { id: PERMISSIONS.CAN_EXPORT_REPORT, label: 'Được phép TẢI báo cáo' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -113,7 +150,8 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
               <th className="px-6 py-3">Tên đăng nhập</th>
               <th className="px-6 py-3">Mật khẩu</th>
               <th className="px-6 py-3">Vai trò</th>
-              <th className="px-6 py-3">Chi nhánh được phép</th>
+              <th className="px-6 py-3">Quyền hạn đặc biệt</th>
+              <th className="px-6 py-3">Chi nhánh</th>
               <th className="px-6 py-3 text-right">Hành động</th>
             </tr>
           </thead>
@@ -131,6 +169,15 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                   }`}>
                     {user.role}
                   </span>
+                </td>
+                <td className="px-6 py-4 text-xs">
+                    <div className="flex flex-col gap-1">
+                        {!user.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && <span className="text-gray-400 italic">No Dashboard</span>}
+                        {user.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING) && <span className="text-green-600 flex items-center gap-1"><CheckSquare size={10}/> Thêm</span>}
+                        {user.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING) && <span className="text-blue-600 flex items-center gap-1"><CheckSquare size={10}/> Sửa</span>}
+                        {user.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING) && <span className="text-red-600 flex items-center gap-1"><CheckSquare size={10}/> Xoá</span>}
+                        {user.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT) && <span className="text-orange-600 flex items-center gap-1"><CheckSquare size={10}/> Tải báo cáo</span>}
+                    </div>
                 </td>
                 <td className="px-6 py-4 text-sm">
                   {user.allowedPropertyIds && user.allowedPropertyIds.length > 0 
@@ -170,71 +217,107 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <div className="bg-white p-6 rounded-lg w-full max-w-md shadow-2xl animate-fade-in">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white p-6 rounded-lg w-full max-w-2xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Họ và tên</label>
-                        <input 
-                            type="text" 
-                            className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                            value={userData.fullName || ''}
-                            onChange={e => setUserData({...userData, fullName: e.target.value})}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Tên đăng nhập</label>
-                        <input 
-                            type="text" 
-                            className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                            value={userData.username || ''}
-                            onChange={e => setUserData({...userData, username: e.target.value})}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Mật khẩu</label>
-                        <input 
-                            type="text" 
-                            className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                            placeholder="Nhập mật khẩu..."
-                            value={userData.password || ''}
-                            onChange={e => setUserData({...userData, password: e.target.value})}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Vai trò</label>
-                        <select 
-                            className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                            value={userData.role}
-                            onChange={e => setUserData({...userData, role: e.target.value as UserRole})}
-                        >
-                            {Object.values(UserRole).map(r => (
-                                <option key={r} value={r}>{r}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Chi nhánh được phép truy cập</label>
-                        <div className="max-h-40 overflow-y-auto border rounded-lg p-2 space-y-1 bg-gray-50">
-                            {properties.map(p => (
-                                <label key={p.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer transition-colors">
-                                    <input 
-                                        type="checkbox" 
-                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                                        checked={userData.allowedPropertyIds?.includes(p.id) || false}
-                                        onChange={() => toggleProperty(p.id)}
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">{p.name}</span>
-                                </label>
-                            ))}
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Left Column: Basic Info */}
+                    <div className="space-y-4">
+                        <h4 className="font-bold text-gray-700 border-b pb-2">Thông tin cơ bản</h4>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Họ và tên</label>
+                            <input 
+                                type="text" 
+                                className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
+                                value={userData.fullName || ''}
+                                onChange={e => setUserData({...userData, fullName: e.target.value})}
+                            />
                         </div>
-                        <p className="text-xs text-gray-400 mt-1">Để trống = Truy cập tất cả (Chỉ nên dùng cho Admin).</p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Tên đăng nhập</label>
+                            <input 
+                                type="text" 
+                                className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
+                                value={userData.username || ''}
+                                onChange={e => setUserData({...userData, username: e.target.value})}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Mật khẩu</label>
+                            <input 
+                                type="text" 
+                                className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
+                                placeholder="Nhập mật khẩu..."
+                                value={userData.password || ''}
+                                onChange={e => setUserData({...userData, password: e.target.value})}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Vai trò</label>
+                            <select 
+                                className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
+                                value={userData.role}
+                                onChange={e => setUserData({...userData, role: e.target.value as UserRole})}
+                            >
+                                {Object.values(UserRole).map(r => (
+                                    <option key={r} value={r}>{r}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
-                    <div className="flex justify-end gap-3 mt-6 pt-2 border-t">
-                        <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium">Hủy</button>
-                        <button onClick={handleSaveUser} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">Lưu thay đổi</button>
+
+                    {/* Right Column: Permissions */}
+                    <div className="space-y-4">
+                        <h4 className="font-bold text-gray-700 border-b pb-2">Phân quyền & Chi nhánh</h4>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Quyền hạn thao tác</label>
+                            <div className="space-y-2">
+                                {permissionOptions.map((opt: any, idx: number) => {
+                                    if (opt.divider) return <div key={idx} className="h-px bg-gray-200 my-2"></div>;
+
+                                    const isChecked = userData.permissions?.includes(opt.id) || false;
+                                    const isAdmin = userData.role === UserRole.ADMIN;
+                                    return (
+                                        <label key={opt.id} className={`flex items-center gap-2 p-2 rounded border cursor-pointer ${isChecked ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'} ${isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                            <input 
+                                                type="checkbox" 
+                                                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                                checked={isAdmin || isChecked}
+                                                disabled={isAdmin} // Admin always has all
+                                                onChange={() => togglePermission(opt.id)}
+                                            />
+                                            <span className="text-sm font-medium text-gray-700">{opt.label}</span>
+                                        </label>
+                                    )
+                                })}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Chi nhánh được phép truy cập</label>
+                            <div className="max-h-32 overflow-y-auto border rounded-lg p-2 space-y-1 bg-gray-50">
+                                {properties.map(p => (
+                                    <label key={p.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer transition-colors">
+                                        <input 
+                                            type="checkbox" 
+                                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                            checked={userData.allowedPropertyIds?.includes(p.id) || false}
+                                            onChange={() => toggleProperty(p.id)}
+                                        />
+                                        <span className="text-sm text-gray-700 font-medium">{p.name}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">Để trống = Truy cập tất cả (Chỉ nên dùng cho Admin).</p>
+                        </div>
                     </div>
+                </div>
+
+                <div className="flex justify-end gap-3 mt-8 pt-4 border-t">
+                    <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium">Hủy</button>
+                    <button onClick={handleSaveUser} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium shadow-sm">Lưu thay đổi</button>
                 </div>
             </div>
         </div>

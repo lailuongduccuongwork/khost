@@ -88,7 +88,15 @@ export const INITIAL_USERS: User[] = [
     role: UserRole.MANAGER,
     password: '123',
     allowedPropertyIds: ['p1'],
-    permissions: [PERMISSIONS.VIEW_DASHBOARD, PERMISSIONS.MANAGE_ROOMS, PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.VIEW_REPORTS],
+    // Manager Update: NO Dashboard, NO Bookings List, NO Export Report
+    // ONLY: Room Map, Reports View, Add/Edit/Delete Bookings
+    permissions: [
+        PERMISSIONS.MANAGE_ROOMS,     // Sơ đồ phòng
+        PERMISSIONS.VIEW_REPORTS,     // Xem Báo cáo
+        PERMISSIONS.CAN_ADD_BOOKING,
+        PERMISSIONS.CAN_EDIT_BOOKING,
+        PERMISSIONS.CAN_DELETE_BOOKING
+    ],
   },
   {
     id: 'u3',
@@ -96,7 +104,12 @@ export const INITIAL_USERS: User[] = [
     fullName: 'Lễ tân',
     role: UserRole.RECEPTIONIST,
     password: '123',
-    allowedPropertyIds: ['p1', 'p2'], // Example: Can access both
-    permissions: [PERMISSIONS.VIEW_DASHBOARD, PERMISSIONS.MANAGE_ROOMS, PERMISSIONS.MANAGE_BOOKINGS],
+    allowedPropertyIds: ['p1', 'p2'], 
+    // Receptionist: Can Add/Edit but NOT Delete, No Reports, No Dashboard (Dashboard restricted in Sidebar)
+    permissions: [
+        PERMISSIONS.MANAGE_ROOMS, 
+        PERMISSIONS.CAN_ADD_BOOKING,
+        PERMISSIONS.CAN_EDIT_BOOKING
+    ],
   }
 ];

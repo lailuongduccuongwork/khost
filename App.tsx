@@ -9,7 +9,7 @@ import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag } from './types';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS } from './types';
 import { Lock, Loader2, CloudOff } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -45,16 +45,18 @@ const App: React.FC = () => {
             // We'll verify against DB users later, but set initial state now
             setCurrentUser(parsedUser);
             if (parsedUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
-            if (parsedUser.role === UserRole.RECEPTIONIST) setCurrentPage('room-map');
+            
+            // Set default page based on role/permissions logic
+            // If they don't have dashboard access, default to Room Map
+            if (parsedUser.permissions && !parsedUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
+                setCurrentPage('room-map');
+            }
         } catch (e) {
             localStorage.removeItem('k_host_user');
         }
     }
 
     // 2. Connect Firebase
-    // IMPORTANT: The callback here must NOT use state variables directly 
-    // because it captures the closure at mount time (stale state).
-    // Instead, we toggle 'dataTick' to trigger the main useEffect to run with fresh state.
     DataService.init(() => {
         setDataTick(prev => prev + 1);
         setIsLoading(false);
@@ -62,7 +64,6 @@ const App: React.FC = () => {
   }, []);
 
   // --- MAIN DATA REFRESH LOGIC ---
-  // This useEffect runs whenever dataTick changes (DB update) OR currentPropertyId/User changes.
   useEffect(() => {
     if (isLoading) return;
 
@@ -83,6 +84,12 @@ const App: React.FC = () => {
              // Update session silently if permissions/roles changed in DB
              setCurrentUser(freshUser);
              localStorage.setItem('k_host_user', JSON.stringify(freshUser));
+             
+             // Security check: If current page is forbidden, redirect
+             const perms = freshUser.permissions || [];
+             if (currentPage === 'dashboard' && !perms.includes(PERMISSIONS.VIEW_DASHBOARD)) setCurrentPage('room-map');
+             if (currentPage === 'bookings' && !perms.includes(PERMISSIONS.MANAGE_BOOKINGS)) setCurrentPage('room-map');
+             if (currentPage === 'reports' && !perms.includes(PERMISSIONS.VIEW_REPORTS)) setCurrentPage('room-map');
         }
     }
 
@@ -131,7 +138,7 @@ const App: React.FC = () => {
        setBookings(allBookings);
     }
 
-  }, [dataTick, currentPropertyId, isLoading, currentUser?.id /* deep dependency not needed */]);
+  }, [dataTick, currentPropertyId, isLoading, currentUser?.id]);
 
 
   // --- Automation System (Auto Check-in / Check-out) ---
@@ -140,7 +147,7 @@ const App: React.FC = () => {
 
       const runAutomation = () => {
           const now = new Date();
-          const allBookings = DataService.getBookings(); // Read directly from service
+          const allBookings = DataService.getBookings();
           let hasChanges = false;
           
           const updatedBookings = allBookings.map(b => {
@@ -167,7 +174,6 @@ const App: React.FC = () => {
           });
 
           if (hasChanges) {
-              // This pushes to DB -> triggers init callback -> toggles dataTick -> refreshes UI
               DataService.saveBookings(updatedBookings);
           }
       };
@@ -201,10 +207,10 @@ const App: React.FC = () => {
       if (foundUser.role === UserRole.ADMIN) setViewMode('MANAGEMENT');
       else setViewMode('RECEPTION');
       
-      // Auto-set property logic handled by main useEffect
       setCurrentPropertyId(''); // Reset to trigger validation logic
       
-      if (foundUser.role === UserRole.RECEPTIONIST) {
+      // Smart Default Page
+      if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
           setCurrentPage('room-map');
       } else {
           setCurrentPage('dashboard');
@@ -307,7 +313,7 @@ const App: React.FC = () => {
         currentPage={currentPage} 
         onNavigate={setCurrentPage} 
         onLogout={handleLogout}
-        role={currentUser.role}
+        currentUser={currentUser}
         viewMode={viewMode}
       />
       
@@ -322,7 +328,7 @@ const App: React.FC = () => {
 
       <main className="ml-64 pt-16 p-6 min-h-screen">
         <div className="max-w-7xl mx-auto h-full">
-          {currentPage === 'dashboard' && currentUser.role !== UserRole.RECEPTIONIST && (
+          {currentPage === 'dashboard' && currentUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
             <Dashboard bookings={bookings} rooms={rooms} />
           )}
           
@@ -336,21 +342,21 @@ const App: React.FC = () => {
               onUpdateStatus={handleUpdateRoomStatus}
               onRefresh={manualRefresh}
               currentProperty={currentPropertyObj}
-              currentUser={currentUser.id}
+              currentUser={currentUser} // Pass full user object
             />
           )}
 
-          {currentPage === 'bookings' && currentUser.role !== UserRole.RECEPTIONIST && (
+          {currentPage === 'bookings' && currentUser.permissions?.includes(PERMISSIONS.MANAGE_BOOKINGS) && (
             <Bookings 
               bookings={bookings} 
               rooms={rooms} 
               customers={customers} 
               onRefresh={manualRefresh}
-              currentUserId={currentUser.id}
+              currentUser={currentUser} // Pass full user object
             />
           )}
 
-          {currentPage === 'reports' && currentUser.role !== UserRole.RECEPTIONIST && (
+          {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
               <Reports 
                 bookings={bookings} 
                 rooms={rooms} 
@@ -358,6 +364,7 @@ const App: React.FC = () => {
                 roomTypes={roomTypes} 
                 properties={properties} 
                 tags={tags}
+                currentUser={currentUser} // Pass full user object
               />
           )}
           

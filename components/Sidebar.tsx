@@ -1,37 +1,33 @@
 
 import React from 'react';
 import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase } from 'lucide-react';
-import { UserRole } from '../types';
+import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   onLogout: () => void;
-  role: UserRole;
+  currentUser: User;
   viewMode: 'RECEPTION' | 'MANAGEMENT';
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, role, viewMode }) => {
-  let menuItems = [
-    { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
-    { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble },
-    { id: 'bookings', label: 'Đặt phòng', icon: CalendarDays },
+const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, currentUser, viewMode }) => {
+  // Define all possible menu items
+  const allMenuItems = [
+    { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
+    { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
+    { id: 'bookings', label: 'Đặt phòng', icon: CalendarDays, permission: PERMISSIONS.MANAGE_BOOKINGS },
+    { id: 'reports', label: 'Báo cáo', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
   ];
 
-  // Logic: RECEPTIONIST only sees Room Map
-  if (role === UserRole.RECEPTIONIST) {
-      menuItems = [
-          { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble },
-      ];
-  } else {
-      // Logic for Managers/Admins
-      // Only show reports if NOT receptionist (redundant check but safe)
-      menuItems.push({ id: 'reports', label: 'Báo cáo', icon: BarChart3 });
+  // Filter items based on user permissions
+  const menuItems = allMenuItems.filter(item => 
+      currentUser.permissions?.includes(item.permission)
+  );
 
-      // Management items
-      if (viewMode === 'MANAGEMENT') {
-         menuItems.push({ id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase });
-      }
+  // Add System Management for Admin/Manager in Management Mode
+  if (viewMode === 'MANAGEMENT' && (currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.MANAGER)) {
+     menuItems.push({ id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase, permission: 'ALWAYS' } as any);
   }
 
   return (

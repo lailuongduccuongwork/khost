@@ -110,5 +110,11 @@ export const PERMISSIONS = {
   MANAGE_ROOMS: 'manage_rooms', 
   MANAGE_BOOKINGS: 'manage_bookings', 
   VIEW_REPORTS: 'view_reports',
-  ADMIN_SETTINGS: 'admin_settings', 
+  ADMIN_SETTINGS: 'admin_settings',
+  
+  // Fine-grained permissions
+  CAN_ADD_BOOKING: 'can_add_booking',
+  CAN_EDIT_BOOKING: 'can_edit_booking',
+  CAN_DELETE_BOOKING: 'can_delete_booking',
+  CAN_EXPORT_REPORT: 'can_export_report',
 };

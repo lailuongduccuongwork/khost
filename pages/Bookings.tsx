@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Booking, BookingStatus, Room, Customer } from '../types';
+import { Booking, BookingStatus, Room, Customer, User, PERMISSIONS } from '../types';
 import { Search, Plus, Eye, Trash2 } from 'lucide-react';
 import { DataService } from '../services/dataService';
 
@@ -9,11 +9,14 @@ interface BookingsProps {
   rooms: Room[];
   customers: Customer[];
   onRefresh?: () => void;
-  currentUserId: string; // Add prop to track who deletes
+  currentUser: User; // Full user for permissions
 }
 
-const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefresh, currentUserId }) => {
+const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefresh, currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  
+  const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
+  const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
 
   const getCustomerName = (id: string) => customers.find(c => c.id === id)?.name || 'Unknown';
   const getRoomNumber = (id: string) => rooms.find(r => r.id === id)?.number || 'N/A';
@@ -38,8 +41,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
   };
 
   const handleDelete = (id: string) => {
+      if (!canDelete) return;
+
       if(window.confirm(`CẢNH BÁO: Bạn có chắc chắn muốn xóa vĩnh viễn đơn đặt phòng #${id}?\n\nHành động này sẽ:\n- Xoá đơn khỏi sơ đồ phòng.\n- Xoá đơn khỏi báo cáo doanh thu.\n- Không thể khôi phục.`)) {
-          const success = DataService.deleteBooking(id, currentUserId);
+          const success = DataService.deleteBooking(id, currentUser.id);
           if (success) {
               alert("Đã xoá đơn thành công.");
               if(onRefresh) onRefresh();
@@ -49,13 +54,28 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       }
   };
 
+  const handleCreate = () => {
+      if(!canAdd) {
+          alert("Bạn không có quyền tạo đơn.");
+          return;
+      }
+      // Note: This page currently doesn't have a create modal hooked up directly in the original code,
+      // it just had a button. In a real scenario, this would open a modal.
+      alert("Vui lòng sử dụng Sơ đồ phòng để tạo đơn mới trực quan hơn.");
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in">
       <div className="p-5 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-lg font-bold text-gray-800">Danh sách đặt phòng</h2>
-        <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors">
-            <Plus size={16} /> Tạo đặt phòng
-        </button>
+        {canAdd && (
+            <button 
+                onClick={handleCreate}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors"
+            >
+                <Plus size={16} /> Tạo đặt phòng
+            </button>
+        )}
       </div>
       
       <div className="p-4 bg-gray-50 border-b border-gray-200">
@@ -102,18 +122,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
                 </td>
                 <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                        {/* 
-                        <button className="text-gray-400 hover:text-blue-600" title="Chi tiết">
-                            <Eye size={18} />
-                        </button>
-                        */}
-                        <button 
-                            onClick={() => handleDelete(booking.id)} 
-                            className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition-colors" 
-                            title="Xóa đơn vĩnh viễn"
-                        >
-                            <Trash2 size={18} />
-                        </button>
+                        {canDelete && (
+                            <button 
+                                onClick={() => handleDelete(booking.id)} 
+                                className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition-colors" 
+                                title="Xóa đơn vĩnh viễn"
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        )}
                     </div>
                 </td>
               </tr>

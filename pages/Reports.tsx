@@ -1,8 +1,8 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { Booking, BookingStatus, Room, User, RoomType, Property, Tag } from '../types';
+import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, AlertTriangle } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -10,7 +10,8 @@ interface ReportsProps {
   users: User[];
   roomTypes: RoomType[];
   properties: Property[];
-  tags: Tag[]; // Add tags prop
+  tags: Tag[];
+  currentUser: User; // Need full user for permissions
 }
 
 type DatePreset = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_30_DAYS' | 'THIS_QUARTER' | 'LAST_QUARTER' | 'THIS_YEAR' | 'LAST_YEAR' | 'CUSTOM';
@@ -31,13 +32,15 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags }) => {
+const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags, currentUser }) => {
   const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
   
   // Filter States
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  
+  const canExport = currentUser.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT);
 
   // --- Date Logic Helpers ---
   const getRange = (preset: DatePreset): { start: Date, end: Date } | null => {
@@ -262,6 +265,10 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
 
 
   const handleExport = (data: any[], fileName: string) => {
+      if (!canExport) {
+          alert("Bạn không có quyền tải xuống báo cáo này.");
+          return;
+      }
       const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _createdAt, _tags, ...rest }) => rest);
       DataService.exportToExcel(cleanData, fileName);
   };
@@ -430,9 +437,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                       <span className="text-xs text-green-600 font-bold uppercase block">Tổng doanh thu</span>
                       <span className="text-xl font-bold text-green-700">{totalRevenue.toLocaleString()} VNĐ</span>
                   </div>
-                  <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10">
-                      <FileSpreadsheet size={18} /> Tải Excel
-                  </button>
+                  {canExport && (
+                      <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10">
+                          <FileSpreadsheet size={18} /> Tải Excel
+                      </button>
+                  )}
               </div>
           </div>
 
@@ -452,9 +461,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                         Lọc theo thời gian tạo đơn: <span className="font-semibold text-gray-700">{startDate ? new Date(startDate).toLocaleDateString('vi-VN') : '...'}</span> đến <span className="font-semibold text-gray-700">{endDate ? new Date(endDate).toLocaleDateString('vi-VN') : '...'}</span>
                     </p>
                 </div>
-                <button onClick={() => handleExport(bookingReportData, 'Bao_cao_dat_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10">
-                    <FileSpreadsheet size={18} /> Tải Excel
-                </button>
+                {canExport && (
+                    <button onClick={() => handleExport(bookingReportData, 'Bao_cao_dat_phong.xlsx')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10">
+                        <FileSpreadsheet size={18} /> Tải Excel
+                    </button>
+                )}
              </div>
 
              <ReportTable data={bookingReportData} />
