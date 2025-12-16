@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
 import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal } from 'lucide-react';
@@ -71,7 +71,7 @@ const MoneyInput = ({ value, onChange, className, disabled }: { value: number, o
     )
 }
 
-// 2. Unified Date/Time Picker Control
+// 2. Simplified Date/Time Picker using Native Input
 const DateTimeControl = ({ 
     dateValue, 
     onChange,
@@ -81,187 +81,28 @@ const DateTimeControl = ({
     onChange: (newIso: string) => void,
     disabled?: boolean
 }) => {
-    const [showCalendar, setShowCalendar] = useState(false);
-    const [showTime, setShowTime] = useState(false);
-    const [inputValue, setInputValue] = useState('');
-    const [hasError, setHasError] = useState(false);
-    const [viewDate, setViewDate] = useState(new Date());
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (dateValue) {
-            const d = new Date(dateValue);
-            const day = d.getDate().toString().padStart(2, '0');
-            const month = (d.getMonth() + 1).toString().padStart(2, '0');
-            const year = d.getFullYear();
-            const hour = d.getHours().toString().padStart(2, '0');
-            const min = d.getMinutes().toString().padStart(2, '0');
-            setInputValue(`${day}/${month}/${year} ${hour}:${min}`);
-            setViewDate(d);
-            setHasError(false);
-        } else {
-            setInputValue('');
-        }
-    }, [dateValue]);
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setShowCalendar(false);
-                setShowTime(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
-        setHasError(false); 
+    // Helper: Convert "Local ISO" (from DB) to "yyyy-MM-ddThh:mm" (for input)
+    const toInputFormat = (isoStr: string) => {
+        if (!isoStr) return '';
+        // We just need the first 16 chars "YYYY-MM-DDTHH:mm" for datetime-local
+        return isoStr.substring(0, 16);
     };
 
-    const commitChange = () => {
-        const match = inputValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s(\d{1,2}):(\d{1,2})$/);
-        if (!match) {
-            setHasError(true);
-            alert("Định dạng không hợp lệ! Vui lòng nhập: dd/mm/yyyy hh:mm");
-            if(dateValue) {
-                const d = new Date(dateValue);
-                 const day = d.getDate().toString().padStart(2, '0');
-                const month = (d.getMonth() + 1).toString().padStart(2, '0');
-                const year = d.getFullYear();
-                const hour = d.getHours().toString().padStart(2, '0');
-                const min = d.getMinutes().toString().padStart(2, '0');
-                setInputValue(`${day}/${month}/${year} ${hour}:${min}`);
-            }
-            return;
-        }
-
-        const [_, d, m, y, h, min] = match;
-        const newDate = new Date(parseInt(y), parseInt(m) - 1, parseInt(d), parseInt(h), parseInt(min));
-
-        if (isNaN(newDate.getTime()) || newDate.getMonth() !== parseInt(m) - 1) {
-             setHasError(true);
-             alert("Ngày giờ không tồn tại!");
-             return;
-        }
-
-        const offset = newDate.getTimezoneOffset() * 60000;
-        const isoString = (new Date(newDate.getTime() - offset)).toISOString().slice(0, -1);
-        onChange(isoString);
-        setViewDate(newDate);
-        setHasError(false);
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value; 
+        if (!val) return;
+        // Append seconds/ms to maintain format consistency
+        onChange(`${val}:00.000`);
     };
-
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') {
-            e.currentTarget.blur();
-            commitChange();
-        }
-    };
-
-    const handleDateSelect = (day: number) => {
-        const current = dateValue ? new Date(dateValue) : new Date();
-        const newDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day, current.getHours(), current.getMinutes());
-        const offset = newDate.getTimezoneOffset() * 60000;
-        onChange((new Date(newDate.getTime() - offset)).toISOString().slice(0, -1));
-        setShowCalendar(false);
-    };
-
-    const handleTimeSelect = (h: number, m: number) => {
-        const current = dateValue ? new Date(dateValue) : new Date();
-        current.setHours(h, m);
-        const offset = current.getTimezoneOffset() * 60000;
-        onChange((new Date(current.getTime() - offset)).toISOString().slice(0, -1));
-        setShowTime(false);
-    };
-
-    const timeSlots = [];
-    for(let h=0; h<24; h++) {
-        timeSlots.push({h, m: 0, label: `${h.toString().padStart(2,'0')}:00`});
-        timeSlots.push({h, m: 30, label: `${h.toString().padStart(2,'0')}:30`});
-    }
-
-    const daysInMonth = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 0).getDate();
-    const firstDay = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1).getDay();
 
     return (
-        <div className="relative w-full" ref={containerRef}>
-            <div className={`flex items-center border rounded-lg px-2 py-2 bg-white gap-2 shadow-sm transition-all ${hasError ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-300 hover:border-blue-400 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-200'} ${disabled ? 'bg-gray-100 opacity-70' : ''}`}>
-                <input 
-                    type="text"
-                    className="flex-1 min-w-0 text-sm font-medium text-black bg-transparent outline-none placeholder:text-gray-400"
-                    value={inputValue}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    onBlur={commitChange}
-                    placeholder="dd/mm/yyyy hh:mm"
-                    disabled={disabled}
-                />
-                {!disabled && (
-                    <>
-                    <button onClick={() => { setShowCalendar(!showCalendar); setShowTime(false); }} className="text-gray-500 hover:text-blue-600 p-1 rounded hover:bg-gray-100 transition-colors">
-                        <Calendar size={18} />
-                    </button>
-                    <button onClick={() => { setShowTime(!showTime); setShowCalendar(false); }} className="text-gray-500 hover:text-blue-600 p-1 rounded hover:bg-gray-100 transition-colors">
-                        <Clock size={18} />
-                    </button>
-                    </>
-                )}
-            </div>
-            {showCalendar && (
-                <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 p-4 z-50 w-72 animate-fade-in">
-                    <div className="flex justify-between items-center mb-4">
-                        <button onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft size={20}/></button>
-                        <span className="font-bold text-gray-800">Tháng {viewDate.getMonth() + 1} {viewDate.getFullYear()}</span>
-                        <button onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight size={20}/></button>
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center text-xs font-bold text-gray-400 mb-2">
-                        <span>CN</span><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span>
-                    </div>
-                    <div className="grid grid-cols-7 gap-1">
-                        {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
-                        {Array.from({ length: daysInMonth }).map((_, i) => {
-                            const d = i + 1;
-                            const isSelected = new Date(dateValue).getDate() === d && new Date(dateValue).getMonth() === viewDate.getMonth();
-                            return (
-                                <button 
-                                    key={d} onClick={() => handleDateSelect(d)}
-                                    className={`w-8 h-8 rounded-full text-sm ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-700'}`}
-                                >
-                                    {d}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <div className="mt-3 pt-3 border-t text-center">
-                        <button onClick={() => {
-                            const now = new Date();
-                            const offset = now.getTimezoneOffset() * 60000;
-                            onChange((new Date(now.getTime() - offset)).toISOString().slice(0, -1));
-                            setViewDate(now);
-                        }} className="text-sm text-green-600 font-bold hover:underline">Về giờ hiện tại</button>
-                    </div>
-                </div>
-            )}
-            {showTime && (
-                <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 py-1 z-50 w-32 max-h-60 overflow-y-auto no-scrollbar">
-                    {timeSlots.map((slot, idx) => (
-                        <button 
-                            key={idx}
-                            onClick={() => handleTimeSelect(slot.h, slot.m)}
-                            className={`w-full text-left px-4 py-2 text-sm font-medium hover:bg-gray-50 ${
-                                new Date(dateValue).getHours() === slot.h && Math.abs(new Date(dateValue).getMinutes() - slot.m) < 15
-                                ? 'bg-green-600 text-white hover:bg-green-700' 
-                                : 'text-gray-700'
-                            }`}
-                        >
-                            {slot.label}
-                        </button>
-                    ))}
-                </div>
-            )}
-        </div>
+        <input 
+            type="datetime-local"
+            className={`w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none font-semibold ${disabled ? 'bg-gray-100 text-gray-500' : ''}`}
+            value={toInputFormat(dateValue)}
+            onChange={handleChange}
+            disabled={disabled}
+        />
     );
 };
 
@@ -705,6 +546,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const handleSaveBooking = () => {
      const validRows = bookingRows.filter(r => r.roomId);
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
+
+     // --- CHECK DUPLICATE ROOMS IN FORM ---
+     const roomIds = validRows.map(r => r.roomId);
+     if (new Set(roomIds).size !== roomIds.length) {
+         alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại.");
+         return;
+     }
 
      // --- Validation Logic ---
      for (const row of validRows) {
@@ -1189,7 +1037,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         <span className="text-sm font-medium text-gray-600 truncate">{rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}</span>
                                     </div>
                                     <div className="md:w-[15%]">
-                                        <select disabled={isReadOnly} className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}><option value="">Chọn phòng</option>{rooms.map(r => (<option key={r.id} value={r.id}>{r.number}</option>))}</select>
+                                        <select disabled={isReadOnly} className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}>
+                                            <option value="">Chọn phòng</option>
+                                            {rooms.map(r => {
+                                                // Check availability
+                                                const check = DataService.validateRoomAvailability(r.id, row.checkIn, row.checkOut, row.bookingId);
+                                                
+                                                // Check duplicate selection in OTHER rows of the current form
+                                                const isSelectedElsewhere = bookingRows.some((otherRow, otherIdx) => otherIdx !== idx && otherRow.roomId === r.id);
+
+                                                // Show if valid AND not selected elsewhere OR if it's the currently selected room
+                                                if ((check.valid || r.id === row.roomId) && !isSelectedElsewhere) {
+                                                    return <option key={r.id} value={r.id}>{r.number}</option>
+                                                }
+                                                return null;
+                                            })}
+                                        </select>
                                     </div>
                                     <div className="md:w-[22%] space-y-1 md:space-y-0">
                                         <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Nhận phòng</span>

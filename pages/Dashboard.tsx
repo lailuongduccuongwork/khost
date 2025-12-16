@@ -136,6 +136,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
           totalBill: filtered.reduce((sum, b) => sum + b.totalPrice, 0),
           paid: filtered.reduce((sum, b) => sum + b.paidAmount, 0),
           debt: filtered.reduce((sum, b) => sum + (b.totalPrice - b.paidAmount), 0),
+          // totalNights is no longer used for ADR, kept for other potential uses
           totalNights: filtered.reduce((sum, b) => {
               const start = new Date(b.checkInDate).getTime();
               const end = new Date(b.checkOutDate).getTime();
@@ -170,41 +171,53 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   const performanceStats = useMemo(() => {
       if (!startDate || !endDate || rooms.length === 0) return { occ: 0, adr: 0, occupiedInventory: 0, totalInventory: 0 };
 
+      // Parse start and end dates strictly
       const start = new Date(startDate); start.setHours(0,0,0,0);
       const end = new Date(endDate); end.setHours(23,59,59,999);
       
       const oneDay = 24 * 60 * 60 * 1000;
-      const daysDiff = Math.round(Math.abs((end.getTime() - start.getTime()) / oneDay)) + 1;
+      // Total days in the filter range
+      const daysDiff = Math.floor((end.getTime() - start.getTime()) / oneDay) + 1;
+      
+      // 1. Total Inventory (Tổng quỹ phòng khả dụng)
       const totalInventory = rooms.length * daysDiff;
 
+      // 2. Occupied Inventory (Số đêm đã bán - The Seat Rule)
       let occupiedInventory = 0;
       
       for (let i = 0; i < daysDiff; i++) {
-          const currentDay = new Date(start.getTime() + i * oneDay);
-          currentDay.setHours(12, 0, 0, 0); 
+          // Define the specific day range (00:00 to 23:59:59)
+          const currentDayStart = new Date(start.getTime() + i * oneDay);
+          const currentDayEnd = new Date(currentDayStart);
+          currentDayEnd.setHours(23, 59, 59, 999);
+          
           const occupiedRoomsOnThisDay = new Set<string>();
 
           bookings.forEach(b => {
+             // Ignore invalid bookings
              if (b.status === BookingStatus.DELETED || b.status === BookingStatus.CANCELLED) return;
-             const bStart = new Date(b.checkInDate);
-             const bEnd = new Date(b.checkOutDate);
-             const bStartDay = new Date(bStart); bStartDay.setHours(0,0,0,0);
-             const bEndDay = new Date(bEnd); bEndDay.setHours(0,0,0,0);
-             const cDay = new Date(currentDay); cDay.setHours(0,0,0,0);
+             
+             const bStart = new Date(b.checkInDate).getTime();
+             const bEnd = new Date(b.checkOutDate).getTime();
 
-             if (cDay.getTime() >= bStartDay.getTime()) {
-                 if (bStartDay.getTime() === bEndDay.getTime()) {
-                     if (cDay.getTime() === bStartDay.getTime()) occupiedRoomsOnThisDay.add(b.roomId);
-                 } else {
-                     if (cDay.getTime() < bEndDay.getTime()) occupiedRoomsOnThisDay.add(b.roomId);
-                 }
+             // Check Intersection: [BookingStart, BookingEnd] intersects with [DayStart, DayEnd]
+             // Logic: Booking Starts BEFORE Day Ends AND Booking Ends AFTER Day Starts
+             if (bStart < currentDayEnd.getTime() && bEnd > currentDayStart.getTime()) {
+                 occupiedRoomsOnThisDay.add(b.roomId);
              }
           });
+          
+          // Add unique rooms occupied this day to the total sold nights
           occupiedInventory += occupiedRoomsOnThisDay.size;
       }
 
+      // 3. OCC % Calculation
       const occ = totalInventory > 0 ? Math.min(100, Math.round((occupiedInventory / totalInventory) * 100)) : 0;
-      const adr = checkoutStats.totalNights > 0 ? Math.round(checkoutStats.totalBill / checkoutStats.totalNights) : 0;
+      
+      // 4. ADR Calculation
+      // ADR = Total Real Revenue (Checked-out bookings) / Total Sold Nights (Seat Rule)
+      const totalRevenue = checkoutStats.totalBill;
+      const adr = occupiedInventory > 0 ? Math.round(totalRevenue / occupiedInventory) : 0;
 
       return { occ, adr, occupiedInventory, totalInventory };
   }, [bookings, rooms, startDate, endDate, checkoutStats]);
@@ -383,7 +396,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
                      <p className="text-2xl md:text-4xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.occ}%</p>
                      <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
                         <p className="text-[10px] md:text-[11px] font-semibold text-gray-500 whitespace-nowrap">
-                            {performanceStats.occupiedInventory}/{performanceStats.totalInventory} Phòng
+                            {performanceStats.occupiedInventory}/{performanceStats.totalInventory} Đêm phòng
                         </p>
                      </div>
                  </div>
@@ -394,8 +407,8 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
                         <DollarSign size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
                      </div>
 
-                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Bình quân</p>
-                     <p className="text-xl md:text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.adr.toLocaleString('vi-VN')}</p>
+                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Giá TB (ADR)</p>
+                     <p className="text-xl md:text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{formatCompactVND(performanceStats.adr)}</p>
                      <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
                         <p className="text-[10px] md:text-[11px] font-semibold text-gray-500">
                             VNĐ / Đêm
