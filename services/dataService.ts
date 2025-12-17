@@ -116,7 +116,35 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         onValue(getTenantRef('rooms'), (snap) => { CACHE.rooms = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('bookings'), (snap) => { CACHE.bookings = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('customers'), (snap) => { CACHE.customers = snapshotToArray(snap); onDataChange(); });
-        onValue(getTenantRef('users'), (snap) => { CACHE.users = snapshotToArray(snap); onDataChange(); });
+        
+        // CRITICAL FIX: Self-Repair Mechanism for Users
+        onValue(getTenantRef('users'), async (snap) => { 
+            const users = snapshotToArray<User>(snap);
+            CACHE.users = users;
+            
+            // If local users list is empty, try to fetch from system/users and repair
+            if (users.length === 0 && activeTenantId !== SYSTEM_TENANT_ID) {
+                console.warn(`⚠️ User list for tenant ${tenantId} is empty. Attempting self-repair from system...`);
+                try {
+                    const sysUsersRef = ref(db, 'system/users');
+                    const q = query(sysUsersRef, orderByChild('tenantId'), equalTo(tenantId));
+                    const sysSnap = await get(q);
+                    
+                    if (sysSnap.exists()) {
+                        const recoveredUsers = snapshotToArray<User>(sysSnap);
+                        if (recoveredUsers.length > 0) {
+                            console.log(`✅ Recovered ${recoveredUsers.length} users from system. Syncing to local...`);
+                            CACHE.users = recoveredUsers;
+                            await set(getTenantRef('users'), recoveredUsers);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Self-repair failed:", e);
+                }
+            }
+            
+            onDataChange(); 
+        });
 
         const historyQuery = query(getTenantRef('history'), limitToLast(50));
         onValue(historyQuery, (snap) => {
@@ -130,7 +158,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
              onDataChange();
         });
 
-        // Check if tenant is new (empty), seed default data
+        // Check if tenant is new (empty properties), seed default data
         get(getTenantRef('properties')).then(snap => {
             if (!snap.exists()) {
                 console.log(`✨ New Tenant Detected [${tenantId}]. Seeding default data...`);
@@ -164,7 +192,7 @@ const _seedSystemData = () => {
                    tenantId: t.id,
                    username: t.adminUsername,
                    password: t.adminPassword || '123',
-                   fullName: `Admin ${t.name}`,
+                   fullName: t.adminUsername, // FullName same as Username
                    role: UserRole.ADMIN,
                    permissions: Object.values(PERMISSIONS),
                    allowedPropertyIds: []
@@ -187,9 +215,9 @@ const _seedTenantData = (tenantId: string) => {
     set(getTenantRef('customers'), withTenant(INITIAL_CUSTOMERS));
     set(getTenantRef('tags'), withTenant(INITIAL_TAGS));
     
-    // Filter users belonging to this tenant for the local user table
-    const tenantUsers = INITIAL_USERS.filter(u => u.tenantId === tenantId);
-    set(getTenantRef('users'), tenantUsers);
+    // For users: We do NOT seed INITIAL_USERS here for new tenants because
+    // the Super Admin has already created a specific admin user.
+    // The self-repair mechanism in onValue('users') will pull that admin down.
 }
 
 const _loadFromMockOrStorage = () => {
@@ -237,7 +265,6 @@ const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE
 
 const _globalLogin = async (username: string, password: string): Promise<User | null> => {
     // CRITICAL FIX: Always ensure Firebase is connected before checking credentials
-    // This allows fresh sessions (incognito/new device) to fetch real data instead of mock data
     _ensureFirebase();
 
     if (isFirebaseReady && db) {
@@ -255,27 +282,23 @@ const _globalLogin = async (username: string, password: string): Promise<User | 
         }
     }
     
-    // Fallback if system users table is empty OR Firebase connection failed
     const found = INITIAL_USERS.find(u => u.username === username && u.password === password);
     if (found) return found;
     
     return null;
 }
 
-// --- NEW HELPER: CHECK GLOBAL USERNAME UNIQUENESS ---
 const _findUserByUsername = async (username: string): Promise<User | null> => {
-    _ensureFirebase(); // Ensure connection
+    _ensureFirebase(); 
     
     if (isFirebaseReady && db) {
         try {
-            // Efficiently query system/users by username index
             const q = query(ref(db, 'system/users'), orderByChild('username'), equalTo(username));
             const snap = await get(q);
             
             if (snap.exists()) {
                 const val = snap.val();
                 const keys = Object.keys(val);
-                // Return the first match found
                 if (keys.length > 0) return val[keys[0]];
             }
         } catch (e) {
@@ -283,7 +306,6 @@ const _findUserByUsername = async (username: string): Promise<User | null> => {
         }
     }
     
-    // Fallback: Check local caches if online query failed or offline
     const foundInSystem = CACHE.systemUsers.find(u => u.username === username);
     if (foundInSystem) return foundInSystem;
     

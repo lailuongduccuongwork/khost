@@ -81,7 +81,7 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               tenantId: newId,
               username: newTenant.adminUsername!,
               password: newTenant.adminPassword!,
-              fullName: `Admin ${newTenant.name}`,
+              fullName: newTenant.adminUsername!, // Use Username as Full Name
               role: UserRole.ADMIN,
               permissions: Object.values(PERMISSIONS),
               allowedPropertyIds: []
