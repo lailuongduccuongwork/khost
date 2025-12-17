@@ -2,7 +2,7 @@
 import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan } from '../types';
 import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS } from './mockData';
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, get, child, query, limitToLast } from "firebase/database";
+import { getDatabase, ref, set, onValue, get, child, query, limitToLast, update, remove } from "firebase/database";
 
 // Declare XLSX from global scope (loaded via CDN)
 declare const XLSX: any;
@@ -64,13 +64,11 @@ const getTenantRef = (nodeName: string) => {
 };
 
 // HELPER: Convert Firebase Snapshot to Array safely
-// Firebase converts arrays to objects (sparse arrays) if keys are integers but not sequential.
-// We must force conversion to Array to prevent "map is not a function" errors in UI.
 const snapshotToArray = <T>(snap: any): T[] => {
     const val = snap.val();
     if (!val) return [];
     if (Array.isArray(val)) return val.filter(x => x); // Filter nulls
-    return Object.values(val);
+    return Object.values(val); // Convert Object Map to Array
 };
 
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
@@ -140,7 +138,11 @@ const _seedSystemData = () => {
     if (!isFirebaseReady || !db) return;
     set(ref(db, 'system/tenants'), INITIAL_TENANTS);
     set(ref(db, 'system/plans'), INITIAL_PLANS);
-    set(ref(db, 'system/users'), INITIAL_USERS);
+    
+    // FIX: Seed users as an Object Map (ID -> Data) instead of Array
+    // This ensures robustness when scaling
+    const usersMap = INITIAL_USERS.reduce((acc, user) => ({...acc, [user.id]: user}), {});
+    set(ref(db, 'system/users'), usersMap);
 }
 
 const _seedTenantData = (tenantId: string) => {
@@ -190,31 +192,23 @@ const _saveNode = (nodeName: string, data: any) => {
     }
 }
 
-// --- SYSTEM USER SYNC HELPER ---
-// This function ensures that when we add/edit/delete a user in a tenant,
-// the change is propagated to 'system/users' so global login works.
+// --- SYSTEM USER SYNC HELPER (FIXED) ---
+// Changed from "Read-Modify-Write All" to "Direct Write Per ID"
+// This solves the race condition and consistency issues across devices.
 const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE') => {
     if (!isFirebaseReady || !db) return;
 
     try {
-        const systemUsersRef = ref(db, 'system/users');
-        const snap = await get(systemUsersRef);
-        let currentSystemUsers = snapshotToArray<User>(snap);
+        // Instead of rewriting the whole array, we target the specific user ID path
+        // system/users/{userId}
+        const userRef = ref(db, `system/users/${user.id}`);
         
         if (action === 'DELETE') {
-            currentSystemUsers = currentSystemUsers.filter((u: User) => u.id !== user.id);
-        } else if (action === 'ADD') {
-            currentSystemUsers.push(user);
-        } else if (action === 'UPDATE') {
-            const idx = currentSystemUsers.findIndex((u: User) => u.id === user.id);
-            if (idx !== -1) {
-                currentSystemUsers[idx] = user;
-            } else {
-                currentSystemUsers.push(user);
-            }
+            await set(userRef, null); // Removes just this user node
+        } else {
+            // Add or Update
+            await set(userRef, user); // Updates just this user node
         }
-
-        await set(systemUsersRef, currentSystemUsers);
     } catch (e) {
         console.error("Failed to sync system users:", e);
     }
@@ -532,15 +526,13 @@ export const DataService = {
      const scopedUser = { ...user, tenantId: activeTenantId };
      CACHE.users = [...CACHE.users, scopedUser as User];
      _saveNode('users', CACHE.users);
-     // NEW: SYNC TO SYSTEM
+     // NEW: SYNC TO SYSTEM (Direct Object Write)
      _syncToSystemUsers(scopedUser as User, 'ADD');
   },
   updateUser: (updatedUser: User) => {
      const newUsers = [...CACHE.users];
      const idx = newUsers.findIndex(u => u.id === updatedUser.id);
      if (idx !== -1) {
-         // Merge existing data with updates to prevent losing tenantId if it wasn't passed perfectly
-         // Also ensure tenantId is strictly set to activeTenantId if we are in tenant context
          const safeUpdate = { 
              ...newUsers[idx], 
              ...updatedUser,
@@ -549,7 +541,7 @@ export const DataService = {
          newUsers[idx] = safeUpdate;
          CACHE.users = newUsers;
          _saveNode('users', newUsers);
-         // NEW: SYNC TO SYSTEM
+         // NEW: SYNC TO SYSTEM (Direct Object Write)
          _syncToSystemUsers(safeUpdate, 'UPDATE');
      }
   },
@@ -559,7 +551,7 @@ export const DataService = {
       CACHE.users = newUsers;
       _saveNode('users', newUsers);
       
-      // NEW: SYNC TO SYSTEM
+      // NEW: SYNC TO SYSTEM (Direct Object Delete)
       if(userToDelete) _syncToSystemUsers(userToDelete, 'DELETE');
   },
   
