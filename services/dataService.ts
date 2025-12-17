@@ -15,7 +15,8 @@ const firebaseConfig = {
   projectId: "k-host-a2a95",
   storageBucket: "k-host-a2a95.firebasestorage.app",
   messagingSenderId: "875551915320",
-  appId: "1:875551915320:web:9516f334551de0a96495cd"
+  appId: "1:875551915320:web:9516f334551de0a96495cd",
+  measurementId: "G-QZPYL00KCV"
 };
 
 // Initialize Firebase
@@ -45,12 +46,9 @@ const CACHE = {
 };
 
 // --- DATA ACCESS LAYER HELPERS (MIDDLEWARE) ---
-// The core concept: All business data access goes through `getTenantRef`
-// This acts as a middleware to enforce tenant isolation.
 const getTenantRef = (nodeName: string) => {
     if (!db) return null;
     
-    // Safety check: Never allow writing to root if tenant is not set
     if (!activeTenantId) {
         console.error("CRITICAL: Attempted to access DB without Active Tenant ID");
         return null;
@@ -61,9 +59,18 @@ const getTenantRef = (nodeName: string) => {
         return ref(db, `system/${nodeName}`);
     } else {
         // Normal tenant accessing their isolated bucket
-        // Structure: /tenants/{tenantId}/{nodeName}
         return ref(db, `tenants/${activeTenantId}/${nodeName}`);
     }
+};
+
+// HELPER: Convert Firebase Snapshot to Array safely
+// Firebase converts arrays to objects (sparse arrays) if keys are integers but not sequential.
+// We must force conversion to Array to prevent "map is not a function" errors in UI.
+const snapshotToArray = <T>(snap: any): T[] => {
+    const val = snap.val();
+    if (!val) return [];
+    if (Array.isArray(val)) return val.filter(x => x); // Filter nulls
+    return Object.values(val);
 };
 
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
@@ -79,9 +86,9 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         // 1. If Super Admin (System Context)
         if (tenantId === SYSTEM_TENANT_ID) {
              console.log("🔌 Connecting to SYSTEM context...");
-             onValue(ref(db, 'system/tenants'), (snap) => { CACHE.tenants = snap.val() || []; onDataChange(); });
-             onValue(ref(db, 'system/plans'), (snap) => { CACHE.plans = snap.val() || []; onDataChange(); });
-             onValue(ref(db, 'system/users'), (snap) => { CACHE.systemUsers = snap.val() || []; onDataChange(); });
+             onValue(ref(db, 'system/tenants'), (snap) => { CACHE.tenants = snapshotToArray(snap); onDataChange(); });
+             onValue(ref(db, 'system/plans'), (snap) => { CACHE.plans = snapshotToArray(snap); onDataChange(); });
+             onValue(ref(db, 'system/users'), (snap) => { CACHE.systemUsers = snapshotToArray(snap); onDataChange(); });
              
              // Check if system data empty, seed it
              get(ref(db, 'system/tenants')).then(snap => {
@@ -94,13 +101,13 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         console.log(`🔌 Connecting to TENANT context: [${tenantId}]...`);
         
         // Listeners scoped to tenant
-        onValue(getTenantRef('properties'), (snap) => { CACHE.properties = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('roomTypes'), (snap) => { CACHE.roomTypes = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('tags'), (snap) => { CACHE.tags = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('rooms'), (snap) => { CACHE.rooms = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('bookings'), (snap) => { CACHE.bookings = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('customers'), (snap) => { CACHE.customers = snap.val() || []; onDataChange(); });
-        onValue(getTenantRef('users'), (snap) => { CACHE.users = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('properties'), (snap) => { CACHE.properties = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('roomTypes'), (snap) => { CACHE.roomTypes = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('tags'), (snap) => { CACHE.tags = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('rooms'), (snap) => { CACHE.rooms = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('bookings'), (snap) => { CACHE.bookings = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('customers'), (snap) => { CACHE.customers = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('users'), (snap) => { CACHE.users = snapshotToArray(snap); onDataChange(); });
 
         const historyQuery = query(getTenantRef('history'), limitToLast(50));
         onValue(historyQuery, (snap) => {
@@ -133,7 +140,6 @@ const _seedSystemData = () => {
     if (!isFirebaseReady || !db) return;
     set(ref(db, 'system/tenants'), INITIAL_TENANTS);
     set(ref(db, 'system/plans'), INITIAL_PLANS);
-    // Global user table for login lookup (In production, use Firebase Auth)
     set(ref(db, 'system/users'), INITIAL_USERS);
 }
 
@@ -176,6 +182,7 @@ const _loadFromMockOrStorage = () => {
 // Helper to save specific node (Auto-scoped by getTenantRef)
 const _saveNode = (nodeName: string, data: any) => {
     if (isFirebaseReady && db && activeTenantId) {
+        // Deep clone to avoid mutation issues
         const cleanData = JSON.parse(JSON.stringify(data));
         set(getTenantRef(nodeName), cleanData).catch(err => console.error(`Save ${nodeName} failed`, err));
     } else {
@@ -192,13 +199,8 @@ const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE
     try {
         const systemUsersRef = ref(db, 'system/users');
         const snap = await get(systemUsersRef);
-        let currentSystemUsers = snap.val() || [];
+        let currentSystemUsers = snapshotToArray<User>(snap);
         
-        // Normalize to array
-        if (typeof currentSystemUsers === 'object' && !Array.isArray(currentSystemUsers)) {
-            currentSystemUsers = Object.values(currentSystemUsers);
-        }
-
         if (action === 'DELETE') {
             currentSystemUsers = currentSystemUsers.filter((u: User) => u.id !== user.id);
         } else if (action === 'ADD') {
@@ -208,7 +210,6 @@ const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE
             if (idx !== -1) {
                 currentSystemUsers[idx] = user;
             } else {
-                // If not found (rare inconsistency), push it
                 currentSystemUsers.push(user);
             }
         }
@@ -221,7 +222,6 @@ const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE
 
 
 // --- GLOBAL AUTH HELPER ---
-// Simulates a backend lookup to find which tenant a user belongs to
 const _globalLogin = async (username: string, password: string): Promise<User | null> => {
     if (!isFirebaseReady) {
         // Fallback to mock
@@ -230,12 +230,14 @@ const _globalLogin = async (username: string, password: string): Promise<User | 
 
     // 1. Try to fetch from /system/users (Global Lookup)
     const snap = await get(ref(db, 'system/users'));
-    let allUsers = snap.val();
+    let allUsers = snapshotToArray<User>(snap);
     
-    if (allUsers) {
-        // Ensure we are working with an array even if Firebase returns an object map
-        const userList: User[] = Array.isArray(allUsers) ? allUsers : Object.values(allUsers);
-        const found = userList.find(u => u.username === username && u.password === password);
+    if (allUsers.length > 0) {
+        const found = allUsers.find(u => u.username === username && u.password === password);
+        if (found) return found;
+    } else {
+        // Fallback if system users table is empty/error
+        const found = INITIAL_USERS.find(u => u.username === username && u.password === password);
         if (found) return found;
     }
     
@@ -257,10 +259,11 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
         staffId
     };
     
+    // Optimistic Update
     CACHE.history.unshift(newLog);
+    if (CACHE.history.length > 300) CACHE.history.length = 300;
     
     if (isFirebaseReady && db) {
-        if (CACHE.history.length > 300) CACHE.history.length = 300;
         _saveNode('history', CACHE.history);
     }
 };
@@ -270,6 +273,7 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     if (index !== -1) {
       const updatedRooms = [...CACHE.rooms];
       updatedRooms[index] = { ...updatedRooms[index], status };
+      // Optimistic update
       CACHE.rooms = updatedRooms;
       _saveNode('rooms', CACHE.rooms);
     }
