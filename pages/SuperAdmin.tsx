@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Tenant, SubscriptionPlan, UserRole, User } from '../types';
+import { Tenant, SubscriptionPlan, UserRole, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
 import { 
   Building2, Users, LayoutDashboard, CreditCard, 
@@ -18,12 +18,8 @@ interface SuperAdminProps {
 
 const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, onRefresh, onAccessTenant }) => {
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'TENANTS' | 'PLANS' | 'ADMINS'>('DASHBOARD');
-  
-  // --- STATES FOR MODALS ---
   const [showTenantModal, setShowTenantModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
-  
-  // New: Confirm Action Modal State
   const [actionModal, setActionModal] = useState<{
       type: 'DELETE' | 'LOCK' | 'UNLOCK' | 'DELETE_ADMIN';
       item: any;
@@ -34,7 +30,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
   const [editingTenant, setEditingTenant] = useState<Partial<Tenant> | null>(null);
   const [editingPlan, setEditingPlan] = useState<Partial<SubscriptionPlan> | null>(null);
 
-  // --- DASHBOARD STATS ---
   const stats = {
       totalTenants: tenants.length,
       activeTenants: tenants.filter(t => t.status === 'ACTIVE').length,
@@ -45,8 +40,7 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
       }, 0)
   };
 
-  // --- TENANT ACTIONS ---
-  const handleSaveTenant = () => {
+  const handleSaveTenant = async () => {
       if (!editingTenant?.name || !editingTenant?.planId) return alert("Vui lòng điền tên và chọn gói cước");
       
       let updatedTenants = [...tenants];
@@ -58,7 +52,16 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               updatedTenants[idx] = { ...updatedTenants[idx], ...editingTenant } as Tenant;
           }
       } else {
-          // Create
+          // Create New Tenant
+          
+          // 1. CHECK USERNAME DUPLICATE GLOBALLY
+          const requestedUsername = editingTenant.adminUsername || 'admin';
+          const existingUser = await DataService.findUserByUsername(requestedUsername);
+          if (existingUser) {
+              alert(`Tên đăng nhập "${requestedUsername}" đã tồn tại trên hệ thống. Vui lòng chọn tên khác cho tài khoản Admin.`);
+              return;
+          }
+
           const newId = `tenant_${Date.now()}`;
           const newTenant: Tenant = {
               id: newId,
@@ -66,12 +69,24 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               domain: editingTenant.domain || '',
               status: 'ACTIVE',
               planId: editingTenant.planId,
-              subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // +30 days
+              subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), 
               createdAt: new Date().toISOString(),
-              adminUsername: editingTenant.adminUsername || 'admin',
+              adminUsername: requestedUsername,
               adminPassword: editingTenant.adminPassword || '123'
           };
           updatedTenants.push(newTenant);
+          
+          const adminUser: User = {
+              id: `u_${newId}_admin`,
+              tenantId: newId,
+              username: newTenant.adminUsername!,
+              password: newTenant.adminPassword!,
+              fullName: `Admin ${newTenant.name}`,
+              role: UserRole.ADMIN,
+              permissions: Object.values(PERMISSIONS),
+              allowedPropertyIds: []
+          };
+          DataService.upsertSystemUser(adminUser);
       }
       
       DataService.saveTenants(updatedTenants);
@@ -98,7 +113,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
       });
   };
 
-  // --- PLAN ACTIONS ---
   const handleSavePlan = () => {
       if (!editingPlan?.name || !editingPlan?.price) return alert("Thiếu thông tin gói");
 
@@ -131,7 +145,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
       }
   };
 
-  // --- ADMIN ACTIONS ---
   const openDeleteAdminModal = (user: User) => {
       setActionModal({
           type: 'DELETE_ADMIN',
@@ -141,33 +154,27 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
       });
   };
 
-  // --- EXECUTE CONFIRMED ACTION ---
   const handleConfirmAction = () => {
       if (!actionModal) return;
 
       const { type, item } = actionModal;
 
       if (type === 'DELETE') {
-          // Delete Tenant
           DataService.deleteTenant(item.id);
       } else if (type === 'LOCK' || type === 'UNLOCK') {
-          // Toggle Tenant Status
           const newStatus = type === 'LOCK' ? 'LOCKED' : 'ACTIVE';
           const updated = tenants.map(t => t.id === item.id ? { ...t, status: newStatus } : t);
           DataService.saveTenants(updated as Tenant[]);
       } else if (type === 'DELETE_ADMIN') {
-          // Delete System Admin
           DataService.deleteUser(item.id);
       }
 
-      // Close and Refresh
       setActionModal(null);
       setTimeout(() => onRefresh(), 100);
   };
 
   return (
     <div className="space-y-6 pb-20 animate-fade-in relative">
-        {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
                 <h2 className="text-2xl font-bold text-gray-800">Platform Administration</h2>
@@ -181,7 +188,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         </div>
 
-        {/* --- VIEW: DASHBOARD --- */}
         {activeTab === 'DASHBOARD' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center gap-4">
@@ -215,7 +221,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         )}
 
-        {/* --- VIEW: TENANTS --- */}
         {activeTab === 'TENANTS' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b flex justify-between items-center bg-gray-50">
@@ -307,7 +312,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         )}
 
-        {/* --- VIEW: PLANS --- */}
         {activeTab === 'PLANS' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b flex justify-between items-center bg-gray-50">
@@ -341,7 +345,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         )}
 
-        {/* --- VIEW: ADMINS --- */}
         {activeTab === 'ADMINS' && (
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-4 border-b bg-gray-50">
@@ -385,7 +388,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
              </div>
         )}
 
-        {/* MODAL: TENANT EDIT/CREATE */}
         {showTenantModal && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 animate-fade-in">
@@ -436,7 +438,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         )}
 
-        {/* MODAL: PLAN EDIT/CREATE */}
         {showPlanModal && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-fade-in">
@@ -458,7 +459,6 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
             </div>
         )}
 
-        {/* NEW: ACTION CONFIRMATION MODAL */}
         {actionModal && (
             <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4" onClick={() => setActionModal(null)}>
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>

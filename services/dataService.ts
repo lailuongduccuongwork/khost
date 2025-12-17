@@ -1,8 +1,8 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan } from '../types';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan, PERMISSIONS } from '../types';
 import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS } from './mockData';
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, get, child, query, limitToLast, update, remove } from "firebase/database";
+import { getDatabase, ref, set, onValue, get, child, query, limitToLast, update, remove, orderByChild, equalTo } from "firebase/database";
 
 // Declare XLSX from global scope (loaded via CDN)
 declare const XLSX: any;
@@ -140,14 +140,33 @@ const _seedSystemData = () => {
     set(ref(db, 'system/plans'), INITIAL_PLANS);
     
     // FIX: Seed users as an Object Map (ID -> Data) instead of Array
-    // This ensures robustness when scaling
-    const usersMap = INITIAL_USERS.reduce((acc, user) => ({...acc, [user.id]: user}), {});
+    const usersMap: Record<string, User> = INITIAL_USERS.reduce((acc, user) => ({...acc, [user.id]: user}), {} as Record<string, User>);
+
+    INITIAL_TENANTS.forEach(t => {
+       if (t.adminUsername) {
+           const adminId = `u_${t.id}_admin`;
+           const exists = Object.values(usersMap).some(u => u.username === t.adminUsername);
+           
+           if (!exists) {
+               usersMap[adminId] = {
+                   id: adminId,
+                   tenantId: t.id,
+                   username: t.adminUsername,
+                   password: t.adminPassword || '123',
+                   fullName: `Admin ${t.name}`,
+                   role: UserRole.ADMIN,
+                   permissions: Object.values(PERMISSIONS),
+                   allowedPropertyIds: []
+               };
+           }
+       }
+    });
+    
     set(ref(db, 'system/users'), usersMap);
 }
 
 const _seedTenantData = (tenantId: string) => {
     if (!isFirebaseReady || !db) return;
-    // Inject tenantId into mock data before saving
     const withTenant = (list: any[]) => list.map(item => ({...item, tenantId}));
     
     set(getTenantRef('properties'), withTenant(INITIAL_PROPERTIES));
@@ -163,7 +182,6 @@ const _seedTenantData = (tenantId: string) => {
 }
 
 const _loadFromMockOrStorage = () => {
-    // Fallback for offline/no-config mode
     const load = (key: string, def: any) => {
         const s = localStorage.getItem(key);
         return s ? JSON.parse(s) : def;
@@ -181,10 +199,8 @@ const _loadFromMockOrStorage = () => {
     CACHE.systemUsers = INITIAL_USERS;
 };
 
-// Helper to save specific node (Auto-scoped by getTenantRef)
 const _saveNode = (nodeName: string, data: any) => {
     if (isFirebaseReady && db && activeTenantId) {
-        // Deep clone to avoid mutation issues
         const cleanData = JSON.parse(JSON.stringify(data));
         set(getTenantRef(nodeName), cleanData).catch(err => console.error(`Save ${nodeName} failed`, err));
     } else {
@@ -192,37 +208,26 @@ const _saveNode = (nodeName: string, data: any) => {
     }
 }
 
-// --- SYSTEM USER SYNC HELPER (FIXED) ---
-// Changed from "Read-Modify-Write All" to "Direct Write Per ID"
-// This solves the race condition and consistency issues across devices.
 const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE') => {
     if (!isFirebaseReady || !db) return;
 
     try {
-        // Instead of rewriting the whole array, we target the specific user ID path
-        // system/users/{userId}
         const userRef = ref(db, `system/users/${user.id}`);
-        
         if (action === 'DELETE') {
-            await set(userRef, null); // Removes just this user node
+            await set(userRef, null); 
         } else {
-            // Add or Update
-            await set(userRef, user); // Updates just this user node
+            await set(userRef, user); 
         }
     } catch (e) {
         console.error("Failed to sync system users:", e);
     }
 };
 
-
-// --- GLOBAL AUTH HELPER ---
 const _globalLogin = async (username: string, password: string): Promise<User | null> => {
     if (!isFirebaseReady) {
-        // Fallback to mock
         return INITIAL_USERS.find(u => u.username === username && u.password === password) || null;
     }
 
-    // 1. Try to fetch from /system/users (Global Lookup)
     const snap = await get(ref(db, 'system/users'));
     let allUsers = snapshotToArray<User>(snap);
     
@@ -230,11 +235,40 @@ const _globalLogin = async (username: string, password: string): Promise<User | 
         const found = allUsers.find(u => u.username === username && u.password === password);
         if (found) return found;
     } else {
-        // Fallback if system users table is empty/error
         const found = INITIAL_USERS.find(u => u.username === username && u.password === password);
         if (found) return found;
     }
     
+    return null;
+}
+
+// --- NEW HELPER: CHECK GLOBAL USERNAME UNIQUENESS ---
+const _findUserByUsername = async (username: string): Promise<User | null> => {
+    if (isFirebaseReady && db) {
+        try {
+            // Efficiently query system/users by username index
+            // Note: In a real production app, ensure .indexOn: ["username"] rule exists in Firebase Rules
+            const q = query(ref(db, 'system/users'), orderByChild('username'), equalTo(username));
+            const snap = await get(q);
+            
+            if (snap.exists()) {
+                const val = snap.val();
+                const keys = Object.keys(val);
+                // Return the first match found
+                if (keys.length > 0) return val[keys[0]];
+            }
+        } catch (e) {
+            console.error("Error checking username uniqueness:", e);
+        }
+    }
+    
+    // Fallback: Check local caches if online query failed or offline
+    const foundInSystem = CACHE.systemUsers.find(u => u.username === username);
+    if (foundInSystem) return foundInSystem;
+    
+    const foundInTenant = CACHE.users.find(u => u.username === username);
+    if (foundInTenant) return foundInTenant;
+
     return null;
 }
 
@@ -253,7 +287,6 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
         staffId
     };
     
-    // Optimistic Update
     CACHE.history.unshift(newLog);
     if (CACHE.history.length > 300) CACHE.history.length = 300;
     
@@ -267,7 +300,6 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     if (index !== -1) {
       const updatedRooms = [...CACHE.rooms];
       updatedRooms[index] = { ...updatedRooms[index], status };
-      // Optimistic update
       CACHE.rooms = updatedRooms;
       _saveNode('rooms', CACHE.rooms);
     }
@@ -279,7 +311,6 @@ const _getBookingsStrict = (propertyId?: string): Booking[] => {
 
     let cleanList = CACHE.bookings.filter(b => {
         if (b.status === BookingStatus.DELETED) return false;
-        // Strict Data Integrity Check
         const roomExists = validRoomIds.has(b.roomId);
         const propertyExists = validPropertyIds.has(b.propertyId);
         return roomExists && propertyExists;
@@ -323,26 +354,28 @@ export const DataService = {
   // Core
   init: _initRealtimeConnection,
   login: _globalLogin,
+  // NEW: Check uniqueness globally
+  findUserByUsername: _findUserByUsername,
+
   getTenants: () => CACHE.tenants, // Only for Super Admin
   saveTenants: (tenants: Tenant[]) => {
       CACHE.tenants = tenants;
       if (activeTenantId === 'SYSTEM') _saveNode('tenants', tenants);
   },
   
-  // New: Hard Delete Tenant
   deleteTenant: (tenantId: string) => {
-      // 1. Remove from System List
       const newTenants = CACHE.tenants.filter(t => t.id !== tenantId);
       CACHE.tenants = newTenants;
       
       if (activeTenantId === 'SYSTEM') {
           _saveNode('tenants', newTenants);
-          
-          // 2. Hard Delete Data Node (tenants/{id}) if online
           if (isFirebaseReady && db) {
               set(ref(db, `tenants/${tenantId}`), null)
                 .then(() => console.log(`Deleted data for tenant ${tenantId}`))
                 .catch(e => console.error("Error deleting tenant data node:", e));
+              
+              const adminId = `u_${tenantId}_admin`;
+              set(ref(db, `system/users/${adminId}`), null);
           }
       }
   },
@@ -353,13 +386,15 @@ export const DataService = {
       if (activeTenantId === 'SYSTEM') _saveNode('plans', plans);
   },
   
-  getSystemUsers: () => CACHE.systemUsers, // New getter for Super Admin
+  getSystemUsers: () => CACHE.systemUsers,
+  
+  upsertSystemUser: (user: User) => {
+      _syncToSystemUsers(user, 'UPDATE');
+  },
 
-  // Helpers
   getHistory: _getHistory,
   logAction: _logAction,
 
-  // Properties
   getProperties: (): Property[] => [...CACHE.properties].sort(sortByOrder),
   saveProperties: (properties: Property[]) => { 
       const scoped = properties.map(p => ({...p, tenantId: activeTenantId}));
@@ -367,7 +402,6 @@ export const DataService = {
       _saveNode('properties', scoped); 
   },
   
-  // Room Types
   getRoomTypes: (): RoomType[] => [...CACHE.roomTypes].sort(sortByOrder),
   saveRoomTypes: (types: RoomType[]) => { 
       const scoped = types.map(t => ({...t, tenantId: activeTenantId}));
@@ -375,7 +409,6 @@ export const DataService = {
       _saveNode('roomTypes', scoped); 
   },
   
-  // Tags
   getTags: (): Tag[] => CACHE.tags,
   saveTags: (tags: Tag[]) => { 
       const scoped = tags.map(t => ({...t, tenantId: activeTenantId}));
@@ -383,7 +416,6 @@ export const DataService = {
       _saveNode('tags', scoped); 
   },
 
-  // Rooms
   getRooms: (propertyId?: string): Room[] => {
     let list = [...CACHE.rooms];
     if (propertyId) list = list.filter(r => r.propertyId === propertyId);
@@ -397,7 +429,6 @@ export const DataService = {
   
   updateRoomStatus: _updateRoomStatus,
 
-  // Customers
   getCustomers: (): Customer[] => CACHE.customers,
   addCustomer: (customer: Customer) => {
     const existingIndex = CACHE.customers.findIndex(c => c.phone === customer.phone);
@@ -413,7 +444,6 @@ export const DataService = {
     _saveNode('customers', newCustomers);
   },
 
-  // Bookings
   getBookings: _getBookingsStrict,
   
   generateBookingId: (): string => {
@@ -520,13 +550,11 @@ export const DataService = {
 
   deleteBooking: _deleteBooking,
 
-  // Users
   getUsers: (): User[] => CACHE.users,
   addUser: (user: User) => {
      const scopedUser = { ...user, tenantId: activeTenantId };
      CACHE.users = [...CACHE.users, scopedUser as User];
      _saveNode('users', CACHE.users);
-     // NEW: SYNC TO SYSTEM (Direct Object Write)
      _syncToSystemUsers(scopedUser as User, 'ADD');
   },
   updateUser: (updatedUser: User) => {
@@ -541,7 +569,6 @@ export const DataService = {
          newUsers[idx] = safeUpdate;
          CACHE.users = newUsers;
          _saveNode('users', newUsers);
-         // NEW: SYNC TO SYSTEM (Direct Object Write)
          _syncToSystemUsers(safeUpdate, 'UPDATE');
      }
   },
@@ -550,12 +577,9 @@ export const DataService = {
       const newUsers = CACHE.users.filter(u => u.id !== userId);
       CACHE.users = newUsers;
       _saveNode('users', newUsers);
-      
-      // NEW: SYNC TO SYSTEM (Direct Object Delete)
       if(userToDelete) _syncToSystemUsers(userToDelete, 'DELETE');
   },
   
-  // Excel Export
   exportToExcel: (data: any[], fileName: string) => {
       if (typeof XLSX === 'undefined') {
           console.error("XLSX library not loaded");

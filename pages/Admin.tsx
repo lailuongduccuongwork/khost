@@ -14,7 +14,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   
-  // Delete Modal States
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
@@ -42,7 +41,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       setEditingUserId(null);
       setUserData({
           role: UserRole.RECEPTIONIST,
-          // Default permissions for new users
           permissions: [
               PERMISSIONS.MANAGE_ROOMS,
               PERMISSIONS.CAN_ADD_BOOKING, 
@@ -86,30 +84,28 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       });
   };
 
-  const handleSaveUser = () => {
+  const handleSaveUser = async () => {
     if (!userData.username || !userData.fullName || !userData.password) {
         alert("Thiếu thông tin bắt buộc (Họ tên, Username, Mật khẩu)");
         return;
     }
 
-    // --- CHECK 1: DUPLICATE USERNAME ---
-    const isDuplicate = users.some(u => 
-        u.username.toLowerCase() === userData.username?.toLowerCase() && 
-        u.id !== editingUserId 
-    );
+    const requestedUsername = userData.username;
 
-    if (isDuplicate) {
-        alert("Tên đăng nhập này đã tồn tại trong hệ thống. Vui lòng chọn tên khác.");
+    // --- CHECK 1: GLOBAL DUPLICATE USERNAME ---
+    // If creating new user OR editing user (but changed username)
+    // We check if username exists in the whole system
+    const globalExistingUser = await DataService.findUserByUsername(requestedUsername);
+    if (globalExistingUser && globalExistingUser.id !== editingUserId) {
+        alert(`Tên đăng nhập "${requestedUsername}" đã tồn tại trong hệ thống (có thể ở chi nhánh hoặc tenant khác). Vui lòng chọn tên khác.`);
         return;
     }
 
-    // --- CHECK 2: PREVENT SUPER_ADMIN CREATION ---
     if (userData.role === UserRole.SUPER_ADMIN) {
         alert("Bạn không thể tạo tài khoản Super Admin từ giao diện này.");
         return;
     }
     
-    // Ensure Admin always has all permissions
     let finalPermissions = userData.permissions || [];
     if (userData.role === UserRole.ADMIN) {
         finalPermissions = Object.values(PERMISSIONS);
@@ -147,7 +143,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
 
   const permissionOptions = [
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
-      // Removed MANAGE_BOOKINGS (Danh sách đặt phòng)
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
       { divider: true },
       { id: PERMISSIONS.CAN_ADD_BOOKING, label: 'Được phép THÊM đơn' },
@@ -251,7 +246,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                 <h3 className="text-xl font-bold mb-4">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Left Column: Basic Info */}
                     <div className="space-y-4">
                         <h4 className="font-bold text-gray-700 border-b pb-2">Thông tin cơ bản</h4>
                         <div>
@@ -271,6 +265,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                                 value={userData.username || ''}
                                 onChange={e => setUserData({...userData, username: e.target.value})}
                             />
+                            <p className="text-[10px] text-gray-500 mt-1">Tên đăng nhập phải là duy nhất trên toàn hệ thống.</p>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Mật khẩu</label>
@@ -290,7 +285,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                                 onChange={e => setUserData({...userData, role: e.target.value as UserRole})}
                             >
                                 {Object.values(UserRole)
-                                    .filter(r => r !== UserRole.SUPER_ADMIN) // PREVENT CREATING SUPER ADMIN
+                                    .filter(r => r !== UserRole.SUPER_ADMIN) 
                                     .map(r => (
                                     <option key={r} value={r}>{r}</option>
                                 ))}
@@ -298,7 +293,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                         </div>
                     </div>
 
-                    {/* Right Column: Permissions */}
                     <div className="space-y-4">
                         <h4 className="font-bold text-gray-700 border-b pb-2">Phân quyền & Chi nhánh</h4>
                         
@@ -316,7 +310,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                                                 type="checkbox" 
                                                 className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
                                                 checked={isAdmin || isChecked}
-                                                disabled={isAdmin} // Admin always has all
+                                                disabled={isAdmin} 
                                                 onChange={() => togglePermission(opt.id)}
                                             />
                                             <span className="text-sm font-medium text-gray-700">{opt.label}</span>
@@ -354,7 +348,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
         </div>
       )}
 
-      {/* DELETE CONFIRMATION MODAL */}
       {showDeleteConfirm && userToDelete && (
           <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
               <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 animate-fade-in text-center">
