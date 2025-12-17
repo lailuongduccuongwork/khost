@@ -86,7 +86,9 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               permissions: Object.values(PERMISSIONS),
               allowedPropertyIds: []
           };
-          DataService.upsertSystemUser(adminUser);
+          // FIX: Use seedTenantAdminUser instead of upsertSystemUser
+          // This ensures the user is added to BOTH system/users AND tenants/{id}/users
+          DataService.seedTenantAdminUser(adminUser);
       }
       
       DataService.saveTenants(updatedTenants);

@@ -71,15 +71,26 @@ const snapshotToArray = <T>(snap: any): T[] => {
     return Object.values(val); // Convert Object Map to Array
 };
 
+// NEW: Explicitly connect to Firebase (Idempotent)
+const _ensureFirebase = () => {
+    if (!isFirebaseReady) {
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getDatabase(app);
+            isFirebaseReady = true;
+        } catch (e) {
+            console.error("Firebase connection failed", e);
+        }
+    }
+    return isFirebaseReady;
+};
+
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
     try {
         activeTenantId = tenantId;
 
-        if (!isFirebaseReady) {
-             const app = initializeApp(firebaseConfig);
-             db = getDatabase(app);
-             isFirebaseReady = true;
-        }
+        // Ensure connection is established
+        _ensureFirebase();
 
         // 1. If Super Admin (System Context)
         if (tenantId === SYSTEM_TENANT_ID) {
@@ -209,6 +220,7 @@ const _saveNode = (nodeName: string, data: any) => {
 }
 
 const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE') => {
+    _ensureFirebase(); // Ensure connection before write
     if (!isFirebaseReady || !db) return;
 
     try {
@@ -224,30 +236,39 @@ const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE
 };
 
 const _globalLogin = async (username: string, password: string): Promise<User | null> => {
-    if (!isFirebaseReady) {
-        return INITIAL_USERS.find(u => u.username === username && u.password === password) || null;
-    }
+    // CRITICAL FIX: Always ensure Firebase is connected before checking credentials
+    // This allows fresh sessions (incognito/new device) to fetch real data instead of mock data
+    _ensureFirebase();
 
-    const snap = await get(ref(db, 'system/users'));
-    let allUsers = snapshotToArray<User>(snap);
-    
-    if (allUsers.length > 0) {
-        const found = allUsers.find(u => u.username === username && u.password === password);
-        if (found) return found;
-    } else {
-        const found = INITIAL_USERS.find(u => u.username === username && u.password === password);
-        if (found) return found;
+    if (isFirebaseReady && db) {
+        try {
+            // 1. Try to fetch from /system/users (Global Lookup)
+            const snap = await get(ref(db, 'system/users'));
+            let allUsers = snapshotToArray<User>(snap);
+            
+            if (allUsers.length > 0) {
+                const found = allUsers.find(u => u.username === username && u.password === password);
+                if (found) return found;
+            }
+        } catch (e) {
+            console.error("Login fetch failed, falling back to mock", e);
+        }
     }
+    
+    // Fallback if system users table is empty OR Firebase connection failed
+    const found = INITIAL_USERS.find(u => u.username === username && u.password === password);
+    if (found) return found;
     
     return null;
 }
 
 // --- NEW HELPER: CHECK GLOBAL USERNAME UNIQUENESS ---
 const _findUserByUsername = async (username: string): Promise<User | null> => {
+    _ensureFirebase(); // Ensure connection
+    
     if (isFirebaseReady && db) {
         try {
             // Efficiently query system/users by username index
-            // Note: In a real production app, ensure .indexOn: ["username"] rule exists in Firebase Rules
             const q = query(ref(db, 'system/users'), orderByChild('username'), equalTo(username));
             const snap = await get(q);
             
@@ -354,7 +375,6 @@ export const DataService = {
   // Core
   init: _initRealtimeConnection,
   login: _globalLogin,
-  // NEW: Check uniqueness globally
   findUserByUsername: _findUserByUsername,
 
   getTenants: () => CACHE.tenants, // Only for Super Admin
@@ -390,6 +410,24 @@ export const DataService = {
   
   upsertSystemUser: (user: User) => {
       _syncToSystemUsers(user, 'UPDATE');
+  },
+  
+  // NEW: Special method for Super Admin to seed a new tenant admin
+  // Syncs to BOTH Global User List (for Login) AND Local Tenant User List (for Display)
+  seedTenantAdminUser: async (user: User) => {
+      _ensureFirebase();
+      if (isFirebaseReady && db) {
+          try {
+              // 1. Global Sync (system/users)
+              await set(ref(db, `system/users/${user.id}`), user);
+              
+              // 2. Local Tenant Sync (tenants/{id}/users)
+              // We initialize the array with this single admin user
+              await set(ref(db, `tenants/${user.tenantId}/users`), [user]);
+          } catch (e) {
+              console.error("Error seeding tenant admin:", e);
+          }
+      }
   },
 
   getHistory: _getHistory,
