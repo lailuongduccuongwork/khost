@@ -1,6 +1,6 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag } from '../types';
-import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS } from './mockData';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan } from '../types';
+import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS } from './mockData';
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, get, child, query, limitToLast } from "firebase/database";
 
@@ -22,8 +22,13 @@ const firebaseConfig = {
 let db: any = null;
 let isFirebaseReady = false;
 
+// --- MULTI-TENANCY CONTEXT ---
+let activeTenantId: string | null = null;
+const SYSTEM_TENANT_ID = 'SYSTEM';
+
 // --- IN-MEMORY CACHE ---
 const CACHE = {
+    // Current Tenant Data
     properties: [] as Property[],
     rooms: [] as Room[],
     roomTypes: [] as RoomType[],
@@ -31,67 +36,92 @@ const CACHE = {
     customers: [] as Customer[],
     users: [] as User[],
     history: [] as HistoryLog[],
-    tags: [] as Tag[]
+    tags: [] as Tag[],
+    
+    // System Data (For Super Admin)
+    tenants: [] as Tenant[],
+    plans: [] as SubscriptionPlan[],
+    systemUsers: [] as User[] // Global user lookup
 };
 
-// --- INITIALIZATION ---
-const _initRealtimeConnection = (onDataChange: () => void) => {
-    try {
-        if (!isFirebaseReady) {
-             if (firebaseConfig.apiKey.includes("REPLACE_ME")) {
-                 console.warn("⚠️ CHƯA CẤU HÌNH FIREBASE");
-                 _loadFromMockOrStorage();
-                 onDataChange();
-                 return;
-             }
+// --- DATA ACCESS LAYER HELPERS (MIDDLEWARE) ---
+// The core concept: All business data access goes through `getTenantRef`
+// This acts as a middleware to enforce tenant isolation.
+const getTenantRef = (nodeName: string) => {
+    if (!db) return null;
+    
+    // Safety check: Never allow writing to root if tenant is not set
+    if (!activeTenantId) {
+        console.error("CRITICAL: Attempted to access DB without Active Tenant ID");
+        return null;
+    }
 
+    if (activeTenantId === SYSTEM_TENANT_ID) {
+        // Super admin accessing system nodes
+        return ref(db, `system/${nodeName}`);
+    } else {
+        // Normal tenant accessing their isolated bucket
+        // Structure: /tenants/{tenantId}/{nodeName}
+        return ref(db, `tenants/${activeTenantId}/${nodeName}`);
+    }
+};
+
+const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
+    try {
+        activeTenantId = tenantId;
+
+        if (!isFirebaseReady) {
              const app = initializeApp(firebaseConfig);
              db = getDatabase(app);
              isFirebaseReady = true;
-
-             // OPTIMIZATION: Listen to specific nodes instead of root to save bandwidth
-             // 1. Static/Config Data
-             onValue(ref(db, 'properties'), (snap) => { CACHE.properties = snap.val() || []; onDataChange(); });
-             onValue(ref(db, 'roomTypes'), (snap) => { CACHE.roomTypes = snap.val() || []; onDataChange(); });
-             onValue(ref(db, 'tags'), (snap) => { CACHE.tags = snap.val() || []; onDataChange(); });
-             
-             // 2. Dynamic Data
-             onValue(ref(db, 'rooms'), (snap) => { CACHE.rooms = snap.val() || []; onDataChange(); });
-             
-             // Load Raw Bookings - Filtering happens in getter
-             onValue(ref(db, 'bookings'), (snap) => { 
-                 CACHE.bookings = snap.val() || [];
-                 onDataChange(); 
-             });
-
-             onValue(ref(db, 'customers'), (snap) => { CACHE.customers = snap.val() || []; onDataChange(); });
-             onValue(ref(db, 'users'), (snap) => { CACHE.users = snap.val() || []; onDataChange(); });
-
-             // 3. Heavy Data (History)
-             const historyQuery = query(ref(db, 'history'), limitToLast(50));
-             onValue(historyQuery, (snap) => {
-                 const val = snap.val();
-                 if (val) {
-                     if (Array.isArray(val)) {
-                         CACHE.history = val.filter(x => x);
-                     } else {
-                         CACHE.history = Object.values(val);
-                     }
-                     CACHE.history.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-                 } else {
-                     CACHE.history = [];
-                 }
-                 onDataChange();
-             });
-
-             // Check if empty and init
-             get(ref(db, 'properties')).then(snap => {
-                 if (!snap.exists()) {
-                     console.log("Database trống, khởi tạo dữ liệu mẫu...");
-                     _resetToMockData();
-                 }
-             });
         }
+
+        // 1. If Super Admin (System Context)
+        if (tenantId === SYSTEM_TENANT_ID) {
+             console.log("🔌 Connecting to SYSTEM context...");
+             onValue(ref(db, 'system/tenants'), (snap) => { CACHE.tenants = snap.val() || []; onDataChange(); });
+             onValue(ref(db, 'system/plans'), (snap) => { CACHE.plans = snap.val() || []; onDataChange(); });
+             onValue(ref(db, 'system/users'), (snap) => { CACHE.systemUsers = snap.val() || []; onDataChange(); });
+             
+             // Check if system data empty, seed it
+             get(ref(db, 'system/tenants')).then(snap => {
+                 if (!snap.exists()) _seedSystemData();
+             });
+             return;
+        }
+
+        // 2. If Tenant Context (Business Context)
+        console.log(`🔌 Connecting to TENANT context: [${tenantId}]...`);
+        
+        // Listeners scoped to tenant
+        onValue(getTenantRef('properties'), (snap) => { CACHE.properties = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('roomTypes'), (snap) => { CACHE.roomTypes = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('tags'), (snap) => { CACHE.tags = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('rooms'), (snap) => { CACHE.rooms = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('bookings'), (snap) => { CACHE.bookings = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('customers'), (snap) => { CACHE.customers = snap.val() || []; onDataChange(); });
+        onValue(getTenantRef('users'), (snap) => { CACHE.users = snap.val() || []; onDataChange(); });
+
+        const historyQuery = query(getTenantRef('history'), limitToLast(50));
+        onValue(historyQuery, (snap) => {
+             const val = snap.val();
+             if (val) {
+                 CACHE.history = Array.isArray(val) ? val.filter(x => x) : Object.values(val);
+                 CACHE.history.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+             } else {
+                 CACHE.history = [];
+             }
+             onDataChange();
+        });
+
+        // Check if tenant is new (empty), seed default data
+        get(getTenantRef('properties')).then(snap => {
+            if (!snap.exists()) {
+                console.log(`✨ New Tenant Detected [${tenantId}]. Seeding default data...`);
+                _seedTenantData(tenantId);
+            }
+        });
+
     } catch (e) {
         console.error("Firebase Init Error:", e);
         _loadFromMockOrStorage();
@@ -99,7 +129,33 @@ const _initRealtimeConnection = (onDataChange: () => void) => {
     }
 };
 
+const _seedSystemData = () => {
+    if (!isFirebaseReady || !db) return;
+    set(ref(db, 'system/tenants'), INITIAL_TENANTS);
+    set(ref(db, 'system/plans'), INITIAL_PLANS);
+    // Global user table for login lookup (In production, use Firebase Auth)
+    set(ref(db, 'system/users'), INITIAL_USERS);
+}
+
+const _seedTenantData = (tenantId: string) => {
+    if (!isFirebaseReady || !db) return;
+    // Inject tenantId into mock data before saving
+    const withTenant = (list: any[]) => list.map(item => ({...item, tenantId}));
+    
+    set(getTenantRef('properties'), withTenant(INITIAL_PROPERTIES));
+    set(getTenantRef('rooms'), withTenant(INITIAL_ROOMS));
+    set(getTenantRef('roomTypes'), withTenant(INITIAL_ROOM_TYPES));
+    set(getTenantRef('bookings'), withTenant(INITIAL_BOOKINGS));
+    set(getTenantRef('customers'), withTenant(INITIAL_CUSTOMERS));
+    set(getTenantRef('tags'), withTenant(INITIAL_TAGS));
+    
+    // Filter users belonging to this tenant for the local user table
+    const tenantUsers = INITIAL_USERS.filter(u => u.tenantId === tenantId);
+    set(getTenantRef('users'), tenantUsers);
+}
+
 const _loadFromMockOrStorage = () => {
+    // Fallback for offline/no-config mode
     const load = (key: string, def: any) => {
         const s = localStorage.getItem(key);
         return s ? JSON.parse(s) : def;
@@ -112,47 +168,88 @@ const _loadFromMockOrStorage = () => {
     CACHE.users = load('users', INITIAL_USERS);
     CACHE.history = load('history', []);
     CACHE.tags = load('tags', INITIAL_TAGS);
+    CACHE.tenants = INITIAL_TENANTS;
+    CACHE.plans = INITIAL_PLANS;
+    CACHE.systemUsers = INITIAL_USERS;
 };
 
-const _resetToMockData = () => {
-    CACHE.properties = INITIAL_PROPERTIES;
-    CACHE.rooms = INITIAL_ROOMS;
-    CACHE.roomTypes = INITIAL_ROOM_TYPES;
-    CACHE.bookings = INITIAL_BOOKINGS;
-    CACHE.customers = INITIAL_CUSTOMERS;
-    CACHE.users = INITIAL_USERS;
-    CACHE.tags = INITIAL_TAGS;
-    
-    if (isFirebaseReady && db) {
-        set(ref(db, 'properties'), CACHE.properties);
-        set(ref(db, 'rooms'), CACHE.rooms);
-        set(ref(db, 'roomTypes'), CACHE.roomTypes);
-        set(ref(db, 'bookings'), CACHE.bookings);
-        set(ref(db, 'customers'), CACHE.customers);
-        set(ref(db, 'users'), CACHE.users);
-        set(ref(db, 'tags'), CACHE.tags);
-    }
-};
-
-// Helper to save specific node
+// Helper to save specific node (Auto-scoped by getTenantRef)
 const _saveNode = (nodeName: string, data: any) => {
-    if (isFirebaseReady && db) {
+    if (isFirebaseReady && db && activeTenantId) {
         const cleanData = JSON.parse(JSON.stringify(data));
-        set(ref(db, nodeName), cleanData).catch(err => console.error(`Save ${nodeName} failed`, err));
+        set(getTenantRef(nodeName), cleanData).catch(err => console.error(`Save ${nodeName} failed`, err));
     } else {
         localStorage.setItem(nodeName, JSON.stringify(data));
     }
 }
 
-// --- Internal Helper Functions ---
+// --- SYSTEM USER SYNC HELPER ---
+// This function ensures that when we add/edit/delete a user in a tenant,
+// the change is propagated to 'system/users' so global login works.
+const _syncToSystemUsers = async (user: User, action: 'ADD' | 'UPDATE' | 'DELETE') => {
+    if (!isFirebaseReady || !db) return;
 
-const _getHistory = (): HistoryLog[] => {
-    return CACHE.history;
+    try {
+        const systemUsersRef = ref(db, 'system/users');
+        const snap = await get(systemUsersRef);
+        let currentSystemUsers = snap.val() || [];
+        
+        // Normalize to array
+        if (typeof currentSystemUsers === 'object' && !Array.isArray(currentSystemUsers)) {
+            currentSystemUsers = Object.values(currentSystemUsers);
+        }
+
+        if (action === 'DELETE') {
+            currentSystemUsers = currentSystemUsers.filter((u: User) => u.id !== user.id);
+        } else if (action === 'ADD') {
+            currentSystemUsers.push(user);
+        } else if (action === 'UPDATE') {
+            const idx = currentSystemUsers.findIndex((u: User) => u.id === user.id);
+            if (idx !== -1) {
+                currentSystemUsers[idx] = user;
+            } else {
+                // If not found (rare inconsistency), push it
+                currentSystemUsers.push(user);
+            }
+        }
+
+        await set(systemUsersRef, currentSystemUsers);
+    } catch (e) {
+        console.error("Failed to sync system users:", e);
+    }
 };
+
+
+// --- GLOBAL AUTH HELPER ---
+// Simulates a backend lookup to find which tenant a user belongs to
+const _globalLogin = async (username: string, password: string): Promise<User | null> => {
+    if (!isFirebaseReady) {
+        // Fallback to mock
+        return INITIAL_USERS.find(u => u.username === username && u.password === password) || null;
+    }
+
+    // 1. Try to fetch from /system/users (Global Lookup)
+    const snap = await get(ref(db, 'system/users'));
+    let allUsers = snap.val();
+    
+    if (allUsers) {
+        // Ensure we are working with an array even if Firebase returns an object map
+        const userList: User[] = Array.isArray(allUsers) ? allUsers : Object.values(allUsers);
+        const found = userList.find(u => u.username === username && u.password === password);
+        if (found) return found;
+    }
+    
+    return null;
+}
+
+// --- API METHODS ---
+
+const _getHistory = (): HistoryLog[] => CACHE.history;
 
 const _logAction = (action: HistoryLog['action'], booking: Booking, description: string, staffId: string) => {
     const newLog: HistoryLog = {
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        tenantId: activeTenantId || undefined,
         timestamp: new Date().toISOString(),
         action,
         description,
@@ -165,8 +262,6 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
     if (isFirebaseReady && db) {
         if (CACHE.history.length > 300) CACHE.history.length = 300;
         _saveNode('history', CACHE.history);
-    } else {
-        localStorage.setItem('history', JSON.stringify(CACHE.history));
     }
 };
 
@@ -180,13 +275,13 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     }
 };
 
-// --- Strict Data Access ---
 const _getBookingsStrict = (propertyId?: string): Booking[] => {
     const validRoomIds = new Set(CACHE.rooms.map(r => r.id));
     const validPropertyIds = new Set(CACHE.properties.map(p => p.id));
 
     let cleanList = CACHE.bookings.filter(b => {
         if (b.status === BookingStatus.DELETED) return false;
+        // Strict Data Integrity Check
         const roomExists = validRoomIds.has(b.roomId);
         const propertyExists = validPropertyIds.has(b.propertyId);
         return roomExists && propertyExists;
@@ -205,11 +300,9 @@ const _deleteBooking = (bookingId: string, staffId: string): boolean => {
         
         if (index !== -1) {
             const bookingToDelete = bookings[index];
-            
             if (bookingToDelete.status === BookingStatus.CHECKED_IN) {
                 _updateRoomStatus(bookingToDelete.roomId, RoomStatus.VACANT_CLEAN);
             }
-
             const deletedSnapshot = { ...bookingToDelete, status: BookingStatus.DELETED };
             _logAction('DELETE', deletedSnapshot, `Xóa đơn ${bookingId} khỏi hệ thống`, staffId);
             
@@ -225,26 +318,72 @@ const _deleteBooking = (bookingId: string, staffId: string): boolean => {
     }
 };
 
-// Helper sorting function
 const sortByOrder = (a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0);
 
 // --- Exported Service ---
 export const DataService = {
+  // Core
   init: _initRealtimeConnection,
+  login: _globalLogin,
+  getTenants: () => CACHE.tenants, // Only for Super Admin
+  saveTenants: (tenants: Tenant[]) => {
+      CACHE.tenants = tenants;
+      if (activeTenantId === 'SYSTEM') _saveNode('tenants', tenants);
+  },
+  
+  // New: Hard Delete Tenant
+  deleteTenant: (tenantId: string) => {
+      // 1. Remove from System List
+      const newTenants = CACHE.tenants.filter(t => t.id !== tenantId);
+      CACHE.tenants = newTenants;
+      
+      if (activeTenantId === 'SYSTEM') {
+          _saveNode('tenants', newTenants);
+          
+          // 2. Hard Delete Data Node (tenants/{id}) if online
+          if (isFirebaseReady && db) {
+              set(ref(db, `tenants/${tenantId}`), null)
+                .then(() => console.log(`Deleted data for tenant ${tenantId}`))
+                .catch(e => console.error("Error deleting tenant data node:", e));
+          }
+      }
+  },
+  
+  getPlans: () => CACHE.plans,
+  savePlans: (plans: SubscriptionPlan[]) => {
+      CACHE.plans = plans;
+      if (activeTenantId === 'SYSTEM') _saveNode('plans', plans);
+  },
+  
+  getSystemUsers: () => CACHE.systemUsers, // New getter for Super Admin
+
+  // Helpers
   getHistory: _getHistory,
   logAction: _logAction,
 
   // Properties
   getProperties: (): Property[] => [...CACHE.properties].sort(sortByOrder),
-  saveProperties: (properties: Property[]) => { CACHE.properties = properties; _saveNode('properties', properties); },
+  saveProperties: (properties: Property[]) => { 
+      const scoped = properties.map(p => ({...p, tenantId: activeTenantId}));
+      CACHE.properties = scoped; 
+      _saveNode('properties', scoped); 
+  },
   
   // Room Types
   getRoomTypes: (): RoomType[] => [...CACHE.roomTypes].sort(sortByOrder),
-  saveRoomTypes: (types: RoomType[]) => { CACHE.roomTypes = types; _saveNode('roomTypes', types); },
+  saveRoomTypes: (types: RoomType[]) => { 
+      const scoped = types.map(t => ({...t, tenantId: activeTenantId}));
+      CACHE.roomTypes = scoped; 
+      _saveNode('roomTypes', scoped); 
+  },
   
   // Tags
   getTags: (): Tag[] => CACHE.tags,
-  saveTags: (tags: Tag[]) => { CACHE.tags = tags; _saveNode('tags', tags); },
+  saveTags: (tags: Tag[]) => { 
+      const scoped = tags.map(t => ({...t, tenantId: activeTenantId}));
+      CACHE.tags = scoped; 
+      _saveNode('tags', scoped); 
+  },
 
   // Rooms
   getRooms: (propertyId?: string): Room[] => {
@@ -252,7 +391,11 @@ export const DataService = {
     if (propertyId) list = list.filter(r => r.propertyId === propertyId);
     return list.sort(sortByOrder);
   },
-  saveRooms: (rooms: Room[]) => { CACHE.rooms = rooms; _saveNode('rooms', rooms); },
+  saveRooms: (rooms: Room[]) => { 
+      const scoped = rooms.map(r => ({...r, tenantId: activeTenantId}));
+      CACHE.rooms = scoped; 
+      _saveNode('rooms', scoped); 
+  },
   
   updateRoomStatus: _updateRoomStatus,
 
@@ -261,10 +404,12 @@ export const DataService = {
   addCustomer: (customer: Customer) => {
     const existingIndex = CACHE.customers.findIndex(c => c.phone === customer.phone);
     const newCustomers = [...CACHE.customers];
+    const scopedCustomer = { ...customer, tenantId: activeTenantId };
+    
     if (existingIndex !== -1) {
-        newCustomers[existingIndex] = { ...newCustomers[existingIndex], ...customer };
+        newCustomers[existingIndex] = { ...newCustomers[existingIndex], ...scopedCustomer };
     } else {
-        newCustomers.push(customer);
+        newCustomers.push(scopedCustomer as Customer);
     }
     CACHE.customers = newCustomers;
     _saveNode('customers', newCustomers);
@@ -309,10 +454,15 @@ export const DataService = {
       return { valid: true };
   },
 
-  saveBookings: (bookings: Booking[]) => { CACHE.bookings = bookings; _saveNode('bookings', bookings); },
+  saveBookings: (bookings: Booking[]) => { 
+      const scoped = bookings.map(b => ({...b, tenantId: activeTenantId}));
+      CACHE.bookings = scoped; 
+      _saveNode('bookings', scoped); 
+  },
   
   addBooking: (booking: Booking) => {
-    const newBookings = [...CACHE.bookings, booking];
+    const scopedBooking = { ...booking, tenantId: activeTenantId };
+    const newBookings = [...CACHE.bookings, scopedBooking as Booking];
     CACHE.bookings = newBookings;
     
     if (booking.status === BookingStatus.CHECKED_IN) {
@@ -326,7 +476,7 @@ export const DataService = {
     _saveNode('bookings', newBookings);
     
     setTimeout(() => {
-        _logAction('CREATE', booking, `Tạo mới đơn đặt phòng ${booking.id}`, booking.createdBy);
+        _logAction('CREATE', scopedBooking as Booking, `Tạo mới đơn đặt phòng ${booking.id}`, booking.createdBy);
     }, 100);
   },
 
@@ -335,7 +485,8 @@ export const DataService = {
     const index = bookings.findIndex(b => b.id === updatedBooking.id);
     if (index !== -1) {
       const oldStatus = bookings[index].status;
-      bookings[index] = updatedBooking;
+      const scopedBooking = { ...updatedBooking, tenantId: activeTenantId };
+      bookings[index] = scopedBooking as Booking;
       CACHE.bookings = bookings;
 
       let actionType: HistoryLog['action'] = 'UPDATE';
@@ -364,7 +515,7 @@ export const DataService = {
       if(roomUpdated) _saveNode('rooms', CACHE.rooms);
 
       setTimeout(() => {
-         _logAction(actionType, updatedBooking, desc, updatedBooking.createdBy);
+         _logAction(actionType, scopedBooking as Booking, desc, updatedBooking.createdBy);
       }, 100);
     }
   },
@@ -374,39 +525,50 @@ export const DataService = {
   // Users
   getUsers: (): User[] => CACHE.users,
   addUser: (user: User) => {
-     CACHE.users = [...CACHE.users, user];
+     const scopedUser = { ...user, tenantId: activeTenantId };
+     CACHE.users = [...CACHE.users, scopedUser as User];
      _saveNode('users', CACHE.users);
+     // NEW: SYNC TO SYSTEM
+     _syncToSystemUsers(scopedUser as User, 'ADD');
   },
   updateUser: (updatedUser: User) => {
      const newUsers = [...CACHE.users];
      const idx = newUsers.findIndex(u => u.id === updatedUser.id);
      if (idx !== -1) {
-         newUsers[idx] = updatedUser;
+         // Merge existing data with updates to prevent losing tenantId if it wasn't passed perfectly
+         // Also ensure tenantId is strictly set to activeTenantId if we are in tenant context
+         const safeUpdate = { 
+             ...newUsers[idx], 
+             ...updatedUser,
+             tenantId: activeTenantId || newUsers[idx].tenantId 
+         };
+         newUsers[idx] = safeUpdate;
          CACHE.users = newUsers;
          _saveNode('users', newUsers);
+         // NEW: SYNC TO SYSTEM
+         _syncToSystemUsers(safeUpdate, 'UPDATE');
      }
   },
   deleteUser: (userId: string) => {
-    CACHE.users = CACHE.users.filter(u => u.id !== userId);
-    _saveNode('users', CACHE.users);
+      const userToDelete = CACHE.users.find(u => u.id === userId);
+      const newUsers = CACHE.users.filter(u => u.id !== userId);
+      CACHE.users = newUsers;
+      _saveNode('users', newUsers);
+      
+      // NEW: SYNC TO SYSTEM
+      if(userToDelete) _syncToSystemUsers(userToDelete, 'DELETE');
   },
-
-  exportToExcel: (data: any[], filename: string) => {
-    if (data.length === 0 || typeof XLSX === 'undefined') {
-        if(typeof XLSX === 'undefined') alert("Lỗi thư viện Excel. Vui lòng tải lại trang.");
-        return;
-    }
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(data);
-    const objectMaxLength: number[] = []; 
-    data.forEach(d => {
-        Object.values(d).forEach((value, i) => {
-            let l = value ? value.toString().length : 0;
-            objectMaxLength[i] = objectMaxLength[i] >= l ? objectMaxLength[i] : l;
-        });
-    });
-    ws['!cols'] = objectMaxLength.map(w => ({ width: w + 2 }));
-    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-    XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+  
+  // Excel Export
+  exportToExcel: (data: any[], fileName: string) => {
+      if (typeof XLSX === 'undefined') {
+          console.error("XLSX library not loaded");
+          alert("Thư viện xuất Excel chưa được tải. Vui lòng thử lại sau.");
+          return;
+      }
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Report");
+      XLSX.writeFile(wb, fileName);
   }
 };

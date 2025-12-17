@@ -1,22 +1,29 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import RoomMap from './pages/RoomMap';
-// Removed Bookings import
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
+import SuperAdmin from './pages/SuperAdmin'; // Import new page
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS } from './types';
-import { Lock, Loader2, CloudOff } from 'lucide-react';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
+import { Lock, Loader2, Users } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- Auth State ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  
+  // --- Multi-Tenant State ---
+  const [activeTenantId, setActiveTenantId] = useState<string | null>(null);
+  const [tenantList, setTenantList] = useState<Tenant[]>([]);
+  const [planList, setPlanList] = useState<SubscriptionPlan[]>([]); // Added state for Plans
+  const [systemUsers, setSystemUsers] = useState<User[]>([]); // Added state for System Users
+  const [isSuperAdminView, setIsSuperAdminView] = useState(false);
 
   // --- App View State ---
   const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); // Can be 'ALL'
@@ -26,7 +33,7 @@ const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // --- Data State ---
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false); // Initial load done on login
   const [dataTick, setDataTick] = useState(0); // Signal to refresh data with latest state
   
   const [properties, setProperties] = useState<Property[]>([]);
@@ -38,37 +45,65 @@ const App: React.FC = () => {
   const [tags, setTags] = useState<Tag[]>([]);
 
   // --- INITIALIZATION ---
+  // Try to restore session on mount
   useEffect(() => {
-    // 1. Restore Login Session
     const savedUser = localStorage.getItem('k_host_user');
+    const savedTenant = localStorage.getItem('k_host_tenant');
+    
     if (savedUser) {
         try {
             const parsedUser = JSON.parse(savedUser);
-            // We'll verify against DB users later, but set initial state now
             setCurrentUser(parsedUser);
             
-            // Set default page based on role/permissions logic
-            // If they don't have dashboard access, default to Room Map
-            if (parsedUser.permissions && !parsedUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
-                setCurrentPage('room-map');
+            // If user has a specific tenant, load it
+            if (parsedUser.tenantId !== 'SYSTEM' && parsedUser.tenantId) {
+                initDataService(parsedUser.tenantId);
+            } else if (parsedUser.role === UserRole.SUPER_ADMIN) {
+                // If Super Admin was impersonating
+                if (savedTenant && savedTenant !== 'SYSTEM') {
+                    initDataService(savedTenant);
+                } else {
+                    // Super Admin in Dashboard View (System context)
+                    initDataService('SYSTEM');
+                    setIsSuperAdminView(true);
+                }
             }
         } catch (e) {
             localStorage.removeItem('k_host_user');
         }
     }
-
-    // 2. Connect Firebase
-    DataService.init(() => {
-        setDataTick(prev => prev + 1);
-        setIsLoading(false);
-    });
   }, []);
+
+  const initDataService = (tenantId: string) => {
+      setIsLoading(true);
+      setActiveTenantId(tenantId);
+      
+      DataService.init(tenantId, () => {
+          setDataTick(prev => prev + 1);
+          
+          if (tenantId === 'SYSTEM') {
+              setTenantList(DataService.getTenants());
+              setPlanList(DataService.getPlans()); // Fetch Plans
+              setSystemUsers(DataService.getSystemUsers()); // Fetch System Users
+          }
+          
+          setIsLoading(false);
+      });
+  };
 
   // --- MAIN DATA REFRESH LOGIC ---
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !activeTenantId) return;
 
-    // 1. Sync Static Data
+    if (activeTenantId === 'SYSTEM') {
+        // Super Admin Mode: Update system lists
+        setTenantList(DataService.getTenants());
+        setPlanList(DataService.getPlans());
+        setSystemUsers(DataService.getSystemUsers());
+        return;
+    }
+
+    // Normal Tenant Mode: Sync Business Data
     const props = DataService.getProperties();
     const allUsers = DataService.getUsers();
     
@@ -77,22 +112,6 @@ const App: React.FC = () => {
     setCustomers(DataService.getCustomers());
     setRoomTypes(DataService.getRoomTypes());
     setTags(DataService.getTags());
-
-    // 2. Validate/Refresh Current User from DB Source
-    if (currentUser) {
-        const freshUser = allUsers.find(u => u.id === currentUser.id);
-        if (freshUser && JSON.stringify(freshUser) !== JSON.stringify(currentUser)) {
-             // Update session silently if permissions/roles changed in DB
-             setCurrentUser(freshUser);
-             localStorage.setItem('k_host_user', JSON.stringify(freshUser));
-             
-             // Security check: If current page is forbidden, redirect
-             const perms = freshUser.permissions || [];
-             if (currentPage === 'dashboard' && !perms.includes(PERMISSIONS.VIEW_DASHBOARD)) setCurrentPage('room-map');
-             // Removed Bookings permission check
-             if (currentPage === 'reports' && !perms.includes(PERMISSIONS.VIEW_REPORTS)) setCurrentPage('room-map');
-        }
-    }
 
     // 3. Determine Effective Property ID
     let activePropId = currentPropertyId;
@@ -110,27 +129,23 @@ const App: React.FC = () => {
         if (!hasRestrictions) {
             activePropId = 'ALL';
         } else {
-            // If restricted, default to ALL (if multiple allowed) or the single allowed ID
             activePropId = allowedIds.length > 1 ? 'ALL' : allowedIds[0];
         }
-        // Only update state if different to prevent loops
         if (activePropId !== currentPropertyId) {
             setCurrentPropertyId(activePropId);
-            return; // The state change will trigger this effect again
+            return;
         }
     }
 
-    // 4. Get & Filter Dynamic Data (Rooms, Bookings)
+    // 4. Get & Filter Dynamic Data
     let allRooms = DataService.getRooms(); 
     let allBookings = DataService.getBookings();
 
-    // 4a. Security Filter (Permission based)
     if (hasRestrictions) {
         allRooms = allRooms.filter(r => allowedIds.includes(r.propertyId));
         allBookings = allBookings.filter(b => allowedIds.includes(b.propertyId));
     }
 
-    // 4b. View Filter (Selection based)
     if (activePropId && activePropId !== 'ALL') {
        setRooms(allRooms.filter(r => r.propertyId === activePropId));
        setBookings(allBookings.filter(b => b.propertyId === activePropId));
@@ -139,12 +154,12 @@ const App: React.FC = () => {
        setBookings(allBookings);
     }
 
-  }, [dataTick, currentPropertyId, isLoading, currentUser?.id]);
+  }, [dataTick, currentPropertyId, isLoading, currentUser?.id, activeTenantId]);
 
 
-  // --- Automation System (Auto Check-in / Check-out) ---
+  // --- Automation System ---
   useEffect(() => {
-      if (!currentUser || isLoading) return;
+      if (!currentUser || isLoading || activeTenantId === 'SYSTEM') return;
 
       const runAutomation = () => {
           const now = new Date();
@@ -183,40 +198,43 @@ const App: React.FC = () => {
       const intervalId = setInterval(runAutomation, 30000);
 
       return () => clearInterval(intervalId);
-  }, [currentUser, isLoading]);
+  }, [currentUser, isLoading, activeTenantId]);
 
 
   // --- Handlers ---
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
     
-    let foundUser = users.find(u => u.username === loginUsername && u.password === loginPassword);
-    
-    // Recovery Logic
-    if (!foundUser && loginUsername === 'admin' && loginPassword === '000') {
-        const dbAdmin = users.find(u => u.username === 'admin');
-        if (dbAdmin) {
-            const updatedAdmin = { ...dbAdmin, password: '000' };
-            DataService.updateUser(updatedAdmin);
-            foundUser = updatedAdmin;
-        }
-    }
+    // Use Global Login to find tenant
+    const foundUser = await DataService.login(loginUsername, loginPassword);
 
     if (foundUser) {
       setCurrentUser(foundUser);
       localStorage.setItem('k_host_user', JSON.stringify(foundUser));
       
-      setCurrentPropertyId(''); // Reset to trigger validation logic
+      setCurrentPropertyId('');
       
-      // Smart Default Page
-      if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
-          setCurrentPage('room-map');
-      } else {
+      // Determine Start Page & Tenant
+      if (foundUser.role === UserRole.SUPER_ADMIN) {
+          setIsSuperAdminView(true);
+          initDataService('SYSTEM');
           setCurrentPage('dashboard');
+      } else {
+          // Standard User: Load their specific tenant
+          initDataService(foundUser.tenantId);
+          localStorage.setItem('k_host_tenant', foundUser.tenantId);
+          
+          if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
+              setCurrentPage('room-map');
+          } else {
+              setCurrentPage('dashboard');
+          }
       }
 
     } else {
       alert('Tên đăng nhập hoặc mật khẩu không đúng!');
+      setIsLoading(false);
     }
   };
 
@@ -224,8 +242,11 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setLoginUsername('');
     setLoginPassword('');
+    setActiveTenantId(null);
     setCurrentPage('dashboard');
+    setIsSuperAdminView(false);
     localStorage.removeItem('k_host_user');
+    localStorage.removeItem('k_host_tenant');
   };
 
   const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
@@ -234,12 +255,43 @@ const App: React.FC = () => {
 
   const manualRefresh = () => setDataTick(t => t + 1);
 
+  // --- Super Admin: Impersonate Tenant ---
+  const handleAccessTenant = (tenantId: string) => {
+      setIsSuperAdminView(false);
+      localStorage.setItem('k_host_tenant', tenantId);
+      initDataService(tenantId);
+      setCurrentPage('dashboard');
+  };
+
+  const handleExitTenant = () => {
+      setIsSuperAdminView(true);
+      localStorage.removeItem('k_host_tenant');
+      initDataService('SYSTEM');
+  };
+
+  // --- Effective User Logic (Impersonation) ---
+  const effectiveUser = useMemo(() => {
+    if (!currentUser) return null;
+    if (currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView) {
+        // Create a virtual ADMIN user for the current tenant
+        return {
+            ...currentUser,
+            role: UserRole.ADMIN, // Masquerade as Tenant Admin
+            permissions: Object.values(PERMISSIONS), // Give full permissions
+            tenantId: activeTenantId || 'temp_view',
+            fullName: `[Super Admin] ${currentUser.fullName}`
+        } as User;
+    }
+    return currentUser;
+  }, [currentUser, isSuperAdminView, activeTenantId]);
+
+
   // --- Loading Screen ---
   if (isLoading) {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-4">
               <Loader2 className="animate-spin text-blue-600" size={48} />
-              <p className="font-medium">Đang kết nối cơ sở dữ liệu đám mây...</p>
+              <p className="font-medium">Đang kết nối dữ liệu...</p>
           </div>
       )
   }
@@ -254,7 +306,7 @@ const App: React.FC = () => {
               <Lock size={24} />
             </div>
             <h1 className="text-2xl font-bold text-gray-800">Đăng nhập hệ thống</h1>
-            <p className="text-gray-500">K-Host Management</p>
+            <p className="text-gray-500">K-Host SaaS Management</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -282,23 +334,21 @@ const App: React.FC = () => {
             </button>
           </form>
           
-          {JSON.stringify(properties).length < 5 && (
-             <div className="mt-6 p-3 bg-orange-50 border border-orange-200 rounded-lg flex gap-3 items-start">
-                 <CloudOff className="text-orange-500 mt-0.5 flex-shrink-0" size={16} />
-                 <div className="text-xs text-orange-700">
-                     <strong>Chế độ Offline:</strong> Database chưa sẵn sàng.
-                 </div>
-             </div>
-          )}
+          <div className="mt-6 text-center">
+              <p className="text-xs text-gray-400">Hỗ trợ Multi-Tenant Isolation</p>
+          </div>
         </div>
       </div>
     );
   }
 
-  // --- Main Layout ---
+  // Safe check for typescript
+  if (!effectiveUser) return null;
+
+  // --- STANDARD TENANT VIEW OBJECT ---
   const currentPropertyObj = currentPropertyId === 'ALL' 
-        ? { id: 'ALL', name: 'Toàn bộ chi nhánh', address: '' }
-        : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''});
+        ? { id: 'ALL', name: 'Toàn bộ chi nhánh', address: '' } as Property
+        : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''} as Property);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -306,67 +356,111 @@ const App: React.FC = () => {
         currentPage={currentPage} 
         onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
         onLogout={handleLogout}
-        currentUser={currentUser}
+        currentUser={effectiveUser} 
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
       />
       
       <div className="md:ml-64 min-h-screen flex flex-col transition-all duration-300">
-        <Header 
-          user={currentUser}
-          properties={properties}
-          currentPropertyId={currentPropertyId}
-          onPropertyChange={setCurrentPropertyId}
-          onMenuClick={() => setIsMobileMenuOpen(true)}
-        />
+        {/* Banner for Super Admin Impersonation */}
+        {currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView && (
+            <div className="bg-purple-600 text-white px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 shadow-md">
+                <span className="flex items-center gap-2">
+                    <Users size={16} className="text-purple-200" />
+                    Bạn đang xem dữ liệu của: <strong>{tenantList.find(t=>t.id===activeTenantId)?.name || activeTenantId}</strong>
+                </span>
+                <button onClick={handleExitTenant} className="bg-white text-purple-700 px-3 py-1 rounded font-bold text-xs hover:bg-gray-100 shadow-sm border border-purple-200">
+                    Thoát ra Platform
+                </button>
+            </div>
+        )}
+
+        {/* Standard Header (Used for both flows to provide logout/menu) */}
+        {!isSuperAdminView && (
+            <Header 
+            user={effectiveUser}
+            properties={properties}
+            currentPropertyId={currentPropertyId}
+            onPropertyChange={setCurrentPropertyId}
+            onMenuClick={() => setIsMobileMenuOpen(true)}
+            />
+        )}
+        
+        {/* Super Admin Header */}
+        {isSuperAdminView && (
+             <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 shadow-sm">
+                 <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                    <Users size={24} />
+                 </button>
+                 <div className="font-bold text-lg text-purple-700">Platform Owner Console</div>
+                 <div className="text-sm font-medium text-gray-600">{currentUser.fullName}</div>
+             </header>
+        )}
 
         {/* Content Wrapper */}
         <main className="flex-1 p-3 md:p-6">
           <div className="max-w-7xl mx-auto h-full">
-            {currentPage === 'dashboard' && currentUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
-              <Dashboard bookings={bookings} rooms={rooms} />
-            )}
             
-            {currentPage === 'room-map' && (
-              <RoomMap 
-                rooms={rooms} 
-                roomTypes={roomTypes} 
-                bookings={bookings} 
-                customers={customers}
-                tags={tags}
-                onUpdateStatus={handleUpdateRoomStatus}
-                onRefresh={manualRefresh}
-                currentProperty={currentPropertyObj}
-                currentUser={currentUser} // Pass full user object
-              />
+            {/* SUPER ADMIN VIEW */}
+            {isSuperAdminView && (
+                 <SuperAdmin 
+                    tenants={tenantList} 
+                    plans={planList} 
+                    systemUsers={systemUsers}
+                    onRefresh={manualRefresh} 
+                    onAccessTenant={handleAccessTenant}
+                 />
             )}
 
-            {currentPage === 'reports' && currentUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
-                <Reports 
-                  bookings={bookings} 
-                  rooms={rooms} 
-                  users={users} 
-                  roomTypes={roomTypes} 
-                  properties={properties} 
-                  tags={tags}
-                  currentUser={currentUser} // Pass full user object
-                />
-            )}
-            
-            {currentPage === 'management' && currentUser.role === UserRole.ADMIN && (
-               <div className="space-y-8">
-                   <Management 
-                      users={users} 
-                      rooms={DataService.getRooms()} 
-                      roomTypes={roomTypes} 
-                      properties={properties} 
-                      tags={tags}
-                      onRefresh={manualRefresh}
-                   />
-                   <div className="mt-8">
-                       <Admin users={users} properties={properties} onRefresh={manualRefresh} />
-                   </div>
-               </div>
+            {/* TENANT VIEWS */}
+            {!isSuperAdminView && (
+                <>
+                    {currentPage === 'dashboard' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
+                    <Dashboard bookings={bookings} rooms={rooms} />
+                    )}
+                    
+                    {currentPage === 'room-map' && (
+                    <RoomMap 
+                        rooms={rooms} 
+                        roomTypes={roomTypes} 
+                        bookings={bookings} 
+                        customers={customers}
+                        tags={tags}
+                        onUpdateStatus={handleUpdateRoomStatus}
+                        onRefresh={manualRefresh}
+                        currentProperty={currentPropertyObj}
+                        currentUser={effectiveUser} // Pass effective user
+                    />
+                    )}
+
+                    {currentPage === 'reports' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
+                        <Reports 
+                        bookings={bookings} 
+                        rooms={rooms} 
+                        users={users} 
+                        roomTypes={roomTypes} 
+                        properties={properties} 
+                        tags={tags}
+                        currentUser={effectiveUser} // Pass effective user
+                        />
+                    )}
+                    
+                    {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
+                    <div className="space-y-8">
+                        <Management 
+                            users={users} 
+                            rooms={DataService.getRooms()} 
+                            roomTypes={roomTypes} 
+                            properties={properties} 
+                            tags={tags}
+                            onRefresh={manualRefresh}
+                        />
+                        <div className="mt-8">
+                            <Admin users={users} properties={properties} onRefresh={manualRefresh} />
+                        </div>
+                    </div>
+                    )}
+                </>
             )}
           </div>
         </main>

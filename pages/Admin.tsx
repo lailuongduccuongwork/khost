@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { User, UserRole, Property, PERMISSIONS } from '../types';
-import { Trash2, UserPlus, Shield, Pencil, CheckSquare, Square } from 'lucide-react';
+import { Trash2, UserPlus, Shield, Pencil, CheckSquare, Square, AlertTriangle } from 'lucide-react';
 import { DataService } from '../services/dataService';
 
 interface AdminProps {
@@ -14,17 +14,28 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   
+  // Delete Modal States
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
   const [userData, setUserData] = useState<Partial<User>>({
     role: UserRole.RECEPTIONIST,
     permissions: [],
     allowedPropertyIds: []
   });
 
-  const handleDelete = (id: string) => {
-    if (confirm('Bạn có chắc muốn xóa tài khoản này?')) {
-      DataService.deleteUser(id);
-      onRefresh();
-    }
+  const handleDeleteClick = (user: User) => {
+      setUserToDelete(user);
+      setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = () => {
+      if (userToDelete) {
+          DataService.deleteUser(userToDelete.id);
+          onRefresh();
+          setShowDeleteConfirm(false);
+          setUserToDelete(null);
+      }
   };
 
   const openAddModal = () => {
@@ -80,6 +91,23 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
         alert("Thiếu thông tin bắt buộc (Họ tên, Username, Mật khẩu)");
         return;
     }
+
+    // --- CHECK 1: DUPLICATE USERNAME ---
+    const isDuplicate = users.some(u => 
+        u.username.toLowerCase() === userData.username?.toLowerCase() && 
+        u.id !== editingUserId 
+    );
+
+    if (isDuplicate) {
+        alert("Tên đăng nhập này đã tồn tại trong hệ thống. Vui lòng chọn tên khác.");
+        return;
+    }
+
+    // --- CHECK 2: PREVENT SUPER_ADMIN CREATION ---
+    if (userData.role === UserRole.SUPER_ADMIN) {
+        alert("Bạn không thể tạo tài khoản Super Admin từ giao diện này.");
+        return;
+    }
     
     // Ensure Admin always has all permissions
     let finalPermissions = userData.permissions || [];
@@ -102,6 +130,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
         // Add Mode
         const userToAdd: User = {
             id: 'u' + Date.now(),
+            tenantId: '', // Placeholder, will be set by DataService
             username: userData.username,
             fullName: userData.fullName,
             role: userData.role as UserRole,
@@ -201,7 +230,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                       </button>
                       
                       <button 
-                          onClick={() => handleDelete(user.id)}
+                          onClick={() => handleDeleteClick(user)}
                           className={`p-2 rounded ${user.username === 'admin' ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600 hover:bg-red-50'}`}
                           disabled={user.username === 'admin'}
                           title={user.username === 'admin' ? "Không thể xóa Super Admin" : "Xóa tài khoản"}
@@ -260,7 +289,9 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                                 value={userData.role}
                                 onChange={e => setUserData({...userData, role: e.target.value as UserRole})}
                             >
-                                {Object.values(UserRole).map(r => (
+                                {Object.values(UserRole)
+                                    .filter(r => r !== UserRole.SUPER_ADMIN) // PREVENT CREATING SUPER ADMIN
+                                    .map(r => (
                                     <option key={r} value={r}>{r}</option>
                                 ))}
                             </select>
@@ -321,6 +352,36 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                 </div>
             </div>
         </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {showDeleteConfirm && userToDelete && (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 animate-fade-in text-center">
+                  <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle size={32} />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900 mb-2">Xác nhận xóa nhân viên</h3>
+                  <p className="text-gray-500 text-sm mb-6">
+                      Bạn có chắc chắn muốn xóa tài khoản <b>{userToDelete.fullName}</b> ({userToDelete.username}) không? <br/>
+                      Hành động này không thể hoàn tác.
+                  </p>
+                  <div className="flex gap-3">
+                      <button 
+                          onClick={() => setShowDeleteConfirm(false)}
+                          className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors"
+                      >
+                          Hủy bỏ
+                      </button>
+                      <button 
+                          onClick={confirmDelete}
+                          className="flex-1 py-2.5 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors shadow-lg shadow-red-200"
+                      >
+                          Xóa vĩnh viễn
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );

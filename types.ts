@@ -16,20 +16,48 @@ export enum BookingStatus {
 }
 
 export enum UserRole {
-  ADMIN = 'ADMIN',
+  SUPER_ADMIN = 'SUPER_ADMIN', // Platform Owner
+  ADMIN = 'ADMIN',             // Tenant Owner
   MANAGER = 'MANAGER',
   RECEPTIONIST = 'RECEPTIONIST',
   HOUSEKEEPING = 'HOUSEKEEPING',
 }
 
+// SaaS: Subscription Plan
+export interface SubscriptionPlan {
+    id: string;
+    name: string;
+    price: number; // Monthly price
+    maxRooms: number;
+    maxUsers: number;
+    description?: string;
+}
+
+// SaaS: Tenant Entity
+export interface Tenant {
+  id: string;
+  name: string;
+  domain?: string; // e.g., hotel-a.khost.com
+  status: 'ACTIVE' | 'LOCKED' | 'EXPIRED';
+  planId: string; // Links to SubscriptionPlan
+  subscriptionEndDate: string; // ISO Date
+  createdAt: string;
+  
+  // Admin Credentials (for quick view/reset by Super Admin)
+  adminUsername?: string;
+  adminPassword?: string; // In real app, never store plain text!
+}
+
 export interface Tag {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   name: string;
   color: string; // Hex code
 }
 
 export interface Property {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   name: string;
   address: string;
   sortOrder?: number; // Order for display
@@ -37,6 +65,7 @@ export interface Property {
 
 export interface RoomType {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   name: string;
   price: number;
   capacity: number;
@@ -45,6 +74,7 @@ export interface RoomType {
 
 export interface Room {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   number: string;
   typeId: string;
   propertyId: string;
@@ -55,6 +85,7 @@ export interface Room {
 
 export interface Customer {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   name: string;
   phone: string;
   email?: string;
@@ -63,6 +94,7 @@ export interface Customer {
 
 export interface Booking {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   propertyId: string;
   roomId: string;
   customerId: string; // Links to Customer
@@ -87,6 +119,7 @@ export interface Booking {
 
 export interface User {
   id: string;
+  tenantId: string; // REQUIRED for standard users, can be 'SYSTEM' for Super Admin
   username: string;
   fullName: string;
   role: UserRole;
@@ -97,6 +130,7 @@ export interface User {
 
 export interface HistoryLog {
   id: string;
+  tenantId?: string; // Multi-tenant Foreign Key
   timestamp: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE' | 'CHECK_IN' | 'CHECK_OUT' | 'CANCEL';
   description: string;
