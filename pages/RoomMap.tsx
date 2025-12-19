@@ -731,15 +731,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      
      const selectedTags = tags.filter(t => bookingMeta.tags.includes(t.id));
 
+     // NEW LOGIC FOR RECEIPT:
+     // 1. Filter fees: Only REVENUE
+     const receiptFees = bookingMeta.extraFees.filter(f => f.type === 'REVENUE');
+     // 2. Calculate Total: Room Price + Revenue Fees (Ignore Expenses)
+     const receiptTotal = bookingMeta.totalPrice + extraRevenue;
+
      setReceiptData({
          guestName: bookingMeta.guestName || 'Khách lẻ',
          guestPhone: bookingMeta.guestPhone || '',
          notes: bookingMeta.notes,
          tags: selectedTags,
-         total: grandTotal, // Use Grand Total for receipt
+         total: receiptTotal, // Use the customer-facing total (No Expenses subtracted)
          paid: bookingMeta.paidAmount,
          rooms: receiptRooms,
-         extraFees: bookingMeta.extraFees
+         extraFees: receiptFees, // Only show Revenue fees
+         roomPrice: bookingMeta.totalPrice // Save raw room price
      });
 
      setShowModal(false);
@@ -1407,6 +1414,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                     </div>
                                 ))}
                             </div>
+
+                            {/* ADDED SECTION START */}
+                            <div className="border-t border-dashed border-gray-300 py-2">
+                                <div className="flex justify-between items-center">
+                                    <span className="font-bold text-xs uppercase text-gray-500">Tổng tiền phòng</span>
+                                    <span className="font-bold text-gray-900">{formatNumber(receiptData.roomPrice)}</span>
+                                </div>
+                            </div>
+                            {/* ADDED SECTION END */}
 
                             {/* Extra Fees Receipt Section */}
                             {receiptData.extraFees && receiptData.extraFees.length > 0 && (
