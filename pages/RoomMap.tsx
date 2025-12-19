@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS } from '../types';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -45,11 +45,11 @@ const formatTicketDate = (isoStr: string) => {
 // --- Custom Components ---
 
 // 1. Money Input Control (Auto formats 1.000.000)
-const MoneyInput = ({ value, onChange, className, disabled }: { value: number, onChange: (val: number) => void, className?: string, disabled?: boolean }) => {
+const MoneyInput = ({ value, onChange, className, disabled, placeholder }: { value: number, onChange: (val: number) => void, className?: string, disabled?: boolean, placeholder?: string }) => {
     const [displayVal, setDisplayVal] = useState('');
 
     useEffect(() => {
-        setDisplayVal(formatNumber(value));
+        setDisplayVal(value === 0 ? '' : formatNumber(value));
     }, [value]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +67,7 @@ const MoneyInput = ({ value, onChange, className, disabled }: { value: number, o
             value={displayVal}
             onChange={handleChange}
             disabled={disabled}
+            placeholder={placeholder}
         />
     )
 }
@@ -119,11 +120,19 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // SORTING STATE
   const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
 
+  // DATA STATES
+  const [financeCategories, setFinanceCategories] = useState<TransactionCategory[]>([]);
+
   useEffect(() => {
       // Update time every minute
       const timer = setInterval(() => setNow(new Date()), 60000);
       return () => clearInterval(timer);
   }, []);
+
+  // Refresh categories when needed (e.g. modal open)
+  const refreshCategories = () => {
+      setFinanceCategories(DataService.getTransactionCategories());
+  }
 
   // Permissions
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
@@ -157,15 +166,19 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       groupId?: string; // Track Group ID
       guestName: string;
       guestPhone: string;
-      totalPrice: number;
+      totalPrice: number; // This acts as ROOM TOTAL in UI state
       paidAmount: number;
       notes: string;
       status: BookingStatus;
       isManualPrice: boolean;
       tags: string[]; // Selected tag IDs
+      extraFees: ExtraFee[]; // NEW: Manage fees
   }>({
-      guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: []
+      guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
   });
+
+  // Local state for adding new fee in modal
+  const [pendingFee, setPendingFee] = useState<{ categoryId: string, amount: number }>({ categoryId: '', amount: 0 });
 
   // Multiple Rows for Rooms
   interface BookingRow {
@@ -393,6 +406,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
       setIsEditMode(editMode);
       setShowDeleteConfirm(false); 
+      refreshCategories(); // Load categories
+      setPendingFee({ categoryId: '', amount: 0 }); // Reset pending fee input
       
       if (editMode && booking) {
           // GROUP LOGIC: Fetch all bookings in the same group
@@ -404,20 +419,34 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           }
 
           const mainBooking = groupBookings[0];
-          const totalGroupPrice = groupBookings.reduce((sum, b) => sum + b.totalPrice, 0);
+          // Calculate Totals for Group (DB Stored Total)
+          const totalGroupPriceStored = groupBookings.reduce((sum, b) => sum + b.totalPrice, 0);
           const totalGroupPaid = groupBookings.reduce((sum, b) => sum + b.paidAmount, 0);
+
+          // EXTRACT FEES
+          // We assume fees are stored in the first booking (leader) of the group
+          // If distributed, we'd need to agg, but current logic says save to leader.
+          const loadedFees = mainBooking.extraFees || [];
+          
+          // Calculate Net Fee (Revenue - Expense)
+          const feeNet = loadedFees.reduce((sum, f) => f.type === 'REVENUE' ? sum + f.amount : sum - f.amount, 0);
+
+          // Calculate Pure Room Total (Total Stored - Net Fees)
+          // Use Math.max to avoid negative room price if data is weird
+          const roomTotal = totalGroupPriceStored - feeNet;
 
           setBookingMeta({
               id: mainBooking.id, // ID of first booking (used for ref)
               groupId: mainBooking.groupId,
               guestName: mainBooking.guestName || '',
               guestPhone: mainBooking.guestPhone || '',
-              totalPrice: totalGroupPrice,
+              totalPrice: roomTotal, // UI State tracks ROOM TOTAL only
               paidAmount: totalGroupPaid,
               notes: mainBooking.notes || '',
               status: mainBooking.status || BookingStatus.CONFIRMED,
               isManualPrice: true,
-              tags: mainBooking.tags || [] 
+              tags: mainBooking.tags || [],
+              extraFees: loadedFees
           });
 
           const rows: BookingRow[] = groupBookings.map(b => ({
@@ -426,7 +455,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               roomId: b.roomId,
               checkIn: b.checkInDate,
               checkOut: b.checkOutDate,
-              price: b.totalPrice
+              // For individual rows in edit, we use the stored price. 
+              // Summing these might equal totalGroupPriceStored.
+              // But in UI we bind sum to Room Total. This is a bit tricky if row prices included fees.
+              // Simplification: We recalculate row prices based on pure room total when saving.
+              // For display here, we just use stored price but it might include fee fraction.
+              // For consistency, let's just use type price if we can, or keep it.
+              price: b.totalPrice // This is just initial value for row input
           }));
 
           setBookingRows(rows);
@@ -435,7 +470,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       } else {
           // Create Mode
           setBookingMeta({
-              guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: []
+              guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
           });
           setOriginalBookingIds([]);
           
@@ -543,6 +578,43 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       setDragStart(null); setDragEnd(null);
   };
 
+  // --- EXTRA FEES HANDLERS ---
+  const handleAddFee = () => {
+      if (!pendingFee.categoryId) return alert("Vui lòng chọn loại phí/dịch vụ");
+      if (pendingFee.amount <= 0) return alert("Vui lòng nhập số tiền hợp lệ");
+
+      const cat = financeCategories.find(c => c.id === pendingFee.categoryId);
+      if (!cat) return;
+
+      const newFee: ExtraFee = {
+          id: `fee_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          categoryId: cat.id,
+          name: cat.name,
+          amount: pendingFee.amount,
+          type: cat.type
+      };
+
+      setBookingMeta(prev => ({
+          ...prev,
+          extraFees: [...prev.extraFees, newFee]
+      }));
+
+      setPendingFee({ categoryId: '', amount: 0 }); // Reset input
+  };
+
+  const handleRemoveFee = (feeId: string) => {
+      setBookingMeta(prev => ({
+          ...prev,
+          extraFees: prev.extraFees.filter(f => f.id !== feeId)
+      }));
+  };
+
+  // Derived Totals
+  const extraRevenue = bookingMeta.extraFees.reduce((s, f) => f.type === 'REVENUE' ? s + f.amount : s, 0);
+  const extraExpense = bookingMeta.extraFees.reduce((s, f) => f.type === 'EXPENSE' ? s + f.amount : s, 0);
+  const feeNet = extraRevenue - extraExpense;
+  const grandTotal = bookingMeta.totalPrice + feeNet; // Room Total + Net Fees
+
   const handleSaveBooking = () => {
      const validRows = bookingRows.filter(r => r.roomId);
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
@@ -578,7 +650,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
          groupId = DataService.generateBookingId() + '_grp'; 
      }
 
-     const pricePerRoom = Math.floor(bookingMeta.totalPrice / validRows.length);
+     // Use ROOM TOTAL from UI state to distribute
+     const roomTotal = bookingMeta.totalPrice;
+     const pricePerRoom = Math.floor(roomTotal / validRows.length);
      
      if (isEditMode && originalBookingIds.length > 0) {
          const currentIds = validRows.map(r => r.bookingId).filter(Boolean);
@@ -589,55 +663,53 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      }
 
      validRows.forEach((row, idx) => {
-         const thisPrice = idx === 0 ? pricePerRoom + (bookingMeta.totalPrice % validRows.length) : pricePerRoom;
-         const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; 
+         // Calculate Base Room Price part
+         let thisPrice = idx === 0 ? pricePerRoom + (roomTotal % validRows.length) : pricePerRoom;
          
+         // CRITICAL: ADD NET FEES TO THE FIRST BOOKING (LEADER)
+         // This ensures Reports show total revenue including fees
+         if (idx === 0) {
+             thisPrice += feeNet; 
+         }
+         
+         const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; 
          const selectedRoom = rooms.find(r => r.id === row.roomId);
+
+         const commonData = {
+             groupId: groupId, 
+             propertyId: selectedRoom?.propertyId || currentProperty.id,
+             roomId: row.roomId,
+             customerId: 'c_guest',
+             guestName: bookingMeta.guestName || 'Khách lẻ',
+             guestPhone: bookingMeta.guestPhone || '',
+             checkInDate: row.checkIn,
+             checkOutDate: row.checkOut,
+             status: bookingMeta.status,
+             totalPrice: thisPrice, 
+             paidAmount: thisPaid,
+             createdBy: currentUser.id,
+             notes: bookingMeta.notes,
+             tags: bookingMeta.tags,
+             // Save extra fees only to leader
+             extraFees: idx === 0 ? bookingMeta.extraFees : []
+         };
 
          if (row.bookingId) {
              // UPDATE Existing
-             // FIND ORIGINAL BOOKING TO PRESERVE createdAt
              const existingBooking = bookings.find(b => b.id === row.bookingId);
-
              const updatedB: Booking = {
+                 ...commonData,
                  id: row.bookingId,
-                 groupId: groupId, 
-                 propertyId: selectedRoom?.propertyId || currentProperty.id,
-                 roomId: row.roomId,
-                 customerId: 'c_guest',
-                 guestName: bookingMeta.guestName || 'Khách lẻ',
-                 guestPhone: bookingMeta.guestPhone || '',
-                 checkInDate: row.checkIn,
-                 checkOutDate: row.checkOut,
-                 status: bookingMeta.status,
-                 totalPrice: thisPrice, 
-                 paidAmount: thisPaid,
                  // FIX: Preserve original createdAt
                  createdAt: existingBooking?.createdAt || new Date().toISOString(), 
-                 createdBy: currentUser.id,
-                 notes: bookingMeta.notes,
-                 tags: bookingMeta.tags
              };
              DataService.updateBooking(updatedB);
          } else {
              // CREATE New
              const newB: Booking = {
+                 ...commonData,
                  id: DataService.generateBookingId(),
-                 groupId: groupId,
-                 propertyId: selectedRoom?.propertyId || currentProperty.id,
-                 roomId: row.roomId,
-                 customerId: 'c_guest',
-                 guestName: bookingMeta.guestName || 'Khách lẻ',
-                 guestPhone: bookingMeta.guestPhone || '',
-                 checkInDate: row.checkIn,
-                 checkOutDate: row.checkOut,
-                 status: bookingMeta.status,
-                 totalPrice: thisPrice,
-                 paidAmount: thisPaid, 
                  createdAt: new Date().toISOString(),
-                 createdBy: currentUser.id,
-                 notes: bookingMeta.notes,
-                 tags: bookingMeta.tags
              };
              DataService.addBooking(newB);
          }
@@ -664,9 +736,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
          guestPhone: bookingMeta.guestPhone || '',
          notes: bookingMeta.notes,
          tags: selectedTags,
-         total: bookingMeta.totalPrice,
+         total: grandTotal, // Use Grand Total for receipt
          paid: bookingMeta.paidAmount,
-         rooms: receiptRooms
+         rooms: receiptRooms,
+         extraFees: bookingMeta.extraFees
      });
 
      setShowModal(false);
@@ -1081,35 +1154,119 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                           )}
                       </div>
 
+                      {/* EXTRA FEES (NEW SECTION) */}
+                      <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
+                          <div className="bg-gray-50 p-3 border-b border-gray-200 flex justify-between items-center">
+                              <h4 className="text-xs font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={14}/> Dịch vụ & Phụ thu</h4>
+                          </div>
+                          
+                          {/* Input Area */}
+                          {!isReadOnly && (
+                              <div className="p-3 bg-gray-50/50 flex flex-col md:flex-row gap-2 border-b border-dashed border-gray-200">
+                                  <select 
+                                      className="flex-[2] border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none bg-white"
+                                      value={pendingFee.categoryId}
+                                      onChange={e => setPendingFee({...pendingFee, categoryId: e.target.value})}
+                                  >
+                                      <option value="">-- Chọn loại phí / dịch vụ --</option>
+                                      <optgroup label="Khoản Thu (Cộng thêm)">
+                                          {financeCategories.filter(c => c.type === 'REVENUE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                      </optgroup>
+                                      <optgroup label="Khoản Chi (Giảm trừ)">
+                                          {financeCategories.filter(c => c.type === 'EXPENSE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                      </optgroup>
+                                  </select>
+                                  <MoneyInput 
+                                      className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none bg-white font-bold text-right"
+                                      placeholder="0"
+                                      value={pendingFee.amount}
+                                      onChange={v => setPendingFee({...pendingFee, amount: v})}
+                                  />
+                                  <button onClick={handleAddFee} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors whitespace-nowrap">Thêm</button>
+                              </div>
+                          )}
+
+                          {/* Fees List */}
+                          <div className="divide-y divide-gray-100">
+                              {bookingMeta.extraFees.length === 0 && <p className="text-center text-gray-400 text-xs italic p-4">Chưa có dịch vụ thêm.</p>}
+                              {bookingMeta.extraFees.map(fee => (
+                                  <div key={fee.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
+                                      <div className="flex items-center gap-2">
+                                          {fee.type === 'REVENUE' ? <ArrowUpCircle size={14} className="text-green-500"/> : <ArrowDownCircle size={14} className="text-red-500"/>}
+                                          <span className="text-sm font-medium text-gray-700">{fee.name}</span>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                          <span className={`font-bold text-sm ${fee.type === 'REVENUE' ? 'text-green-600' : 'text-red-600'}`}>
+                                              {fee.type === 'REVENUE' ? '+' : '-'}{formatNumber(fee.amount)}
+                                          </span>
+                                          {!isReadOnly && <button onClick={() => handleRemoveFee(fee.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14}/></button>}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+
                       {/* Payment & Extras */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20 md:pb-0">
                           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
                               <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2 uppercase tracking-wide border-b pb-2"><Info size={14}/> Thanh toán</h4>
-                              <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-[10px] md:text-xs font-bold uppercase text-green-700 mb-1">Tổng tiền</label>
-                                    <MoneyInput 
-                                        className="w-full bg-green-50/50 border border-green-100 text-green-800 p-2.5 rounded-lg font-bold text-base outline-none focus:ring-2 focus:ring-green-200"
-                                        value={bookingMeta.totalPrice}
-                                        onChange={(val) => setBookingMeta(prev => ({ ...prev, totalPrice: val, isManualPrice: true }))}
-                                        disabled={isReadOnly}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] md:text-xs font-bold uppercase text-blue-700 mb-1">Đã trả</label>
-                                    <MoneyInput 
-                                        className="w-full bg-blue-50/50 border border-blue-100 text-blue-800 p-2.5 rounded-lg font-bold text-base outline-none focus:ring-2 focus:ring-blue-200"
-                                        value={bookingMeta.paidAmount || 0}
-                                        onChange={(val) => setBookingMeta(prev => ({ ...prev, paidAmount: val }))}
-                                        disabled={isReadOnly}
-                                    />
-                                </div>
-                              </div>
-                              <div className="flex justify-between items-center pt-2 border-t border-dashed">
-                                  <span className="text-xs text-gray-500 font-medium">Còn lại cần thu:</span>
-                                  <span className={`text-base font-bold ${bookingMeta.totalPrice - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                      {formatNumber(bookingMeta.totalPrice - (bookingMeta.paidAmount||0))}
-                                  </span>
+                              <div className="space-y-3">
+                                  {/* Room Price */}
+                                  <div className="flex justify-between items-center">
+                                      <label className="text-xs font-bold text-gray-500 uppercase">Tổng tiền phòng</label>
+                                      <div className="w-32">
+                                        <MoneyInput 
+                                            className="w-full bg-gray-50 border border-gray-200 text-gray-800 p-2 rounded-lg font-bold text-sm text-right outline-none focus:ring-1 focus:ring-blue-200"
+                                            value={bookingMeta.totalPrice} // This acts as ROOM TOTAL
+                                            onChange={(val) => setBookingMeta(prev => ({ ...prev, totalPrice: val, isManualPrice: true }))}
+                                            disabled={isReadOnly}
+                                        />
+                                      </div>
+                                  </div>
+
+                                  {/* Extra Revenue Summary */}
+                                  {extraRevenue > 0 && (
+                                    <div className="flex justify-between items-center text-sm">
+                                        <span className="text-gray-600 flex items-center gap-1"><ArrowUpCircle size={12} className="text-green-500"/> Phụ thu / Dịch vụ:</span>
+                                        <span className="font-bold text-green-600">+{formatNumber(extraRevenue)}</span>
+                                    </div>
+                                  )}
+
+                                  {/* Extra Expense Summary */}
+                                  {extraExpense > 0 && (
+                                    <div className="flex justify-between items-center text-sm">
+                                        <span className="text-gray-600 flex items-center gap-1"><ArrowDownCircle size={12} className="text-red-500"/> Giảm trừ / Chi phí:</span>
+                                        <span className="font-bold text-red-600">-{formatNumber(extraExpense)}</span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Divider */}
+                                  <div className="border-t border-dashed border-gray-200 my-2"></div>
+
+                                  {/* GRAND TOTAL */}
+                                  <div className="flex justify-between items-center">
+                                      <label className="text-sm font-extrabold text-blue-800 uppercase">TỔNG CỘNG</label>
+                                      <span className="text-xl font-extrabold text-blue-800 tracking-tight">{formatNumber(grandTotal)} đ</span>
+                                  </div>
+
+                                  {/* Paid Input */}
+                                  <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100 mt-2">
+                                      <label className="block text-[10px] font-bold uppercase text-blue-700 mb-1">Khách đã trả</label>
+                                      <MoneyInput 
+                                            className="w-full bg-white border border-blue-200 text-blue-800 p-2 rounded-lg font-bold text-lg outline-none focus:ring-2 focus:ring-blue-200"
+                                            value={bookingMeta.paidAmount || 0}
+                                            onChange={(val) => setBookingMeta(prev => ({ ...prev, paidAmount: val }))}
+                                            disabled={isReadOnly}
+                                        />
+                                  </div>
+
+                                  {/* Remaining */}
+                                  <div className="flex justify-between items-center pt-2">
+                                      <span className="text-xs text-gray-500 font-medium">Còn lại cần thu:</span>
+                                      <span className={`text-base font-bold ${(bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                          {formatNumber((bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0))}
+                                      </span>
+                                  </div>
                               </div>
                           </div>
                           
@@ -1250,6 +1407,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                     </div>
                                 ))}
                             </div>
+
+                            {/* Extra Fees Receipt Section */}
+                            {receiptData.extraFees && receiptData.extraFees.length > 0 && (
+                                <div className="border-t border-dashed border-gray-300 py-2 mb-2">
+                                    <h5 className="font-bold text-xs uppercase text-gray-500 mb-2">Dịch vụ & Phụ thu</h5>
+                                    <div className="space-y-1">
+                                        {receiptData.extraFees.map((f: ExtraFee) => (
+                                            <div key={f.id} className="flex justify-between text-xs">
+                                                <span>{f.name}</span>
+                                                <span className={f.type === 'REVENUE' ? 'text-gray-800' : 'text-red-500'}>
+                                                    {f.type === 'REVENUE' ? '' : '-'}{formatNumber(f.amount)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="bg-gray-50 p-3 rounded-lg space-y-2 border border-gray-100">
                                 <div className="flex justify-between items-center">

@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -180,33 +180,56 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       const type = roomTypes.find(t => t.id === room?.typeId);
       const property = properties.find(p => p.id === b.propertyId);
       
+      // --- XỬ LÝ EXTRA FEES ---
+      const extraFees = b.extraFees || [];
+      const otherRevenue = extraFees.filter(f => f.type === 'REVENUE').reduce((sum, f) => sum + f.amount, 0);
+      const otherExpenses = extraFees.filter(f => f.type === 'EXPENSE').reduce((sum, f) => sum + f.amount, 0);
+
       // --- LOGIC TÍNH TIỀN KHÁCH ĐOÀN ---
-      let finalTotal = b.totalPrice;
+      let groupTotalStored = b.totalPrice; // Đây là giá trị lưu DB = (Tiền phòng + Thu khác - Chi khác)
       let finalPaid = b.paidAmount;
+      
+      // Biến hiển thị
+      let displayOtherRevenue = otherRevenue;
+      let displayOtherExpenses = otherExpenses;
 
       if (b.groupId) {
-          // 1. Tìm tất cả các phòng trong đoàn (Dựa trên bookings gốc để đảm bảo tính đúng tổng ngay cả khi bộ lọc ngày bị cắt)
+          // 1. Tìm tất cả các phòng trong đoàn
           const groupMembers = bookings.filter(x => x.groupId === b.groupId && x.status !== BookingStatus.DELETED);
           
-          // 2. Sắp xếp để tìm "Leader" cố định (Sắp xếp theo ID string để nhất quán)
+          // 2. Sắp xếp để tìm "Leader"
           groupMembers.sort((x, y) => x.id.localeCompare(y.id));
 
           if (groupMembers.length > 0) {
               const leader = groupMembers[0];
               
               if (b.id === leader.id) {
-                  // Đây là phòng đầu tiên: Cộng dồn toàn bộ tiền của đoàn
-                  finalTotal = groupMembers.reduce((sum, item) => sum + item.totalPrice, 0);
+                  // Leader: Cộng dồn toàn bộ
+                  groupTotalStored = groupMembers.reduce((sum, item) => sum + item.totalPrice, 0);
                   finalPaid = groupMembers.reduce((sum, item) => sum + item.paidAmount, 0);
+                  // Lưu ý: extraFees hiện tại logic chỉ lưu ở Leader nên lấy trực tiếp từ b là đúng
               } else {
                   // Các phòng còn lại: Hiển thị 0
-                  finalTotal = 0;
+                  groupTotalStored = 0;
                   finalPaid = 0;
+                  displayOtherRevenue = 0;
+                  displayOtherExpenses = 0;
               }
           }
       }
 
-      const debt = finalTotal - finalPaid;
+      // --- TÍNH TOÁN CÁC CỘT BÁO CÁO ---
+      // 1. "Tổng bill" (Khách cần trả) = Tiền phòng + Thu khác
+      // Do DB lưu: groupTotalStored = Tiền phòng + Thu khác - Chi khác
+      // => Tiền phòng + Thu khác = groupTotalStored + Chi khác
+      const customerBill = groupTotalStored + displayOtherExpenses;
+
+      // 2. "Doanh thu net" (Thực thu về túi KS) = Tiền phòng + Thu khác - Chi khác
+      // Chính là giá trị lưu trong DB
+      const netRevenue = groupTotalStored; 
+
+      // 3. "Còn nợ" = Tổng bill (Khách cần trả) - Đã trả
+      const debt = customerBill - finalPaid;
 
       // Map tags
       const bookingTags = (b.tags || []).map(tid => tags.find(t => t.id === tid)).filter(Boolean) as Tag[];
@@ -215,24 +238,30 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return {
           "Mã BK": b.id,
           "Khách hàng": b.guestName,
-          "Tags": tagNames, // For Excel Export and default string rendering
+          "Tags": tagNames, 
           "Phòng": room?.number || 'N/A',
           "Hạng phòng": type?.name || 'N/A',
           "Chi nhánh": property?.name || b.propertyId,
           "Ngày tạo": formatDateTime(b.createdAt),
           "Thời gian nhận phòng": formatDateTime(b.checkInDate),
           "Thời gian trả phòng": formatDateTime(b.checkOutDate),
-          "Tổng bill": finalTotal,
+          
+          "Tổng bill": customerBill,
+          "Thu khác": displayOtherRevenue,
+          "Chi khác": displayOtherExpenses,
+          "Doanh thu net": netRevenue,
+          
           "Đã trả": finalPaid,
           "Còn nợ": debt,
           "Nhân viên tạo đơn": user?.fullName || b.createdBy,
+          
           // Raw object for table color logic and sorting
           _debtRaw: debt,
           _status: b.status,
           _checkOutDate: new Date(b.checkOutDate),
           _checkInDate: new Date(b.checkInDate),
           _createdAt: new Date(b.createdAt),
-          _tags: bookingTags // For UI Rendering
+          _tags: bookingTags 
       };
   };
 
@@ -272,7 +301,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return data;
   }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
-  const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Tổng bill"], 0);
+  // Total Revenue based on NET REVENUE (Real income)
+  const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Doanh thu net"], 0);
 
   // --- 2. Booking Report (Báo cáo đặt phòng phát sinh) ---
   // Criteria: All existing bookings AND createdAt is within range
@@ -354,7 +384,10 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                             TG Trả phòng <SortIcon colKey="TG Trả phòng"/>
                         </th>
 
-                        <th className="p-4 border-b text-right text-green-700 bg-green-50">Tổng bill</th>
+                        <th className="p-4 border-b text-right text-gray-700 bg-gray-50">Tổng bill</th>
+                        <th className="p-4 border-b text-right text-green-600 bg-gray-50">Thu khác</th>
+                        <th className="p-4 border-b text-right text-red-600 bg-gray-50">Chi khác</th>
+                        <th className="p-4 border-b text-right text-purple-700 bg-purple-50 font-extrabold">Doanh thu Net</th>
                         <th className="p-4 border-b text-right text-blue-700 bg-blue-50">Đã trả</th>
                         <th className="p-4 border-b text-right text-red-700 bg-red-50">Còn nợ</th>
                         <th className="p-4 border-b">Nhân viên</th>
@@ -384,9 +417,19 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                             <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian nhận phòng"]}</td>
                             <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian trả phòng"]}</td>
                             
-                            <td className="p-4 text-right font-bold text-green-600 bg-green-50/30">
+                            <td className="p-4 text-right font-bold text-gray-700 bg-gray-50/50">
                                 {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
                             </td>
+                            <td className="p-4 text-right font-medium text-green-600 bg-gray-50/50">
+                                {row["Thu khác"] > 0 ? `+${row["Thu khác"].toLocaleString()}` : '-'}
+                            </td>
+                            <td className="p-4 text-right font-medium text-red-500 bg-gray-50/50">
+                                {row["Chi khác"] > 0 ? `-${row["Chi khác"].toLocaleString()}` : '-'}
+                            </td>
+                            <td className="p-4 text-right font-extrabold text-purple-700 bg-purple-50/30 border-l border-r border-purple-100">
+                                {row["Doanh thu net"] > 0 ? row["Doanh thu net"].toLocaleString() : '-'}
+                            </td>
+
                             <td className="p-4 text-right font-semibold text-blue-600 bg-blue-50/30">
                                 {row["Đã trả"] > 0 ? row["Đã trả"].toLocaleString() : '-'}
                             </td>
@@ -398,7 +441,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                         </tr>
                     ))}
                     {data.length === 0 && (
-                        <tr><td colSpan={13} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
+                        <tr><td colSpan={16} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
                     )}
                 </tbody>
             </table>
@@ -497,9 +540,9 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
               </div>
               
               <div className="flex flex-col-reverse md:flex-row items-stretch md:items-center gap-2 w-full md:w-auto">
-                  <div className="px-4 py-2 bg-green-50 rounded-lg border border-green-100 text-right flex justify-between md:block items-center">
-                      <span className="text-xs text-green-600 font-bold uppercase block">Tổng doanh thu</span>
-                      <span className="text-lg md:text-xl font-bold text-green-700">{totalRevenue.toLocaleString()} VNĐ</span>
+                  <div className="px-4 py-2 bg-purple-50 rounded-lg border border-purple-100 text-right flex justify-between md:block items-center">
+                      <span className="text-xs text-purple-600 font-bold uppercase block">Tổng doanh thu thực (Net)</span>
+                      <span className="text-lg md:text-xl font-bold text-purple-700">{totalRevenue.toLocaleString()} VNĐ</span>
                   </div>
                   {canExport && (
                       <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto">

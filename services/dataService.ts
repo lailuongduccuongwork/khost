@@ -1,6 +1,6 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan, PERMISSIONS } from '../types';
-import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS } from './mockData';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan, PERMISSIONS, TransactionCategory } from '../types';
+import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS, INITIAL_TRANSACTION_CATEGORIES } from './mockData';
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, get, child, query, limitToLast, update, remove, orderByChild, equalTo } from "firebase/database";
 
@@ -38,6 +38,7 @@ const CACHE = {
     users: [] as User[],
     history: [] as HistoryLog[],
     tags: [] as Tag[],
+    transactionCategories: [] as TransactionCategory[], // Added
     
     // System Data (For Super Admin)
     tenants: [] as Tenant[],
@@ -113,6 +114,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         onValue(getTenantRef('properties'), (snap) => { CACHE.properties = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('roomTypes'), (snap) => { CACHE.roomTypes = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('tags'), (snap) => { CACHE.tags = snapshotToArray(snap); onDataChange(); });
+        onValue(getTenantRef('transactionCategories'), (snap) => { CACHE.transactionCategories = snapshotToArray(snap); onDataChange(); }); // Added Listener
         onValue(getTenantRef('rooms'), (snap) => { CACHE.rooms = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('bookings'), (snap) => { CACHE.bookings = snapshotToArray(snap); onDataChange(); });
         onValue(getTenantRef('customers'), (snap) => { CACHE.customers = snapshotToArray(snap); onDataChange(); });
@@ -214,6 +216,7 @@ const _seedTenantData = (tenantId: string) => {
     set(getTenantRef('bookings'), withTenant(INITIAL_BOOKINGS));
     set(getTenantRef('customers'), withTenant(INITIAL_CUSTOMERS));
     set(getTenantRef('tags'), withTenant(INITIAL_TAGS));
+    set(getTenantRef('transactionCategories'), withTenant(INITIAL_TRANSACTION_CATEGORIES)); // Seed categories
     
     // For users: We do NOT seed INITIAL_USERS here for new tenants because
     // the Super Admin has already created a specific admin user.
@@ -233,6 +236,7 @@ const _loadFromMockOrStorage = () => {
     CACHE.users = load('users', INITIAL_USERS);
     CACHE.history = load('history', []);
     CACHE.tags = load('tags', INITIAL_TAGS);
+    CACHE.transactionCategories = load('transactionCategories', INITIAL_TRANSACTION_CATEGORIES); // Load categories
     CACHE.tenants = INITIAL_TENANTS;
     CACHE.plans = INITIAL_PLANS;
     CACHE.systemUsers = INITIAL_USERS;
@@ -476,6 +480,14 @@ export const DataService = {
       _saveNode('tags', scoped); 
   },
 
+  // NEW: Transaction Categories Methods
+  getTransactionCategories: (): TransactionCategory[] => CACHE.transactionCategories,
+  saveTransactionCategories: (cats: TransactionCategory[]) => { 
+      const scoped = cats.map(c => ({...c, tenantId: activeTenantId}));
+      CACHE.transactionCategories = scoped; 
+      _saveNode('transactionCategories', scoped); 
+  },
+
   getRooms: (propertyId?: string): Room[] => {
     let list = [...CACHE.rooms];
     if (propertyId) list = list.filter(r => r.propertyId === propertyId);
@@ -549,6 +561,7 @@ export const DataService = {
   },
   
   addBooking: (booking: Booking) => {
+    // extraFees is automatically included via ...booking if present in the object
     const scopedBooking = { ...booking, tenantId: activeTenantId };
     const newBookings = [...CACHE.bookings, scopedBooking as Booking];
     CACHE.bookings = newBookings;
@@ -573,6 +586,7 @@ export const DataService = {
     const index = bookings.findIndex(b => b.id === updatedBooking.id);
     if (index !== -1) {
       const oldStatus = bookings[index].status;
+      // extraFees is automatically included via ...updatedBooking
       const scopedBooking = { ...updatedBooking, tenantId: activeTenantId };
       bookings[index] = scopedBooking as Booking;
       CACHE.bookings = bookings;

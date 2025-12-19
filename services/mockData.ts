@@ -1,5 +1,5 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag, Tenant, SubscriptionPlan } from '../types';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag, Tenant, SubscriptionPlan, TransactionCategory } from '../types';
 
 // SaaS: Subscription Plans
 export const INITIAL_PLANS: SubscriptionPlan[] = [
@@ -39,6 +39,18 @@ const DEFAULT_TENANT_ID = 'tenant_demo';
 export const INITIAL_PROPERTIES: Property[] = [
   { id: 'p1', tenantId: DEFAULT_TENANT_ID, name: 'K-Host Hà Nội', address: '123 Kim Mã, Ba Đình, Hà Nội', sortOrder: 0 },
   { id: 'p2', tenantId: DEFAULT_TENANT_ID, name: 'K-Host Đà Nẵng', address: '456 Võ Văn Kiệt, Sơn Trà, Đà Nẵng', sortOrder: 1 },
+];
+
+// NEW: Initial Transaction Categories
+export const INITIAL_TRANSACTION_CATEGORIES: TransactionCategory[] = [
+  { id: 'cat_drink', tenantId: DEFAULT_TENANT_ID, name: 'Nước ngọt/Minibar', type: 'REVENUE' },
+  { id: 'cat_laundry', tenantId: DEFAULT_TENANT_ID, name: 'Giặt là', type: 'REVENUE' },
+  { id: 'cat_bike', tenantId: DEFAULT_TENANT_ID, name: 'Thuê xe máy', type: 'REVENUE' },
+  { id: 'cat_other_rev', tenantId: DEFAULT_TENANT_ID, name: 'Thu khác', type: 'REVENUE' },
+  { id: 'cat_taxi_help', tenantId: DEFAULT_TENANT_ID, name: 'Chi hộ tiền xe', type: 'EXPENSE' },
+  { id: 'cat_repair', tenantId: DEFAULT_TENANT_ID, name: 'Sửa chữa vặt', type: 'EXPENSE' },
+  { id: 'cat_commission', tenantId: DEFAULT_TENANT_ID, name: 'Hoa hồng Sale', type: 'EXPENSE' },
+  { id: 'cat_other_exp', tenantId: DEFAULT_TENANT_ID, name: 'Chi khác', type: 'EXPENSE' },
 ];
 
 export const INITIAL_TAGS: Tag[] = [
@@ -86,7 +98,8 @@ export const INITIAL_BOOKINGS: Booking[] = [
     createdAt: new Date(Date.now() - 86400000).toISOString(),
     createdBy: 'u2',
     notes: 'Khách quen, cần thêm gối',
-    tags: ['tag1']
+    tags: ['tag1'],
+    extraFees: [] // Initial empty
   },
   {
     id: 'b2',
@@ -104,7 +117,8 @@ export const INITIAL_BOOKINGS: Booking[] = [
     createdAt: new Date(Date.now() - 100000).toISOString(),
     createdBy: 'u1',
     notes: '',
-    tags: ['tag2']
+    tags: ['tag2'],
+    extraFees: []
   }
 ];
 

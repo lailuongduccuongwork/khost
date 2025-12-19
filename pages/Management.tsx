@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { User, Room, RoomType, Property, RoomStatus, Tag } from '../types';
+import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory } from '../types';
 import { DataService } from '../services/dataService';
-import { Plus, Trash2, Save, X, Tag as TagIcon, Pencil, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Trash2, Save, X, Tag as TagIcon, Pencil, RotateCcw, ArrowUp, ArrowDown, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 
 interface ManagementProps {
   users: User[];
@@ -14,7 +14,7 @@ interface ManagementProps {
 }
 
 const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, properties, tags, onRefresh }) => {
-  const [activeTab, setActiveTab] = useState<'ROOMS' | 'TYPES' | 'BRANCHES' | 'TAGS'>('ROOMS');
+  const [activeTab, setActiveTab] = useState<'ROOMS' | 'TYPES' | 'BRANCHES' | 'TAGS' | 'FINANCE'>('ROOMS');
   
   // Track which item ID is being edited. If null, we are adding new.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -24,6 +24,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
   const [newType, setNewType] = useState<Partial<RoomType>>({});
   const [newProp, setNewProp] = useState<Partial<Property>>({});
   const [newTag, setNewTag] = useState<Partial<Tag>>({ color: '#3b82f6' });
+  const [newCategory, setNewCategory] = useState<Partial<TransactionCategory>>({ type: 'REVENUE' });
+
+  // Get Finance Data (Directly from service as it is not passed via props in this step)
+  const transactionCategories = DataService.getTransactionCategories();
 
   // --- Helper to Reset Forms ---
   const resetForms = () => {
@@ -32,6 +36,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
     setNewType({});
     setNewProp({});
     setNewTag({ color: '#3b82f6' });
+    setNewCategory({ type: 'REVENUE' });
   };
 
   // --- REORDERING HELPER ---
@@ -208,16 +213,49 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
       }
   }
 
+  // --- Handlers: FINANCE (TRANSACTION CATEGORIES) ---
+  const startEditCategory = (cat: TransactionCategory) => {
+      setEditingId(cat.id);
+      setNewCategory({ ...cat });
+  };
+
+  const handleSaveCategory = () => {
+      if (!newCategory.name) return alert("Vui lòng nhập tên danh mục");
+      
+      let updatedCats = [...transactionCategories];
+      if (editingId) {
+          const idx = updatedCats.findIndex(c => c.id === editingId);
+          if (idx !== -1) updatedCats[idx] = { ...updatedCats[idx], ...newCategory } as TransactionCategory;
+      } else {
+          updatedCats.push({
+              id: `cat_${Date.now()}`,
+              name: newCategory.name,
+              type: newCategory.type || 'REVENUE'
+          });
+      }
+      DataService.saveTransactionCategories(updatedCats);
+      resetForms();
+      onRefresh();
+  };
+
+  const handleDeleteCategory = (id: string) => {
+      if(confirm("Xóa danh mục này?")) {
+          DataService.saveTransactionCategories(transactionCategories.filter(c => c.id !== id));
+          if (editingId === id) resetForms();
+          onRefresh();
+      }
+  };
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[500px] flex flex-col pb-20 md:pb-0">
       <div className="flex border-b overflow-x-auto no-scrollbar">
-         {['ROOMS', 'TYPES', 'BRANCHES', 'TAGS'].map((tab) => (
+         {['ROOMS', 'TYPES', 'BRANCHES', 'TAGS', 'FINANCE'].map((tab) => (
              <button 
                 key={tab}
                 onClick={() => { setActiveTab(tab as any); resetForms(); }}
                 className={`px-4 md:px-6 py-4 font-medium text-sm transition-colors border-b-2 whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
              >
-                 {tab === 'ROOMS' ? 'Quản lý Phòng' : tab === 'TYPES' ? 'Hạng phòng & Giá' : tab === 'TAGS' ? 'Quản lý Tag' : 'Chi nhánh'}
+                 {tab === 'ROOMS' ? 'Quản lý Phòng' : tab === 'TYPES' ? 'Hạng phòng & Giá' : tab === 'TAGS' ? 'Quản lý Tag' : tab === 'FINANCE' ? 'LOẠI THU/CHI' : 'Chi nhánh'}
              </button>
          ))}
       </div>
@@ -415,6 +453,70 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
                    </div>
                    {tags.length === 0 && <p className="text-center text-gray-400 py-10">Chưa có tag nào.</p>}
                </div>
+          )}
+
+          {/* FINANCE CATEGORIES TAB */}
+          {activeTab === 'FINANCE' && (
+              <div className="space-y-6">
+                  <div className={`flex flex-col md:flex-row gap-4 p-4 rounded-lg border items-end ${editingId ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                      <div className="flex-1 w-full">
+                          <label className="text-xs font-bold text-gray-500 uppercase">Tên khoản mục</label>
+                          <input placeholder="VD: Nước ngọt, Giặt là, Chi hộ..." className="border p-2 rounded w-full mt-1" value={newCategory.name || ''} onChange={e => setNewCategory({...newCategory, name: e.target.value})} />
+                      </div>
+                      <div className="flex-1 w-full">
+                          <label className="text-xs font-bold text-gray-500 uppercase">Loại giao dịch</label>
+                          <select className="border p-2 rounded w-full mt-1 bg-white" value={newCategory.type} onChange={e => setNewCategory({...newCategory, type: e.target.value as any})}>
+                              <option value="REVENUE">Khoản Thu (Thu thêm từ khách)</option>
+                              <option value="EXPENSE">Khoản Chi (Chi phí phát sinh)</option>
+                          </select>
+                      </div>
+                      <div className="flex gap-2 h-10 w-full md:w-auto">
+                           <button onClick={handleSaveCategory} className={`flex-1 md:flex-none px-6 text-white rounded font-bold hover:opacity-90 flex items-center justify-center gap-2 ${editingId ? 'bg-orange-600' : 'bg-orange-500'}`}>
+                               {editingId ? <Save size={18}/> : <Plus size={18}/>} 
+                               {editingId ? 'Lưu' : 'Thêm'}
+                           </button>
+                           {editingId && (
+                               <button onClick={resetForms} className="px-3 bg-gray-200 text-gray-600 rounded hover:bg-gray-300" title="Hủy sửa"><RotateCcw size={18}/></button>
+                           )}
+                      </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Revenue List */}
+                      <div>
+                          <h4 className="font-bold text-green-700 mb-3 flex items-center gap-2"><ArrowUpCircle size={18}/> Danh sách Khoản Thu</h4>
+                          <div className="space-y-2">
+                              {transactionCategories.filter(c => c.type === 'REVENUE').map(c => (
+                                  <div key={c.id} className={`flex justify-between items-center p-3 rounded-lg border bg-white shadow-sm hover:border-green-300 transition-colors ${editingId === c.id ? 'ring-2 ring-orange-400' : ''}`}>
+                                      <span className="font-bold text-gray-700">{c.name}</span>
+                                      <div className="flex gap-1">
+                                          <button onClick={() => startEditCategory(c)} className="text-blue-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-full transition-colors"><Pencil size={16}/></button>
+                                          <button onClick={() => handleDeleteCategory(c.id)} className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors"><Trash2 size={16}/></button>
+                                      </div>
+                                  </div>
+                              ))}
+                              {transactionCategories.filter(c => c.type === 'REVENUE').length === 0 && <p className="text-gray-400 text-sm italic">Chưa có mục nào.</p>}
+                          </div>
+                      </div>
+
+                      {/* Expense List */}
+                      <div>
+                          <h4 className="font-bold text-red-700 mb-3 flex items-center gap-2"><ArrowDownCircle size={18}/> Danh sách Khoản Chi</h4>
+                          <div className="space-y-2">
+                              {transactionCategories.filter(c => c.type === 'EXPENSE').map(c => (
+                                  <div key={c.id} className={`flex justify-between items-center p-3 rounded-lg border bg-white shadow-sm hover:border-red-300 transition-colors ${editingId === c.id ? 'ring-2 ring-orange-400' : ''}`}>
+                                      <span className="font-bold text-gray-700">{c.name}</span>
+                                      <div className="flex gap-1">
+                                          <button onClick={() => startEditCategory(c)} className="text-blue-400 hover:text-blue-600 p-2 hover:bg-blue-50 rounded-full transition-colors"><Pencil size={16}/></button>
+                                          <button onClick={() => handleDeleteCategory(c.id)} className="text-gray-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-full transition-colors"><Trash2 size={16}/></button>
+                                      </div>
+                                  </div>
+                              ))}
+                              {transactionCategories.filter(c => c.type === 'EXPENSE').length === 0 && <p className="text-gray-400 text-sm italic">Chưa có mục nào.</p>}
+                          </div>
+                      </div>
+                  </div>
+              </div>
           )}
       </div>
     </div>

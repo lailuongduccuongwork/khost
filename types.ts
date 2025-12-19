@@ -55,6 +55,23 @@ export interface Tag {
   color: string; // Hex code
 }
 
+// --- NEW INTERFACES FOR FINANCIALS ---
+export interface TransactionCategory {
+    id: string;
+    tenantId?: string;
+    name: string;
+    type: 'REVENUE' | 'EXPENSE'; // Thu hoặc Chi
+}
+
+export interface ExtraFee {
+    id: string;
+    categoryId: string; // Link tới TransactionCategory
+    name: string; // Lưu cứng tên tại thời điểm tạo (đề phòng danh mục bị xoá)
+    amount: number; // Số tiền
+    type: 'REVENUE' | 'EXPENSE';
+}
+// -------------------------------------
+
 export interface Property {
   id: string;
   tenantId?: string; // Multi-tenant Foreign Key
@@ -110,6 +127,9 @@ export interface Booking {
   
   totalPrice: number;
   paidAmount: number;
+  
+  // Added field for extra fees
+  extraFees?: ExtraFee[]; 
   
   createdAt: string;
   createdBy: string; // User ID
