@@ -7,10 +7,11 @@ import RoomMap from './pages/RoomMap';
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
-import SuperAdmin from './pages/SuperAdmin'; // Import new page
+import SuperAdmin from './pages/SuperAdmin'; 
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
-import { Lock, Loader2, Users } from 'lucide-react';
+import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock } from 'lucide-react';
+import { useBookingAlert } from './hooks/useBookingAlert'; // Import Hook
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -21,20 +22,20 @@ const App: React.FC = () => {
   // --- Multi-Tenant State ---
   const [activeTenantId, setActiveTenantId] = useState<string | null>(null);
   const [tenantList, setTenantList] = useState<Tenant[]>([]);
-  const [planList, setPlanList] = useState<SubscriptionPlan[]>([]); // Added state for Plans
-  const [systemUsers, setSystemUsers] = useState<User[]>([]); // Added state for System Users
+  const [planList, setPlanList] = useState<SubscriptionPlan[]>([]); 
+  const [systemUsers, setSystemUsers] = useState<User[]>([]); 
   const [isSuperAdminView, setIsSuperAdminView] = useState(false);
 
   // --- App View State ---
-  const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); // Can be 'ALL'
+  const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); 
   const [currentPage, setCurrentPage] = useState('dashboard');
   
   // --- Mobile Sidebar State ---
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // --- Data State ---
-  const [isLoading, setIsLoading] = useState(false); // Initial load done on login
-  const [dataTick, setDataTick] = useState(0); // Signal to refresh data with latest state
+  const [isLoading, setIsLoading] = useState(false); 
+  const [dataTick, setDataTick] = useState(0); 
   
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -43,6 +44,10 @@ const App: React.FC = () => {
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+
+  // --- NOTIFICATION HOOK INTEGRATION ---
+  // We pass the live bookings list to the hook
+  const { alerts, removeAlert } = useBookingAlert(bookings);
 
   // --- INITIALIZATION ---
   // Try to restore session on mount
@@ -351,7 +356,26 @@ const App: React.FC = () => {
         : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''} as Property);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 relative">
+      {/* NOTIFICATION TOAST CONTAINER */}
+      <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+          {alerts.map(alert => (
+              <div key={alert.id} className="bg-white border-l-4 border-blue-600 p-4 rounded shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
+                  <div className={`p-2 rounded-full ${alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                      {alert.type === 'CHECK_IN' ? <CheckCircle size={20} /> : <Clock size={20} />}
+                  </div>
+                  <div className="flex-1">
+                      <h4 className="font-bold text-gray-800 text-sm">{alert.title}</h4>
+                      <p className="text-xs text-gray-600 mt-1">{alert.message}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">{alert.time}</p>
+                  </div>
+                  <button onClick={() => removeAlert(alert.id)} className="text-gray-400 hover:text-gray-600">
+                      <X size={16} />
+                  </button>
+              </div>
+          ))}
+      </div>
+
       <Sidebar 
         currentPage={currentPage} 
         onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
