@@ -10,8 +10,9 @@ import Reports from './pages/Reports';
 import SuperAdmin from './pages/SuperAdmin'; 
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
-import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock } from 'lucide-react';
-import { useBookingAlert } from './hooks/useBookingAlert'; // Import Hook
+import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
+import { useBookingAlert } from './hooks/useBookingAlert'; // Import Hook Standard
+import { useDebtAlert } from './hooks/useDebtAlert'; // Import Hook Debt
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -45,9 +46,12 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
-  // --- NOTIFICATION HOOK INTEGRATION ---
-  // We pass the live bookings list to the hook
+  // --- NOTIFICATION HOOKS INTEGRATION ---
+  // 1. Standard Alerts (Check-in/Check-out)
   const { alerts, removeAlert } = useBookingAlert(bookings);
+  
+  // 2. Debt Alerts (Financial Warning)
+  const { debtAlerts, removeDebtAlert } = useDebtAlert(bookings, rooms);
 
   // --- INITIALIZATION ---
   // Try to restore session on mount
@@ -359,9 +363,31 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-50 relative">
       {/* NOTIFICATION TOAST CONTAINER */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+          {/* DEBT ALERTS (URGENT - RED) */}
+          {debtAlerts.map(alert => (
+              <div key={alert.id} className="bg-red-50 border-l-4 border-red-600 p-4 rounded shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
+                  <div className="p-2 rounded-full bg-red-100 text-red-600 animate-pulse">
+                      <Wallet size={20} />
+                  </div>
+                  <div className="flex-1">
+                      <h4 className="font-bold text-red-800 text-sm flex items-center gap-1">
+                          <AlertTriangle size={14} /> CẢNH BÁO CÔNG NỢ
+                      </h4>
+                      <p className="text-xs text-red-700 mt-1 font-semibold">
+                          Phòng {alert.roomNumber}: Còn thiếu {new Intl.NumberFormat('vi-VN').format(alert.debtAmount)}đ
+                      </p>
+                      <p className="text-[10px] text-red-500 mt-1">{alert.guestName} - {alert.time}</p>
+                  </div>
+                  <button onClick={() => removeDebtAlert(alert.id)} className="text-red-400 hover:text-red-600">
+                      <X size={16} />
+                  </button>
+              </div>
+          ))}
+
+          {/* STANDARD ALERTS (NORMAL - BLUE/GREEN) */}
           {alerts.map(alert => (
-              <div key={alert.id} className="bg-white border-l-4 border-blue-600 p-4 rounded shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
-                  <div className={`p-2 rounded-full ${alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+              <div key={alert.id} className="bg-white border-l-4 border-blue-600 p-4 rounded shadow-xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
+                  <div className={`p-2 rounded-full ${alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
                       {alert.type === 'CHECK_IN' ? <CheckCircle size={20} /> : <Clock size={20} />}
                   </div>
                   <div className="flex-1">
