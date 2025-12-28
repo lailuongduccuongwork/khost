@@ -91,8 +91,20 @@ export const useDebtAlert = (bookings: Booking[], rooms: Room[]) => {
               // 1. Lọc Trạng thái: Chỉ đơn đang hoạt động hoặc vừa xong
               if (![BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN, BookingStatus.CHECKED_OUT].includes(b.status)) return;
               
-              // 2. Lọc Công nợ: Chỉ xét đơn có tiền thiếu > 0
-              const debt = b.totalPrice - b.paidAmount;
+              // 2. TÍNH TOÁN CÔNG NỢ THEO LOGIC MỚI
+              // Database lưu b.totalPrice = (Tiền phòng + Phụ Thu - Chi Phí)
+              // Khách phải trả (Customer Bill) = (Tiền phòng + Phụ Thu)
+              // => Customer Bill = b.totalPrice + Chi Phí
+              
+              const extraFees = b.extraFees || [];
+              const totalExpenses = extraFees
+                  .filter(f => f.type === 'EXPENSE')
+                  .reduce((sum, f) => sum + f.amount, 0);
+
+              const customerMustPay = b.totalPrice + totalExpenses;
+              const debt = customerMustPay - b.paidAmount;
+
+              // Chỉ báo nếu còn nợ dương
               if (debt <= 0) return; 
 
               const checkOutTime = new Date(b.checkOutDate).getTime();
