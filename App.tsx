@@ -50,7 +50,7 @@ const App: React.FC = () => {
   // 1. Standard Alerts (Check-in/Check-out)
   const { alerts, removeAlert } = useBookingAlert(bookings);
   
-  // 2. Debt Alerts (Financial Warning)
+  // 2. Debt Alerts (Financial Warning) - Pass rooms to get room numbers
   const { debtAlerts, removeDebtAlert } = useDebtAlert(bookings, rooms);
 
   // --- INITIALIZATION ---
@@ -363,7 +363,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-50 relative">
       {/* NOTIFICATION TOAST CONTAINER */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
-          {/* DEBT ALERTS (URGENT - RED) */}
+          {/* 1. DEBT ALERTS (URGENT - RED) */}
           {debtAlerts.map(alert => (
               <div key={alert.id} className="bg-red-50 border-l-4 border-red-600 p-4 rounded shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
                   <div className="p-2 rounded-full bg-red-100 text-red-600 animate-pulse">
@@ -384,7 +384,7 @@ const App: React.FC = () => {
               </div>
           ))}
 
-          {/* STANDARD ALERTS (NORMAL - BLUE/GREEN) */}
+          {/* 2. STANDARD ALERTS (NORMAL - BLUE/GREEN) */}
           {alerts.map(alert => (
               <div key={alert.id} className="bg-white border-l-4 border-blue-600 p-4 rounded shadow-xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
                   <div className={`p-2 rounded-full ${alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>

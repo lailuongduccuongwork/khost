@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { Booking, BookingStatus } from '../types';
+import { Booking, BookingStatus, Room } from '../types';
 
 export interface DebtAlertItem {
   id: string;
@@ -12,52 +12,57 @@ export interface DebtAlertItem {
   time: string;
 }
 
-// Âm thanh cảnh báo (Tiếng còi/beep gắt hơn tiếng Ding thông thường)
+// Âm thanh cảnh báo (Tiếng Alert/Warning gắt hơn)
 const DEBT_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/995/995-preview.mp3';
 
-export const useDebtAlert = (bookings: Booking[], rooms: any[]) => {
+export const useDebtAlert = (bookings: Booking[], rooms: Room[]) => {
   const [debtAlerts, setDebtAlerts] = useState<DebtAlertItem[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
+    // Xin quyền Notification nếu chưa có
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
+    // Init Audio
     audioRef.current = new Audio(DEBT_SOUND_URL);
   }, []);
 
+  // Helper: Format tiền
   const formatMoney = (amount: number) => new Intl.NumberFormat('vi-VN').format(amount);
 
+  // Helper: Lấy số phòng từ ID
   const getRoomNumber = (roomId: string) => {
       const r = rooms.find(room => room.id === roomId);
-      return r ? r.number : roomId;
+      return r ? r.number : 'Phòng ?';
   };
 
+  // Hàm kích hoạt thông báo
   const triggerDebtAlert = (booking: Booking, debt: number, type: 'PRE_CHECKOUT' | 'AT_CHECKOUT' | 'DAILY_REMINDER', storageKey: string) => {
-      // 1. Double check storage để chống spam (dù đã check ở ngoài nhưng check lại cho chắc chắn)
+      // Check lại storage lần cuối để chắc chắn không spam
       if (localStorage.getItem(storageKey)) return;
 
       const roomNumber = getRoomNumber(booking.roomId);
       const title = "⚠️ CẢNH BÁO CÔNG NỢ";
       const message = `${booking.guestName} - Phòng ${roomNumber} còn thiếu ${formatMoney(debt)}đ. Vui lòng thu ngay!`;
 
-      // 2. Play Sound (Cố gắng phát)
+      // 1. Play Sound (Cố gắng phát âm thanh cảnh báo)
       if (audioRef.current) {
           audioRef.current.currentTime = 0;
-          audioRef.current.play().catch(e => console.warn("Audio blocked:", e));
+          audioRef.current.play().catch(e => console.warn("Audio play blocked:", e));
       }
 
-      // 3. Browser Notification
+      // 2. Browser Notification
       if ('Notification' in window && Notification.permission === 'granted') {
           new Notification(title, { 
               body: message, 
               icon: '/icon.png',
               tag: storageKey, // Tag giúp trình duyệt không hiện trùng lặp
-              requireInteraction: true // Bắt buộc người dùng phải tắt mới ẩn (trên PC)
+              requireInteraction: true // Bắt buộc người dùng tương tác mới tắt (trên Desktop)
           });
       }
 
-      // 4. In-App Toast
+      // 3. In-App Toast State
       setDebtAlerts(prev => [{
           id: storageKey,
           bookingId: booking.id,
@@ -68,7 +73,7 @@ export const useDebtAlert = (bookings: Booking[], rooms: any[]) => {
           time: new Date().toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'})
       }, ...prev]);
 
-      // 5. Lưu Storage đánh dấu đã báo
+      // 4. Lưu Storage đánh dấu đã báo
       localStorage.setItem(storageKey, new Date().toISOString());
   };
 
@@ -79,21 +84,16 @@ export const useDebtAlert = (bookings: Booking[], rooms: any[]) => {
           const currentHour = now.getHours();
           const currentMin = now.getMinutes();
           
-          // Lấy ngày hiện tại YYYY-MM-DD
+          // Lấy ngày hiện tại YYYY-MM-DD để làm key cho báo cáo hàng ngày
           const todayStr = now.toISOString().split('T')[0];
 
           bookings.forEach(b => {
-              // A. LỌC ĐƠN
-              // Chỉ xét đơn đang hoạt động hoặc đã xong nhưng chưa thanh toán đủ
+              // 1. Lọc Trạng thái: Chỉ đơn đang hoạt động hoặc vừa xong
               if (![BookingStatus.CONFIRMED, BookingStatus.CHECKED_IN, BookingStatus.CHECKED_OUT].includes(b.status)) return;
               
-              // Tính nợ (Tổng cần thu - Đã thu)
-              // Lưu ý: Logic này giả định b.totalPrice là tổng tiền khách phải trả (đã bao gồm phụ thu nếu có trong logic save)
-              // Nếu bạn muốn chính xác tuyệt đối theo UI: cần + thêm extraRevenue - extraExpense. 
-              // Tuy nhiên ở mức Alert, dùng totalPrice - paidAmount là đủ an toàn (thà báo thừa hơn báo thiếu).
+              // 2. Lọc Công nợ: Chỉ xét đơn có tiền thiếu > 0
               const debt = b.totalPrice - b.paidAmount;
-              
-              if (debt <= 0) return; // Không nợ thì bỏ qua
+              if (debt <= 0) return; 
 
               const checkOutTime = new Date(b.checkOutDate).getTime();
               const diffMin = (checkOutTime - nowTime) / 60000; // Phút
@@ -115,12 +115,11 @@ export const useDebtAlert = (bookings: Booking[], rooms: any[]) => {
               }
 
               // --- TRIGGER C: Định kỳ hàng ngày (15:00 và 21:00) ---
-              // Dung sai +/- 1 phút để đảm bảo setInterval bắt được
-              if (currentMin === 0 || currentMin === 1) {
+              // Dung sai +/- 1 phút (phút 0 hoặc phút 1) để đảm bảo setInterval bắt được
+              if (currentMin <= 1) {
                   if (currentHour === 15 || currentHour === 21) {
                       // Key format: debt_alert_{id}_daily_{hour}_{date}
-                      // Ví dụ: debt_alert_b1_daily_15_2023-10-25
-                      // Đảm bảo mỗi khung giờ trong ngày chỉ báo 1 lần
+                      // Đảm bảo mỗi khung giờ trong ngày chỉ báo 1 lần duy nhất
                       const key = `debt_alert_${b.id}_daily_${currentHour}_${todayStr}`;
                       
                       if (!localStorage.getItem(key)) {
