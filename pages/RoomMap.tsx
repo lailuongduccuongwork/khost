@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2 } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2 } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -13,10 +13,11 @@ interface RoomMapProps {
   bookings: Booking[];
   customers: Customer[];
   tags: Tag[];
+  properties: Property[]; // NEW: Require properties list for sorting
   onUpdateStatus: (roomId: string, status: RoomStatus) => void;
   onRefresh: () => void;
   currentProperty: Property;
-  currentUser: User; // Use full User object for permissions
+  currentUser: User; 
 }
 
 type ViewMode = 'DAY' | 'WEEK' | 'MONTH';
@@ -109,7 +110,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, onUpdateStatus, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, properties, onUpdateStatus, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -139,8 +140,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const canEdit = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
 
-  // Get latest properties for receipt printing
-  const properties = DataService.getProperties();
   const allUsers = DataService.getUsers();
 
   const [filters, setFilters] = useState({
@@ -242,15 +241,36 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   }, [bookingRows, bookingMeta.isManualPrice]);
 
 
-  // --- Filter Logic ---
-  const filteredRooms = useMemo(() => {
-    // rooms are ALREADY filtered by App.tsx based on Global Property Selector (Single or ALL)
-    return rooms.filter(r => {
+  // --- Filter & Sort Logic ---
+  const sortedRooms = useMemo(() => {
+    // 1. Filter
+    const filtered = rooms.filter(r => {
         if (filters.typeId !== 'ALL' && r.typeId !== filters.typeId) return false;
         if (filters.roomId !== 'ALL' && r.id !== filters.roomId) return false;
         return true;
     });
-  }, [rooms, filters]);
+
+    // 2. Sort Logic: Property Order -> RoomType Order -> Room Order
+    return filtered.sort((a, b) => {
+        const propA = properties.find(p => p.id === a.propertyId);
+        const propB = properties.find(p => p.id === b.propertyId);
+        const typeA = roomTypes.find(t => t.id === a.typeId);
+        const typeB = roomTypes.find(t => t.id === b.typeId);
+
+        // Level 1: Property Order
+        const pOrderA = propA?.sortOrder ?? 9999;
+        const pOrderB = propB?.sortOrder ?? 9999;
+        if (pOrderA !== pOrderB) return pOrderA - pOrderB;
+
+        // Level 2: Room Type Order
+        const tOrderA = typeA?.sortOrder ?? 9999;
+        const tOrderB = typeB?.sortOrder ?? 9999;
+        if (tOrderA !== tOrderB) return tOrderA - tOrderB;
+
+        // Level 3: Room Order
+        return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+    });
+  }, [rooms, filters, properties, roomTypes]);
 
   // Calculate View Range
   const { viewStart, viewEnd } = useMemo(() => {
@@ -913,18 +933,27 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       <ChevronLeft size={18}/>
                    </button>
                    
-                   <div className="relative flex-1 md:flex-none group">
-                       <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 group-hover:border-blue-400 rounded-xl shadow-sm group-hover:bg-blue-50 transition-all cursor-pointer min-w-[180px] md:min-w-[220px]">
-                           <Calendar size={18} className="text-gray-500 group-hover:text-blue-500 transition-colors" />
-                           <span className="text-xs md:text-sm font-bold text-gray-700 group-hover:text-blue-700 transition-colors capitalize truncate">
+                   <div className="flex-1 md:flex-none group">
+                       <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 group-hover:border-blue-400 rounded-xl shadow-sm group-hover:bg-blue-50 transition-all min-w-[180px] md:min-w-[220px]">
+                           <span className="text-xs md:text-sm font-bold text-gray-700 group-hover:text-blue-700 transition-colors capitalize truncate cursor-default">
                               {dateRangeLabel}
                            </span>
+                           
+                           {/* Icon Wrapper with Input Overlay */}
+                           <div className="relative cursor-pointer p-1 -m-1 rounded-full hover:bg-blue-100 transition-colors">
+                               <Calendar size={18} className="text-gray-500 group-hover:text-blue-500 transition-colors" />
+                               <input 
+                                  type={timelineMode === 'MONTH' ? "month" : "date"}
+                                  className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                                  onChange={handleDateInput}
+                                  onClick={(e) => {
+                                      // Force open picker on click if supported, for consistent UX
+                                      // Cast to any to avoid TS error if showPicker is missing in types
+                                      try { (e.currentTarget as any).showPicker(); e.preventDefault(); } catch(e) {}
+                                  }}
+                               />
+                           </div>
                        </div>
-                       <input 
-                          type={timelineMode === 'MONTH' ? "month" : "date"}
-                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                          onChange={handleDateInput}
-                       />
                    </div>
 
                    <button 
@@ -978,7 +1007,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                              })}
                          </div>
                      </div>
-                     {filteredRooms.map(room => {
+                     {sortedRooms.map((room, index) => {
+                         const prevRoom = sortedRooms[index - 1];
+                         const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
+                         const propName = properties.find(p => p.id === room.propertyId)?.name;
+
                          // Determine Status Colors for Left Column
                          let statusBg = 'bg-white';
                          let statusIcon = null;
@@ -1007,73 +1040,82 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                          }
 
                          return (
-                             <div key={room.id} className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
-                                 {/* LEFT COLUMN - ROOM NAME & STATUS */}
-                                 <div 
-                                    onClick={(e) => { 
-                                        e.preventDefault();
-                                        e.stopPropagation(); 
-                                        handleRoomNameClick(room); 
-                                    }}
-                                    className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all cursor-pointer hover:brightness-95 select-none relative group ${statusBg} ${statusBorder}`} 
-                                    title={tooltip}
-                                 >
-                                     {/* Hover Hint Icon */}
-                                     {room.status !== RoomStatus.OCCUPIED && (
-                                         <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 bg-white/50 rounded-full p-0.5">
-                                            <Edit2 size={10} />
-                                         </div>
-                                     )}
-
-                                     <div className="flex items-center gap-1.5">
-                                        <div className="font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
-                                        {statusIcon}
+                             <React.Fragment key={room.id}>
+                                 {/* SEPARATOR ROW IF NEW BRANCH */}
+                                 {isNewBranch && (
+                                     <div className="sticky left-0 z-30 w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
+                                         <Building2 size={14} className="text-gray-500"/> {propName}
                                      </div>
-                                     <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
-                                     {room.status === RoomStatus.VACANT_DIRTY && <span className="text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
-                                 </div>
-                                 
-                                 {/* RIGHT COLUMN - TIMELINE GRID */}
-                                 <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
-                                     {timeSlots.map((slot) => renderGridCell(room, slot))}
-                                     {filteredBookings.filter(b => b.roomId === room.id).map(b => {
-                                            const bStart = new Date(b.checkInDate);
-                                            const bEnd = new Date(b.checkOutDate);
-                                            const viewStart = timeSlots[0];
-                                            const viewEnd = timelineMode === 'DAY' 
-                                                ? addHours(viewStart, 24) 
-                                                : addDays(viewStart, gridColumns);
+                                 )}
 
-                                            if (bEnd <= viewStart || bStart >= viewEnd) return null;
-                                            const totalDuration = viewEnd.getTime() - viewStart.getTime();
-                                            const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
-                                            const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
-                                            const left = (offset / totalDuration) * 100;
-                                            const width = (duration / totalDuration) * 100;
-                                            const bookingTags = tags.filter(t => b.tags?.includes(t.id));
-                                            const isGroup = !!b.groupId;
+                                 <div className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
+                                     {/* LEFT COLUMN - ROOM NAME & STATUS */}
+                                     <div 
+                                        onClick={(e) => { 
+                                            e.preventDefault();
+                                            e.stopPropagation(); 
+                                            handleRoomNameClick(room); 
+                                        }}
+                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all cursor-pointer hover:brightness-95 select-none relative group ${statusBg} ${statusBorder}`} 
+                                        title={tooltip}
+                                     >
+                                         {/* Hover Hint Icon */}
+                                         {room.status !== RoomStatus.OCCUPIED && (
+                                             <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 bg-white/50 rounded-full p-0.5">
+                                                <Edit2 size={10} />
+                                             </div>
+                                         )}
 
-                                            return (
-                                                <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
-                                                    <div className="absolute top-0 right-0 flex gap-0.5 z-20">
-                                                        {isGroup && (
-                                                            <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>
-                                                        )}
-                                                        {b.notes && (
-                                                            <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>
-                                                        )}
+                                         <div className="flex items-center gap-1.5">
+                                            <div className="font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
+                                            {statusIcon}
+                                         </div>
+                                         <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
+                                         {room.status === RoomStatus.VACANT_DIRTY && <span className="text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
+                                     </div>
+                                     
+                                     {/* RIGHT COLUMN - TIMELINE GRID */}
+                                     <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
+                                         {timeSlots.map((slot) => renderGridCell(room, slot))}
+                                         {filteredBookings.filter(b => b.roomId === room.id).map(b => {
+                                                const bStart = new Date(b.checkInDate);
+                                                const bEnd = new Date(b.checkOutDate);
+                                                const viewStart = timeSlots[0];
+                                                const viewEnd = timelineMode === 'DAY' 
+                                                    ? addHours(viewStart, 24) 
+                                                    : addDays(viewStart, gridColumns);
+
+                                                if (bEnd <= viewStart || bStart >= viewEnd) return null;
+                                                const totalDuration = viewEnd.getTime() - viewStart.getTime();
+                                                const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
+                                                const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
+                                                const left = (offset / totalDuration) * 100;
+                                                const width = (duration / totalDuration) * 100;
+                                                const bookingTags = tags.filter(t => b.tags?.includes(t.id));
+                                                const isGroup = !!b.groupId;
+
+                                                return (
+                                                    <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
+                                                        <div className="absolute top-0 right-0 flex gap-0.5 z-20">
+                                                            {isGroup && (
+                                                                <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>
+                                                            )}
+                                                            {b.notes && (
+                                                                <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>
+                                                            )}
+                                                        </div>
+                                                        <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
+                                                        <div className="flex gap-0.5 mt-1">
+                                                            {bookingTags.map(t => (
+                                                                <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                    <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
-                                                    <div className="flex gap-0.5 mt-1">
-                                                        {bookingTags.map(t => (
-                                                            <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
+                                                )
+                                            })}
+                                     </div>
                                  </div>
-                             </div>
+                             </React.Fragment>
                          )
                      })}
                  </div>

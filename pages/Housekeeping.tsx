@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Room, Booking, BookingStatus, RoomStatus, Property, RoomType } from '../types';
 import { DataService } from '../services/dataService';
-import { Check, Clock, LogOut, LogIn, Zap, User, RotateCcw, AlertTriangle, Brush } from 'lucide-react';
+import { Check, Clock, LogOut, LogIn, Zap, User, RotateCcw, AlertTriangle, Brush, Moon } from 'lucide-react';
 
 interface HousekeepingProps {
   rooms: Room[];
@@ -35,9 +35,17 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  // --- NIGHT SHIFT LOGIC (22:00 - 07:00) ---
+  const isNightTime = (dateStr: string) => {
+      const d = new Date(dateStr);
+      const h = d.getHours();
+      return h >= 22 || h <= 7;
+  };
+
   // --- LOGIC XỬ LÝ DỮ LIỆU ---
   const roomList = useMemo(() => {
     const nowMs = currentTime.getTime();
+    const oneDayMs = 24 * 60 * 60 * 1000;
 
     const processed = rooms.map(room => {
         // A. LOGIC CHO PHÒNG TRỐNG (Tìm khách vừa đi & sắp đến)
@@ -63,8 +71,9 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
         // B. LOGIC CHO PHÒNG CÓ KHÁCH (OCCUPIED) - Tìm đơn đang Check-in
         let occupiedDetails = null;
+        let activeBooking = null; // Store for Night check
         if (room.status === RoomStatus.OCCUPIED) {
-            const activeBooking = bookings.find(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_IN);
+            activeBooking = bookings.find(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_IN);
             if (activeBooking) {
                 const checkOutMs = new Date(activeBooking.checkOutDate).getTime();
                 const minutesLeft = Math.floor((checkOutMs - nowMs) / 60000);
@@ -76,13 +85,43 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             }
         }
 
+        // C. LOGIC CA ĐÊM (NIGHT SHIFT)
+        // Kiểm tra sự kiện xảy ra trong 24h tới VÀ rơi vào khung giờ đêm
+        let nightEvent: { type: 'IN' | 'OUT', time: string, displayTime: string } | null = null;
+
+        // 1. Check Incoming Night (Khách đến đêm nay/sáng mai)
+        if (nextBooking) {
+            const t = new Date(nextBooking.checkInDate).getTime();
+            if (t - nowMs < oneDayMs && isNightTime(nextBooking.checkInDate)) {
+                nightEvent = { 
+                    type: 'IN', 
+                    time: nextBooking.checkInDate,
+                    displayTime: formatFullDateTime(nextBooking.checkInDate)
+                };
+            }
+        }
+
+        // 2. Check Outgoing Night (Khách đi đêm nay/sáng mai)
+        if (activeBooking) {
+            const t = new Date(activeBooking.checkOutDate).getTime();
+            // Chỉ báo nếu chưa quá hạn quá lâu (trong vòng 1 tiếng trước) hoặc tương lai
+            if (t - nowMs > -3600000 && t - nowMs < oneDayMs && isNightTime(activeBooking.checkOutDate)) {
+                nightEvent = { 
+                    type: 'OUT', 
+                    time: activeBooking.checkOutDate,
+                    displayTime: formatFullDateTime(activeBooking.checkOutDate)
+                };
+            }
+        }
+
         return {
             room,
             lastOut: lastBooking ? lastBooking.checkOutDate : null,
             nextIn: nextBooking ? nextBooking.checkInDate : null,
             isUrgent,
             warningText,
-            occupiedDetails // Thông tin chi tiết nếu đang có khách
+            occupiedDetails,
+            nightEvent // New Field
         };
     });
 
@@ -103,6 +142,9 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
     });
 
   }, [rooms, bookings, currentTime]);
+
+  // Lọc danh sách phòng có sự kiện đêm để hiển thị Banner
+  const nightShiftRooms = roomList.filter(r => r.nightEvent !== null);
 
   // --- ACTIONS ---
   const handleUpdateStatus = (room: Room, newStatus: RoomStatus) => {
@@ -131,9 +173,31 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         </div>
       </div>
 
+      {/* BANNER CA ĐÊM (Night Shift Warning) */}
+      {nightShiftRooms.length > 0 && (
+          <div className="bg-indigo-900 text-white p-4 shadow-md animate-fade-in">
+              <div className="flex items-center gap-2 mb-2 border-b border-indigo-700 pb-2">
+                  <Moon className="text-yellow-400 fill-current" size={20} />
+                  <h3 className="font-bold text-sm md:text-base uppercase tracking-wider">Lưu ý Ca Đêm (22h - 7h)</h3>
+              </div>
+              <div className="space-y-1.5">
+                  {nightShiftRooms.map(({ room, nightEvent }) => (
+                      <div key={room.id} className="flex items-start gap-2 text-xs md:text-sm font-medium bg-indigo-800/50 p-1.5 rounded">
+                          <span className="font-bold text-yellow-300 min-w-[40px]">{room.number}</span>
+                          <span className="text-indigo-200">-</span>
+                          <span className={nightEvent?.type === 'IN' ? 'text-green-300' : 'text-red-300'}>
+                              KHÁCH {nightEvent?.type === 'IN' ? 'VÀO' : 'RA'}
+                          </span>
+                          <span className="text-white">lúc {nightEvent?.displayTime}</span>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )}
+
       {/* DANH SÁCH THẺ */}
       <div className="p-3 space-y-3">
-        {roomList.map(({ room, lastOut, nextIn, isUrgent, warningText, occupiedDetails }) => {
+        {roomList.map(({ room, lastOut, nextIn, isUrgent, warningText, occupiedDetails, nightEvent }) => {
             const typeName = roomTypes.find(t => t.id === room.typeId)?.name || '';
             
             // --- CẤU HÌNH GIAO DIỆN THEO TRẠNG THÁI ---
@@ -284,6 +348,16 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     key={room.id} 
                     className={`flex h-32 rounded-xl shadow-sm overflow-hidden border-2 relative transition-transform ${cardStyle}`}
                 >
+                    {/* Badge CA ĐÊM */}
+                    {nightEvent && (
+                        <div className="absolute top-0 right-[30%] bg-indigo-600 text-white px-2 py-0.5 rounded-bl-lg z-10 flex items-center gap-1 shadow-sm border-b border-l border-indigo-700">
+                            <Moon size={10} className="fill-current text-yellow-300" />
+                            <span className="text-[9px] font-bold uppercase tracking-wide">
+                                {nightEvent.type === 'IN' ? 'Vào đêm' : 'Ra đêm'}
+                            </span>
+                        </div>
+                    )}
+
                     {/* CỘT TRÁI (30%): Số phòng */}
                     <div className={`w-[30%] flex flex-col items-center justify-center border-r ${leftColStyle}`}>
                         <span className="text-3xl font-black tracking-tighter">{room.number}</span>

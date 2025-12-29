@@ -481,6 +481,7 @@ const App: React.FC = () => {
                             bookings={bookings} 
                             customers={customers}
                             tags={tags}
+                            properties={properties} // Pass properties explicitly
                             onUpdateStatus={handleUpdateRoomStatus}
                             onRefresh={manualRefresh}
                             currentProperty={currentPropertyObj}
