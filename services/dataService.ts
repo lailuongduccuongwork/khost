@@ -376,9 +376,12 @@ const _deleteBooking = (bookingId: string, staffId: string): boolean => {
         
         if (index !== -1) {
             const bookingToDelete = bookings[index];
-            if (bookingToDelete.status === BookingStatus.CHECKED_IN) {
+            
+            // LOGIC: Xóa đơn -> Trả phòng về Sạch (VACANT_CLEAN)
+            if (bookingToDelete.status === BookingStatus.CHECKED_IN || bookingToDelete.status === BookingStatus.CONFIRMED) {
                 _updateRoomStatus(bookingToDelete.roomId, RoomStatus.VACANT_CLEAN);
             }
+            
             const deletedSnapshot = { ...bookingToDelete, status: BookingStatus.DELETED };
             _logAction('DELETE', deletedSnapshot, `Xóa đơn ${bookingId} khỏi hệ thống`, staffId);
             
@@ -595,26 +598,39 @@ export const DataService = {
       let desc = `Cập nhật thông tin đơn ${updatedBooking.id}`;
       let roomUpdated = false;
 
+      // --- LOGIC CẬP NHẬT TRẠNG THÁI PHÒNG (Strict Mode) ---
       if (updatedBooking.status !== oldStatus) {
         const rIdx = CACHE.rooms.findIndex(r => r.id === updatedBooking.roomId);
-        
-        if (updatedBooking.status === BookingStatus.CHECKED_IN) {
-           if(rIdx!==-1) { CACHE.rooms[rIdx].status = RoomStatus.OCCUPIED; roomUpdated = true; }
-           actionType = 'CHECK_IN';
-           desc = `Check-in đơn ${updatedBooking.id}`;
-        } else if (updatedBooking.status === BookingStatus.CHECKED_OUT) {
-           if(rIdx!==-1) { CACHE.rooms[rIdx].status = RoomStatus.VACANT_DIRTY; roomUpdated = true; }
-           actionType = 'CHECK_OUT';
-           desc = `Check-out đơn ${updatedBooking.id}`;
-        } else if (updatedBooking.status === BookingStatus.CANCELLED) {
-           if(rIdx!==-1) { CACHE.rooms[rIdx].status = RoomStatus.VACANT_CLEAN; roomUpdated = true; }
-           actionType = 'CANCEL';
-           desc = `Hủy đơn ${updatedBooking.id}`;
+
+        if (rIdx !== -1) {
+            // 1. CHECK_IN -> OCCUPIED
+            if (updatedBooking.status === BookingStatus.CHECKED_IN) {
+                CACHE.rooms[rIdx].status = RoomStatus.OCCUPIED;
+                roomUpdated = true;
+                actionType = 'CHECK_IN';
+                desc = `Check-in đơn ${updatedBooking.id}`;
+            }
+            // 2. CHECK_OUT -> VACANT_DIRTY
+            else if (updatedBooking.status === BookingStatus.CHECKED_OUT) {
+                CACHE.rooms[rIdx].status = RoomStatus.VACANT_DIRTY;
+                roomUpdated = true;
+                actionType = 'CHECK_OUT';
+                desc = `Check-out đơn ${updatedBooking.id}`;
+            }
+            // 3. CANCELLED -> VACANT_CLEAN
+            else if (updatedBooking.status === BookingStatus.CANCELLED) {
+                CACHE.rooms[rIdx].status = RoomStatus.VACANT_CLEAN;
+                roomUpdated = true;
+                actionType = 'CANCEL';
+                desc = `Hủy đơn ${updatedBooking.id}`;
+            }
         }
       }
-      
+
       _saveNode('bookings', bookings);
-      if(roomUpdated) _saveNode('rooms', CACHE.rooms);
+      if(roomUpdated) {
+          _saveNode('rooms', CACHE.rooms); // Save rooms immediately
+      }
 
       setTimeout(() => {
          _logAction(actionType, scopedBooking as Booking, desc, updatedBooking.createdBy);

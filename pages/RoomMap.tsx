@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee } from '../types';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2 } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -578,6 +578,49 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       setDragStart(null); setDragEnd(null);
   };
 
+  // --- MANUAL ROOM STATUS CHANGE ---
+  const handleRoomNameClick = (room: Room) => {
+      // 1. Check Permissions Explicitly
+      // Manager, Admin, and Receptionist (if they have MANAGE_ROOMS permission, which they usually do)
+      const canManage = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS) || 
+                        currentUser.role === UserRole.ADMIN || 
+                        currentUser.role === UserRole.MANAGER ||
+                        currentUser.role === UserRole.RECEPTIONIST;
+
+      if (!canManage) {
+          alert("Bạn không có quyền thay đổi trạng thái phòng.");
+          return;
+      }
+
+      // 2. Prevent toggling Occupied rooms
+      if (room.status === RoomStatus.OCCUPIED) {
+          alert(`Phòng ${room.number} đang có khách (OCCUPIED).\nKhông thể thay đổi trạng thái thủ công.\nVui lòng vào đơn đặt phòng để Check-out.`);
+          return;
+      }
+
+      let nextStatus: RoomStatus | null = null;
+      let confirmMsg = "";
+
+      // 3. Determine Next Status
+      if (room.status === RoomStatus.VACANT_CLEAN) {
+          nextStatus = RoomStatus.VACANT_DIRTY;
+          confirmMsg = `Đánh dấu phòng ${room.number} là BẨN (Cần dọn)?`;
+      } else if (room.status === RoomStatus.VACANT_DIRTY) {
+          nextStatus = RoomStatus.VACANT_CLEAN;
+          confirmMsg = `Đánh dấu phòng ${room.number} là SẠCH (Đã dọn xong)?`;
+      } else if (room.status === RoomStatus.MAINTENANCE) {
+          nextStatus = RoomStatus.VACANT_CLEAN;
+          confirmMsg = `Phòng ${room.number} đã bảo trì xong? Chuyển sang SẠCH?`;
+      }
+
+      // 4. Execute
+      if (nextStatus && window.confirm(confirmMsg)) {
+          onUpdateStatus(room.id, nextStatus);
+          // Force UI refresh slightly to ensure state propagation
+          setTimeout(onRefresh, 50);
+      }
+  };
+
   // --- EXTRA FEES HANDLERS ---
   const handleAddFee = () => {
       if (!pendingFee.categoryId) return alert("Vui lòng chọn loại phí/dịch vụ");
@@ -861,17 +904,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                   </div>
               </div>
 
-              {/* Date Range Navigator */}
-              <div className="flex items-center bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden h-[40px] md:h-[42px] w-full md:w-auto">
+              {/* Date Range Navigator - Redesigned */}
+              <div className="flex items-center gap-2 w-full md:w-auto">
                    <button 
                       onClick={() => handleNavigate('PREV')}
-                      className="h-full px-3 hover:bg-gray-100 text-gray-500 border-r border-gray-100 transition-colors"
+                      className="p-2.5 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronLeft size={18}/>
                    </button>
                    
-                   <div className="relative h-full flex-1 md:flex-none flex items-center justify-center px-4 min-w-[150px] md:min-w-[200px] cursor-pointer hover:bg-gray-50 transition-colors group">
-                       <span className="text-xs md:text-sm font-bold text-green-700 capitalize truncate">{dateRangeLabel}</span>
+                   <div className="relative flex-1 md:flex-none group">
+                       <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 group-hover:border-blue-400 rounded-xl shadow-sm group-hover:bg-blue-50 transition-all cursor-pointer min-w-[180px] md:min-w-[220px]">
+                           <Calendar size={18} className="text-gray-500 group-hover:text-blue-500 transition-colors" />
+                           <span className="text-xs md:text-sm font-bold text-gray-700 group-hover:text-blue-700 transition-colors capitalize truncate">
+                              {dateRangeLabel}
+                           </span>
+                       </div>
                        <input 
                           type={timelineMode === 'MONTH' ? "month" : "date"}
                           className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
@@ -881,7 +929,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
                    <button 
                       onClick={() => handleNavigate('NEXT')}
-                      className="h-full px-3 hover:bg-gray-100 text-gray-500 border-l border-gray-100 transition-colors"
+                      className="p-2.5 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronRight size={18}/>
                    </button>
@@ -930,55 +978,104 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                              })}
                          </div>
                      </div>
-                     {filteredRooms.map(room => (
-                         <div key={room.id} className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
-                             <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center bg-white sticky left-0 z-30 border-r-gray-200 group-hover:bg-gray-50 transition-colors shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                                 <div className="font-bold text-base md:text-lg text-gray-800">{room.number}</div>
-                                 <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
-                             </div>
-                             <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
-                                 {timeSlots.map((slot) => renderGridCell(room, slot))}
-                                 {filteredBookings.filter(b => b.roomId === room.id).map(b => {
-                                        /* ... rendering booking bar ... */
-                                        const bStart = new Date(b.checkInDate);
-                                        const bEnd = new Date(b.checkOutDate);
-                                        const viewStart = timeSlots[0];
-                                        // Specific viewEnd calculation for render limits
-                                        const viewEnd = timelineMode === 'DAY' 
-                                            ? addHours(viewStart, 24) 
-                                            : addDays(viewStart, gridColumns);
+                     {filteredRooms.map(room => {
+                         // Determine Status Colors for Left Column
+                         let statusBg = 'bg-white';
+                         let statusIcon = null;
+                         let statusBorder = '';
+                         let tooltip = 'Bấm để đổi trạng thái Sạch/Bẩn';
 
-                                        if (bEnd <= viewStart || bStart >= viewEnd) return null;
-                                        const totalDuration = viewEnd.getTime() - viewStart.getTime();
-                                        const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
-                                        const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
-                                        const left = (offset / totalDuration) * 100;
-                                        const width = (duration / totalDuration) * 100;
-                                        const bookingTags = tags.filter(t => b.tags?.includes(t.id));
-                                        const isGroup = !!b.groupId;
+                         if (room.status === RoomStatus.VACANT_DIRTY) {
+                            statusBg = 'bg-yellow-50';
+                            statusBorder = 'border-l-4 border-l-yellow-400';
+                            statusIcon = <AlertTriangle size={14} className="text-yellow-600" />;
+                            tooltip = 'Phòng chưa dọn (Bấm để báo Sạch)';
+                         } else if (room.status === RoomStatus.VACANT_CLEAN) {
+                             statusBorder = 'border-l-4 border-l-green-500';
+                             statusIcon = <CheckCircle size={14} className="text-green-600" />;
+                             tooltip = 'Sẵn sàng (Bấm để báo Bẩn)';
+                         } else if (room.status === RoomStatus.OCCUPIED) {
+                             statusBg = 'bg-red-50';
+                             statusBorder = 'border-l-4 border-l-red-500';
+                             statusIcon = <UserIcon size={14} className="text-red-600" />;
+                             tooltip = 'Đang có khách';
+                         } else if (room.status === RoomStatus.MAINTENANCE) {
+                             statusBg = 'bg-gray-100';
+                             statusBorder = 'border-l-4 border-l-gray-500';
+                             statusIcon = <Wrench size={14} className="text-gray-600" />;
+                             tooltip = 'Bảo trì';
+                         }
 
-                                        return (
-                                            <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
-                                                <div className="absolute top-0 right-0 flex gap-0.5 z-20">
-                                                    {isGroup && (
-                                                        <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>
-                                                    )}
-                                                    {b.notes && (
-                                                        <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>
-                                                    )}
+                         return (
+                             <div key={room.id} className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
+                                 {/* LEFT COLUMN - ROOM NAME & STATUS */}
+                                 <div 
+                                    onClick={(e) => { 
+                                        e.preventDefault();
+                                        e.stopPropagation(); 
+                                        handleRoomNameClick(room); 
+                                    }}
+                                    className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all cursor-pointer hover:brightness-95 select-none relative group ${statusBg} ${statusBorder}`} 
+                                    title={tooltip}
+                                 >
+                                     {/* Hover Hint Icon */}
+                                     {room.status !== RoomStatus.OCCUPIED && (
+                                         <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 bg-white/50 rounded-full p-0.5">
+                                            <Edit2 size={10} />
+                                         </div>
+                                     )}
+
+                                     <div className="flex items-center gap-1.5">
+                                        <div className="font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
+                                        {statusIcon}
+                                     </div>
+                                     <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
+                                     {room.status === RoomStatus.VACANT_DIRTY && <span className="text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
+                                 </div>
+                                 
+                                 {/* RIGHT COLUMN - TIMELINE GRID */}
+                                 <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
+                                     {timeSlots.map((slot) => renderGridCell(room, slot))}
+                                     {filteredBookings.filter(b => b.roomId === room.id).map(b => {
+                                            const bStart = new Date(b.checkInDate);
+                                            const bEnd = new Date(b.checkOutDate);
+                                            const viewStart = timeSlots[0];
+                                            const viewEnd = timelineMode === 'DAY' 
+                                                ? addHours(viewStart, 24) 
+                                                : addDays(viewStart, gridColumns);
+
+                                            if (bEnd <= viewStart || bStart >= viewEnd) return null;
+                                            const totalDuration = viewEnd.getTime() - viewStart.getTime();
+                                            const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
+                                            const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
+                                            const left = (offset / totalDuration) * 100;
+                                            const width = (duration / totalDuration) * 100;
+                                            const bookingTags = tags.filter(t => b.tags?.includes(t.id));
+                                            const isGroup = !!b.groupId;
+
+                                            return (
+                                                <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
+                                                    <div className="absolute top-0 right-0 flex gap-0.5 z-20">
+                                                        {isGroup && (
+                                                            <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>
+                                                        )}
+                                                        {b.notes && (
+                                                            <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>
+                                                        )}
+                                                    </div>
+                                                    <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
+                                                    <div className="flex gap-0.5 mt-1">
+                                                        {bookingTags.map(t => (
+                                                            <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                                <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
-                                                <div className="flex gap-0.5 mt-1">
-                                                    {bookingTags.map(t => (
-                                                        <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
+                                            )
+                                        })}
+                                 </div>
                              </div>
-                         </div>
-                     ))}
+                         )
+                     })}
                  </div>
              </div>
           ) : (

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard } from 'lucide-react';
+import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket } from 'lucide-react';
 import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
@@ -17,6 +17,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
   const operationMenuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
+    // NEW: Housekeeping Menu Item
+    { id: 'housekeeping', label: 'Buồng phòng', icon: PaintBucket, permission: PERMISSIONS.MANAGE_ROOMS }, 
     { id: 'reports', label: 'Báo cáo', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
   ];
 
@@ -34,6 +36,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                  currentUser.role === UserRole.MANAGER || 
                  currentUser.role === UserRole.RECEPTIONIST ||
                  currentUser.role === UserRole.ADMIN;
+      }
+      // Special logic for Housekeeping: Visible for Housekeeping role AND Admin/Managers
+      if (item.id === 'housekeeping') {
+          return currentUser.role === UserRole.HOUSEKEEPING || 
+                 currentUser.role === UserRole.ADMIN || 
+                 currentUser.role === UserRole.MANAGER;
       }
       return currentUser.permissions?.includes(item.permission);
   });
@@ -70,7 +78,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
             <div>
               <h1 className="text-xl font-bold">K-Host</h1>
               <p className="text-xs text-slate-400 capitalize">
-                {isSuperAdmin ? 'Platform Owner' : (currentUser.role === 'ADMIN' ? 'Quản trị viên' : (currentUser.role === 'MANAGER' ? 'Quản lý' : 'Lễ tân'))}
+                {isSuperAdmin ? 'Platform Owner' : (currentUser.role === 'ADMIN' ? 'Quản trị viên' : (currentUser.role === 'MANAGER' ? 'Quản lý' : (currentUser.role === 'HOUSEKEEPING' ? 'Buồng phòng' : 'Lễ tân')))}
               </p>
             </div>
           </div>

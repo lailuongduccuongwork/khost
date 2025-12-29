@@ -7,6 +7,7 @@ import RoomMap from './pages/RoomMap';
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
+import Housekeeping from './pages/Housekeeping'; // Import Housekeeping
 import SuperAdmin from './pages/SuperAdmin'; 
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
@@ -234,7 +235,10 @@ const App: React.FC = () => {
           initDataService(foundUser.tenantId);
           localStorage.setItem('k_host_tenant', foundUser.tenantId);
           
-          if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
+          // Redirect logic based on role
+          if (foundUser.role === UserRole.HOUSEKEEPING) {
+              setCurrentPage('housekeeping');
+          } else if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
               setCurrentPage('room-map');
           } else {
               setCurrentPage('dashboard');
@@ -402,6 +406,7 @@ const App: React.FC = () => {
           ))}
       </div>
 
+      {/* Conditional Sidebar: Only show full sidebar if not pure Housekeeping view on mobile (Optional UX choice, here we keep sidebar for Logout but maybe simpler) */}
       <Sidebar 
         currentPage={currentPage} 
         onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
@@ -466,49 +471,60 @@ const App: React.FC = () => {
             {!isSuperAdminView && (
                 <>
                     {currentPage === 'dashboard' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
-                    <Dashboard bookings={bookings} rooms={rooms} />
+                        <Dashboard bookings={bookings} rooms={rooms} />
                     )}
                     
                     {currentPage === 'room-map' && (
-                    <RoomMap 
-                        rooms={rooms} 
-                        roomTypes={roomTypes} 
-                        bookings={bookings} 
-                        customers={customers}
-                        tags={tags}
-                        onUpdateStatus={handleUpdateRoomStatus}
-                        onRefresh={manualRefresh}
-                        currentProperty={currentPropertyObj}
-                        currentUser={effectiveUser} // Pass effective user
-                    />
+                        <RoomMap 
+                            rooms={rooms} 
+                            roomTypes={roomTypes} 
+                            bookings={bookings} 
+                            customers={customers}
+                            tags={tags}
+                            onUpdateStatus={handleUpdateRoomStatus}
+                            onRefresh={manualRefresh}
+                            currentProperty={currentPropertyObj}
+                            currentUser={effectiveUser} // Pass effective user
+                        />
+                    )}
+
+                    {/* NEW: Housekeeping Route */}
+                    {currentPage === 'housekeeping' && (
+                        <Housekeeping 
+                            rooms={rooms} 
+                            bookings={bookings} 
+                            roomTypes={roomTypes} 
+                            properties={properties}
+                            onRefresh={manualRefresh}
+                        />
                     )}
 
                     {currentPage === 'reports' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
                         <Reports 
-                        bookings={bookings} 
-                        rooms={rooms} 
-                        users={users} 
-                        roomTypes={roomTypes} 
-                        properties={properties} 
-                        tags={tags}
-                        currentUser={effectiveUser} // Pass effective user
+                            bookings={bookings} 
+                            rooms={rooms} 
+                            users={users} 
+                            roomTypes={roomTypes} 
+                            properties={properties} 
+                            tags={tags}
+                            currentUser={effectiveUser} // Pass effective user
                         />
                     )}
                     
                     {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
-                    <div className="space-y-8">
-                        <Management 
-                            users={users} 
-                            rooms={DataService.getRooms()} 
-                            roomTypes={roomTypes} 
-                            properties={properties} 
-                            tags={tags}
-                            onRefresh={manualRefresh}
-                        />
-                        <div className="mt-8">
-                            <Admin users={users} properties={properties} onRefresh={manualRefresh} />
+                        <div className="space-y-8">
+                            <Management 
+                                users={users} 
+                                rooms={DataService.getRooms()} 
+                                roomTypes={roomTypes} 
+                                properties={properties} 
+                                tags={tags}
+                                onRefresh={manualRefresh}
+                            />
+                            <div className="mt-8">
+                                <Admin users={users} properties={properties} onRefresh={manualRefresh} />
+                            </div>
                         </div>
-                    </div>
                     )}
                 </>
             )}
