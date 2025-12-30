@@ -188,8 +188,6 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
 
   // --- AUTO SORT ROOMS ---
   const handleAutoSortRooms = (propertyId: string, direction: 'ASC' | 'DESC') => {
-      if (!confirm(`Bạn có chắc muốn sắp xếp lại toàn bộ phòng của chi nhánh này theo tên (${direction === 'ASC' ? 'A->Z' : 'Z->A'})?`)) return;
-
       // 1. Get rooms for this prop
       const propRooms = rooms.filter(r => r.propertyId === propertyId);
 

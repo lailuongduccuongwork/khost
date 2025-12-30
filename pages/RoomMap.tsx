@@ -250,24 +250,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
         return true;
     });
 
-    // 2. Sort Logic: Property Order -> RoomType Order -> Room Order
+    // 2. Sort Logic: Property Order -> Room Order
+    // Removed intermediate RoomType sort to match Management page order exactly
     return filtered.sort((a, b) => {
         const propA = properties.find(p => p.id === a.propertyId);
         const propB = properties.find(p => p.id === b.propertyId);
-        const typeA = roomTypes.find(t => t.id === a.typeId);
-        const typeB = roomTypes.find(t => t.id === b.typeId);
 
         // Level 1: Property Order
         const pOrderA = propA?.sortOrder ?? 9999;
         const pOrderB = propB?.sortOrder ?? 9999;
         if (pOrderA !== pOrderB) return pOrderA - pOrderB;
 
-        // Level 2: Room Type Order
-        const tOrderA = typeA?.sortOrder ?? 9999;
-        const tOrderB = typeB?.sortOrder ?? 9999;
-        if (tOrderA !== tOrderB) return tOrderA - tOrderB;
-
-        // Level 3: Room Order
+        // Level 2: Room Order (Matches Drag & Drop order in Settings)
         return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
     });
   }, [rooms, filters, properties, roomTypes]);
