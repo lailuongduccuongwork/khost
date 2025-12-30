@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket } from 'lucide-react';
+import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket, List } from 'lucide-react';
 import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
@@ -16,6 +16,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
   // 1. Define Operational Menu Items (Always visible based on permissions)
   const operationMenuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
+    { id: 'bookings', label: 'Danh sách đơn', icon: List, permission: PERMISSIONS.MANAGE_BOOKINGS }, // Added Bookings List
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
     // NEW: Housekeeping Menu Item
     { id: 'housekeeping', label: 'Buồng phòng', icon: PaintBucket, permission: PERMISSIONS.MANAGE_ROOMS }, 
@@ -43,6 +44,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                  currentUser.role === UserRole.ADMIN || 
                  currentUser.role === UserRole.MANAGER;
       }
+      
+      // Ensure Bookings List is visible for Admin/Manager/Receptionist if they have the permission (Admin usually has all)
+      if (item.id === 'bookings') {
+           return currentUser.permissions?.includes(item.permission) || 
+                  currentUser.role === UserRole.ADMIN || 
+                  currentUser.role === UserRole.MANAGER;
+      }
+
       return currentUser.permissions?.includes(item.permission);
   });
 

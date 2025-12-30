@@ -1,4 +1,5 @@
 
+
 export enum RoomStatus {
   VACANT_CLEAN = 'VACANT_CLEAN',
   VACANT_DIRTY = 'VACANT_DIRTY',
@@ -135,6 +136,8 @@ export interface Booking {
   createdBy: string; // User ID
   notes?: string;
   tags?: string[]; // Array of Tag IDs
+  
+  importBatchId?: string; // For undoing imports
 }
 
 export interface User {

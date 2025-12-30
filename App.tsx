@@ -4,16 +4,17 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import RoomMap from './pages/RoomMap';
+import Bookings from './pages/Bookings'; // Import Bookings Page
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
-import Housekeeping from './pages/Housekeeping'; // Import Housekeeping
+import Housekeeping from './pages/Housekeeping'; 
 import SuperAdmin from './pages/SuperAdmin'; 
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
-import { useBookingAlert } from './hooks/useBookingAlert'; // Import Hook Standard
-import { useDebtAlert } from './hooks/useDebtAlert'; // Import Hook Debt
+import { useBookingAlert } from './hooks/useBookingAlert'; 
+import { useDebtAlert } from './hooks/useDebtAlert'; 
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -474,6 +475,16 @@ const App: React.FC = () => {
                         <Dashboard bookings={bookings} rooms={rooms} />
                     )}
                     
+                    {currentPage === 'bookings' && (
+                        <Bookings 
+                            bookings={bookings}
+                            rooms={rooms}
+                            customers={customers}
+                            onRefresh={manualRefresh}
+                            currentUser={effectiveUser}
+                        />
+                    )}
+
                     {currentPage === 'room-map' && (
                         <RoomMap 
                             rooms={rooms} 

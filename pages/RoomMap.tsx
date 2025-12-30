@@ -1,11 +1,13 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2 } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Download, FileUp } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
+// Declare XLSX
+declare const XLSX: any;
 
 interface RoomMapProps {
   rooms: Room[];
@@ -120,6 +122,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   // SORTING STATE
   const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
+
+  // IMPORT STATE
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // DATA STATES
   const [financeCategories, setFinanceCategories] = useState<TransactionCategory[]>([]);
@@ -372,6 +378,220 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       return sortConfig.direction === 'asc' 
              ? <ArrowUp size={14} className="ml-1 text-blue-600" /> 
              : <ArrowDown size={14} className="ml-1 text-blue-600" />;
+  };
+
+  // --- EXCEL IMPORT LOGIC ---
+  const handleDownloadTemplate = () => {
+    const headers = [
+        "Chi nhánh",
+        "Phòng (Số phòng)", 
+        "Hạng phòng",
+        "Tên khách hàng", 
+        "Số điện thoại", 
+        "Ngày nhận (dd/mm/yyyy HH:mm)", 
+        "Ngày trả (dd/mm/yyyy HH:mm)", 
+        "Tổng tiền", 
+        "Đã thanh toán", 
+        "Trạng thái (Đang ở/Đã đặt/Đã trả)",
+        "Ghi chú"
+    ];
+    
+    // Get properties/types for sample
+    const allProps = properties;
+    const allTypes = roomTypes;
+    
+    const sampleProp = allProps[0]?.name || "K-Host Hà Nội";
+    const sampleType = allTypes[0]?.name || "Standard Single";
+    const sampleRoom = rooms[0]?.number || "101";
+
+    // Sample Data Row
+    const sampleRow = [
+        sampleProp,
+        sampleRoom, 
+        sampleType,
+        "Nguyễn Văn A", 
+        "0912345678", 
+        "25/12/2024 14:00", 
+        "27/12/2024 12:00", 
+        1500000, 
+        500000, 
+        "Đang ở",
+        "Khách quen, nhập dữ liệu cũ"
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, sampleRow]);
+    
+    // Set column widths for better UX
+    ws['!cols'] = [
+        { wch: 20 }, // Branch
+        { wch: 10 }, // Room
+        { wch: 20 }, // Type
+        { wch: 20 }, // Name
+        { wch: 15 }, // Phone
+        { wch: 20 }, // In
+        { wch: 20 }, // Out
+        { wch: 12 }, // Total
+        { wch: 12 }, // Paid
+        { wch: 15 }, // Status
+        { wch: 30 }  // Note
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Mau_Nhap_Lieu");
+    XLSX.writeFile(wb, "KHost_Mau_Import_Booking.xlsx");
+  };
+
+  const parseStatus = (val: string): BookingStatus => {
+    if (!val) return BookingStatus.CONFIRMED;
+    const v = val.toLowerCase().trim();
+    if (v.includes('đang') || v.includes('check-in') || v.includes('checkin')) return BookingStatus.CHECKED_IN;
+    if (v.includes('trả') || v.includes('xong') || v.includes('check-out') || v.includes('checkout')) return BookingStatus.CHECKED_OUT;
+    if (v.includes('hủy') || v.includes('huỷ')) return BookingStatus.CANCELLED;
+    return BookingStatus.CONFIRMED;
+  }
+
+  // FIXED: Correct Date Parsing without manual offset shifting
+  const parseExcelDate = (val: any): string => {
+    if (!val) return new Date().toISOString();
+    
+    let dateObj: Date;
+    if (val instanceof Date) {
+        dateObj = val;
+    } else if (typeof val === 'string') {
+        // Try parse string dd/mm/yyyy HH:mm
+        const parts = val.split(/[/\s:]/);
+        if (parts.length >= 3) {
+            // Simple parser assuming dd/mm/yyyy
+            // Note: Month is 0-indexed in JS Date
+            dateObj = new Date(Number(parts[2]), Number(parts[1])-1, Number(parts[0]), Number(parts[3]||14), Number(parts[4]||0));
+        } else {
+            dateObj = new Date(val);
+        }
+    } else {
+        // Fallback
+        dateObj = new Date();
+    }
+
+    // Return standard ISO string. 
+    // If dateObj is "25/10 14:00 Local", toISOString will convert it to UTC correctly.
+    // RoomMap will then read UTC and convert back to Local 14:00 correctly.
+    return dateObj.toISOString();
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+    
+    reader.onload = (evt) => {
+        try {
+            const bstr = evt.target?.result;
+            const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+            const wsname = wb.SheetNames[0];
+            const ws = wb.Sheets[wsname];
+            const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+            // Data[0] is Header
+            // Data[1...] is Rows
+            let successCount = 0;
+            let errorLog: string[] = [];
+
+            if (data.length < 2) {
+                alert("File không có dữ liệu!");
+                setIsImporting(false);
+                return;
+            }
+
+            const allProperties = properties;
+
+            // Mapping logic
+            for (let i = 1; i < data.length; i++) {
+                const row: any = data[i];
+                if (!row || row.length === 0) continue;
+
+                // Indexes based on NEW Template Headers
+                // 0: Chi nhánh, 1: Phòng, 2: Hạng, 3: Khách, 4: SĐT, 5: In, 6: Out, 7: Total, 8: Paid, 9: Status, 10: Note
+                const branchName = String(row[0] || '').trim();
+                const roomNum = String(row[1] || '').trim();
+                // Index 2 is Room Type (Visual only, we lookup by ID mostly via Room)
+                const guestName = String(row[3] || 'Khách import');
+                const phone = String(row[4] || '');
+                const checkInRaw = row[5];
+                const checkOutRaw = row[6];
+                const total = Number(row[7]) || 0;
+                const paid = Number(row[8]) || 0;
+                const statusRaw = String(row[9] || '');
+                const note = String(row[10] || '');
+
+                // 1. Find Property ID if branch name is provided
+                let targetPropId: string | undefined;
+                if (branchName) {
+                    const prop = allProperties.find(p => p.name.toLowerCase() === branchName.toLowerCase());
+                    if (prop) targetPropId = prop.id;
+                }
+
+                // 2. Find Room ID
+                // Filter rooms by Property Name if provided to avoid duplicate room numbers conflicts
+                const targetRoom = rooms.find(r => {
+                    const numMatch = r.number === roomNum;
+                    if (!numMatch) return false;
+                    if (targetPropId) return r.propertyId === targetPropId;
+                    return true; // If no branch specified in Excel, match first room found (Risky but fallback)
+                });
+
+                if (!targetRoom) {
+                    errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng "${roomNum}"${branchName ? ` tại chi nhánh "${branchName}"` : ''}`);
+                    continue;
+                }
+
+                // 2. Create Booking Object
+                const newBooking: Booking = {
+                    id: DataService.generateBookingId(),
+                    tenantId: targetRoom.tenantId || currentUser.tenantId, // Inherit
+                    propertyId: targetRoom.propertyId,
+                    roomId: targetRoom.id,
+                    customerId: 'c_import', // Placeholder or create new customer logic if needed
+                    guestName: guestName,
+                    guestPhone: phone,
+                    checkInDate: parseExcelDate(checkInRaw),
+                    checkOutDate: parseExcelDate(checkOutRaw),
+                    status: parseStatus(statusRaw),
+                    totalPrice: total,
+                    paidAmount: paid,
+                    createdAt: new Date().toISOString(),
+                    createdBy: currentUser.id,
+                    notes: note + " [Imported]",
+                    tags: [],
+                    extraFees: []
+                };
+
+                DataService.addBooking(newBooking);
+                successCount++;
+            }
+
+            let msg = `Đã nhập thành công ${successCount} đơn đặt phòng.`;
+            if (errorLog.length > 0) {
+                msg += `\n\nCó ${errorLog.length} lỗi:\n` + errorLog.slice(0, 10).join('\n') + (errorLog.length > 10 ? '\n...' : '');
+            }
+            alert(msg);
+            if (onRefresh) onRefresh();
+
+        } catch (error) {
+            console.error(error);
+            alert("Lỗi đọc file Excel. Vui lòng đảm bảo đúng định dạng mẫu.");
+        } finally {
+            setIsImporting(false);
+            if (fileInputRef.current) fileInputRef.current.value = ''; // Reset input
+        }
+    };
+    
+    reader.readAsBinaryString(file);
+  };
+
+  const triggerUpload = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
   };
 
 
@@ -882,9 +1102,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   // Determine if inputs should be disabled
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
 
+  // ... (Rest of component render unchanged, removed duplicate code for brevity as only logic changed)
+  // FULL RENDER CONTENT AS PREVIOUSLY PROVIDED BUT WITH UPDATED LOGIC ABOVE
   return (
     <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
-       {/* New Filter Header */}
+       {/* ... (Header and Controls) ... */}
        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all">
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
               
@@ -976,9 +1198,39 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  </div>
 
                  {canAdd && (
-                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
-                        <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
-                    </button>
+                    <>
+                        {/* IMPORT EXCEL BUTTONS */}
+                        <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-1">
+                             <button 
+                                onClick={handleDownloadTemplate}
+                                className="p-2.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                                title="Tải mẫu Excel"
+                             >
+                                 <Download size={20} />
+                             </button>
+                             
+                             <button 
+                                onClick={triggerUpload}
+                                className="p-2.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all relative"
+                                title="Nhập Excel"
+                                disabled={isImporting}
+                             >
+                                 <FileUp size={20} />
+                                 {isImporting && <span className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full animate-ping"></span>}
+                             </button>
+                             <input 
+                                type="file" 
+                                ref={fileInputRef} 
+                                className="hidden" 
+                                accept=".xlsx, .xls" 
+                                onChange={handleFileUpload} 
+                            />
+                        </div>
+
+                        <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                            <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
+                        </button>
+                    </>
                  )}
           </div>
        </div>
