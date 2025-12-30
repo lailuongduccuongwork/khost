@@ -112,6 +112,13 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       return d >= s.getTime() && d <= e.getTime();
   };
 
+  // --- INTEGRITY CHECK ---
+  // Ensure we only count bookings where the Room actually still exists in the system
+  // This removes "N/A" or "Deleted Room" data from stats
+  const isValidBooking = (b: Booking) => {
+      return b.status !== BookingStatus.DELETED && rooms.some(r => r.id === b.roomId);
+  };
+
   // --- Helper: Format Currency ---
   const formatVND = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
   const formatCompactVND = (val: number) => {
@@ -127,6 +134,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   // ==========================================
   const checkoutStats = useMemo(() => {
       const filtered = bookings.filter(b => 
+          isValidBooking(b) && // Check validity
           b.status === BookingStatus.CHECKED_OUT && 
           isInRange(b.checkOutDate)
       );
@@ -136,7 +144,6 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
           totalBill: filtered.reduce((sum, b) => sum + b.totalPrice, 0),
           paid: filtered.reduce((sum, b) => sum + b.paidAmount, 0),
           debt: filtered.reduce((sum, b) => sum + (b.totalPrice - b.paidAmount), 0),
-          // totalNights is no longer used for ADR, kept for other potential uses
           totalNights: filtered.reduce((sum, b) => {
               const start = new Date(b.checkInDate).getTime();
               const end = new Date(b.checkOutDate).getTime();
@@ -144,7 +151,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
               return sum + nights;
           }, 0)
       };
-  }, [bookings, startDate, endDate]);
+  }, [bookings, rooms, startDate, endDate]);
 
 
   // ==========================================
@@ -152,7 +159,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   // ==========================================
   const createdStats = useMemo(() => {
       const filtered = bookings.filter(b => 
-          b.status !== BookingStatus.DELETED && 
+          isValidBooking(b) && // Check validity
           isInRange(b.createdAt)
       );
 
@@ -162,7 +169,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
           paid: filtered.reduce((sum, b) => sum + b.paidAmount, 0),
           debt: filtered.reduce((sum, b) => sum + (b.totalPrice - b.paidAmount), 0)
       };
-  }, [bookings, startDate, endDate]);
+  }, [bookings, rooms, startDate, endDate]);
 
 
   // ==========================================
@@ -194,8 +201,8 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
           const occupiedRoomsOnThisDay = new Set<string>();
 
           bookings.forEach(b => {
-             // Ignore invalid bookings
-             if (b.status === BookingStatus.DELETED || b.status === BookingStatus.CANCELLED) return;
+             // Ignore invalid bookings or cancelled
+             if (!isValidBooking(b) || b.status === BookingStatus.CANCELLED) return;
              
              const bStart = new Date(b.checkInDate).getTime();
              const bEnd = new Date(b.checkOutDate).getTime();
@@ -242,6 +249,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
         const dayStr = day.toISOString().split('T')[0];
         // Filter bookings CHECKED_OUT on this specific day
         const dayBookings = bookings.filter(b => 
+            isValidBooking(b) && // Check validity
             b.status === BookingStatus.CHECKED_OUT && 
             b.checkOutDate.startsWith(dayStr)
         );
@@ -261,7 +269,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
     const min = Math.min(...data.map(d => d.totalBill));
 
     return { chartData: data, maxVal: max, minVal: min };
-  }, [bookings, startDate, endDate]);
+  }, [bookings, rooms, startDate, endDate]);
 
 
   return (

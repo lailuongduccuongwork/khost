@@ -273,10 +273,26 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return dateToCheck >= start && dateToCheck <= end;
   };
 
+  // --- INTEGRITY CHECK ---
+  // Only allow bookings where Room, RoomType AND Property still exist
+  const isValidLinkage = (b: Booking) => {
+      const room = rooms.find(r => r.id === b.roomId);
+      if (!room) return false; // Room deleted
+
+      const type = roomTypes.find(t => t.id === room.typeId);
+      if (!type) return false; // Type deleted
+
+      const prop = properties.find(p => p.id === b.propertyId);
+      if (!prop) return false; // Property deleted
+
+      return true;
+  };
+
   // --- 1. Revenue Report (Báo cáo doanh thu phòng) ---
   // Criteria: Booking has ended (CHECKED_OUT) AND checkOutDate is within range
   const revenueData = useMemo(() => {
       let data = bookings
+        .filter(isValidLinkage) // <-- Apply Orphan Filter
         .filter(b => b.status === BookingStatus.CHECKED_OUT)
         .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
         .map(getFullBookingData);
@@ -308,6 +324,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
       let data = bookings
+        .filter(isValidLinkage) // <-- Apply Orphan Filter
         .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
         .map(getFullBookingData);
 
