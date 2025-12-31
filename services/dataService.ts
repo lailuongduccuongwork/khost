@@ -45,6 +45,15 @@ const CACHE = {
     systemUsers: [] as User[] 
 };
 
+// --- PENDING WRITES LOCK (CRITICAL FOR UI STABILITY) ---
+// Map lưu trữ trạng thái đang chờ ghi lên server.
+// Key: RoomID, Value: Desired Status
+// Dữ liệu từ Server trả về sẽ bị ignore nếu ID nằm trong map này và status chưa khớp.
+const _pendingRoomStatus = new Map<string, RoomStatus>();
+
+// Callback listeners
+let _dataChangeCallback: () => void = () => {};
+
 // --- CORE HELPERS (ATOMIC PATH BUILDER) ---
 
 const getBaseRef = () => {
@@ -66,11 +75,12 @@ const snapshotToArray = <T>(snap: any): T[] => {
         rawList = Object.values(val);
     }
 
-    // 2. KHỬ TRÙNG LẶP DỰA TRÊN ID
+    // 2. KHỬ TRÙNG LẶP DỰA TRÊN ID & DEEP CLONE (Tránh tham chiếu chéo)
     const uniqueMap = new Map();
     rawList.forEach((item: any) => {
         if (item && typeof item === 'object' && item.id) {
-            uniqueMap.set(item.id, item);
+            // QUAN TRỌNG: Spread operator {...item} để tạo bản sao mới, tránh tham chiếu vùng nhớ
+            uniqueMap.set(item.id, { ...item });
         }
     });
     
@@ -94,6 +104,8 @@ const _ensureFirebase = () => {
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
     try {
         activeTenantId = tenantId;
+        _dataChangeCallback = onDataChange;
+
         if(!_ensureFirebase()) return;
 
         const basePath = getBaseRef();
@@ -104,9 +116,33 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         const bind = <T>(node: string, cacheKey: keyof typeof CACHE) => {
             const nodeRef = ref(db, `${basePath}/${node}`);
             onValue(nodeRef, (snap) => {
+                let list = snapshotToArray<T>(snap);
+
+                // --- DATA INTERCEPTOR FOR ROOMS (LATENCY PROTECTION) ---
+                if (cacheKey === 'rooms') {
+                    // @ts-ignore
+                    list = list.map((item: any) => {
+                        // Nếu phòng này đang có lệnh chờ ghi (Pending Write)
+                        if (_pendingRoomStatus.has(item.id)) {
+                            const pendingStatus = _pendingRoomStatus.get(item.id);
+                            
+                            // Nếu dữ liệu Server đã khớp với lệnh chờ -> Xóa Pending (Đã đồng bộ xong)
+                            if (item.status === pendingStatus) {
+                                _pendingRoomStatus.delete(item.id);
+                                return item;
+                            } 
+                            
+                            // Nếu dữ liệu Server VẪN CŨ (chưa cập nhật kịp) -> GHI ĐÈ bằng dữ liệu Pending
+                            // Để UI không bị giật lùi về trạng thái cũ
+                            return { ...item, status: pendingStatus };
+                        }
+                        return item;
+                    });
+                }
+
                 // @ts-ignore
-                CACHE[cacheKey] = snapshotToArray<T>(snap);
-                onDataChange(); 
+                CACHE[cacheKey] = list;
+                _dataChangeCallback(); 
             });
         };
 
@@ -143,13 +179,13 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                         }
                     } catch (e) { console.error("Self-repair failed", e); }
                 }
-                onDataChange(); 
+                _dataChangeCallback(); 
             });
 
             const historyQuery = query(ref(db, `${basePath}/history`), limitToLast(50));
             onValue(historyQuery, (snap) => {
                  CACHE.history = snapshotToArray<HistoryLog>(snap).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-                 onDataChange();
+                 _dataChangeCallback();
             });
 
             get(ref(db, `${basePath}/properties`)).then(snap => { if (!snap.exists()) _seedTenantData(tenantId); });
@@ -264,27 +300,24 @@ const _deleteItems = (node: string, ids: string[]) => {
     return update(ref(db), updates).catch(e => console.error(`Bulk delete ${node} failed`, e));
 }
 
-// --- HARD DELETE BOOKINGS (SỬA ĐỔI QUAN TRỌNG) ---
-// Chuyển từ Soft Delete (ẩn) sang Hard Delete (xoá null) để tránh lỗi trùng lịch
+// --- HARD DELETE BOOKINGS ---
 const _hardDeleteBookings = (ids: string[], staffId: string) => {
     if (!activeTenantId || !db || ids.length === 0) return;
     const basePath = getBaseRef();
     const updates: any = {};
     
     ids.forEach(id => {
-        // 1. XOÁ VĨNH VIỄN KHỎI FIREBASE
         updates[`${basePath}/bookings/${id}`] = null;
         
         const booking = CACHE.bookings.find(b => b.id === id);
         if (booking) {
-            // 2. Release Room
             if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
+                // IMPORTANT: When releasing a room, update directly but DON'T trigger "Pending Lock" for this
+                // because this is a background cleanup, not a user interaction on the Room Screen.
                 updates[`${basePath}/rooms/${booking.roomId}/status`] = RoomStatus.VACANT_CLEAN;
-                const r = CACHE.rooms.find(r => r.id === booking.roomId);
-                if (r) r.status = RoomStatus.VACANT_CLEAN;
+                CACHE.rooms = CACHE.rooms.map(r => r.id === booking.roomId ? {...r, status: RoomStatus.VACANT_CLEAN} : r);
             }
 
-            // 3. Log History
             const logId = `log_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
             const newLog: HistoryLog = {
                 id: logId,
@@ -299,8 +332,8 @@ const _hardDeleteBookings = (ids: string[], staffId: string) => {
         }
     });
 
-    // Optimistic Cache Update
     CACHE.bookings = CACHE.bookings.filter(b => !ids.includes(b.id));
+    _dataChangeCallback();
 
     return update(ref(db), updates).catch(e => console.error("Hard delete failed", e));
 };
@@ -309,21 +342,21 @@ const _resetAllBookings = () => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
     
-    // Xoá node bookings
     remove(ref(db, `${basePath}/bookings`)).then(() => {
         console.log("Đã xoá sạch toàn bộ booking trên Firebase");
     });
 
-    // Reset trạng thái tất cả phòng về sạch
     const updates: any = {};
-    CACHE.rooms.forEach(r => {
+    const newRooms = CACHE.rooms.map(r => {
         updates[`${basePath}/rooms/${r.id}/status`] = RoomStatus.VACANT_CLEAN;
+        return { ...r, status: RoomStatus.VACANT_CLEAN };
     });
+    
     update(ref(db), updates);
-
-    // Xoá cache
     CACHE.bookings = [];
-    CACHE.rooms.forEach(r => r.status = RoomStatus.VACANT_CLEAN);
+    CACHE.rooms = newRooms;
+    _pendingRoomStatus.clear(); // Clear locks
+    _dataChangeCallback();
 };
 
 
@@ -340,12 +373,29 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
     _saveItem('history', newLog);
 };
 
+// --- FIX: IMMUTABLE OPTIMISTIC UPDATE WITH LOCKING ---
 const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
-    update(ref(db, `${basePath}/rooms/${roomId}`), { status }).catch(console.error);
-    const r = CACHE.rooms.find(r => r.id === roomId);
-    if(r) r.status = status;
+    
+    // 1. SET LOCK: Ngăn dữ liệu cũ từ server ghi đè lên trạng thái này
+    _pendingRoomStatus.set(roomId, status);
+
+    // 2. UPDATE CACHE IMMEDIATELY (Tạo object mới hoàn toàn)
+    const newRooms = CACHE.rooms.map(r => r.id === roomId ? { ...r, status } : r);
+    CACHE.rooms = newRooms;
+    
+    // 3. TRIGGER UI
+    _dataChangeCallback();
+
+    // 4. SEND TO SERVER
+    update(ref(db, `${basePath}/rooms/${roomId}`), { status })
+        .catch(e => {
+            console.error("Update failed", e);
+            // Nếu lỗi, gỡ bỏ lock để dữ liệu server (dù cũ) được hiển thị lại
+            _pendingRoomStatus.delete(roomId);
+            _dataChangeCallback();
+        });
 };
 
 // Booking Operations
@@ -378,7 +428,6 @@ const _updateBooking = (booking: Booking) => {
 };
 
 const _deleteBooking = (id: string, staffId: string): boolean => {
-    // Chuyển sang xoá cứng
     _hardDeleteBookings([id], staffId);
     return true;
 };
@@ -416,7 +465,6 @@ export const DataService = {
   },
   getRoomTypes: () => CACHE.roomTypes,
   getBookings: (propId?: string) => {
-      // Chỉ trả về các đơn chưa bị xoá (dù hàm deleteBooking giờ đã xoá cứng rồi)
       let b = CACHE.bookings.filter(x => x.status !== BookingStatus.DELETED);
       if (propId) b = b.filter(x => x.propertyId === propId);
       return b;
@@ -456,11 +504,9 @@ export const DataService = {
   updateRoomStatus: _updateRoomStatus,
   addBooking: _addBooking,
   updateBooking: _updateBooking,
-  deleteBooking: _deleteBooking, // Now Hard Delete
-  deleteBookings: _hardDeleteBookings, // Now Hard Delete
+  deleteBooking: _deleteBooking,
+  deleteBookings: _hardDeleteBookings,
   saveBookings: (list: Booking[]) => _saveListAsMap('bookings', list), 
-  
-  // NEW: Reset All
   resetAllBookings: _resetAllBookings,
 
   addCustomer: (c: Customer) => _saveItem('customers', c),
@@ -500,8 +546,6 @@ export const DataService = {
       const s = new Date(start).getTime();
       const e = new Date(end).getTime();
       const buffer = 30 * 60 * 1000;
-      
-      // Lọc danh sách CACHE.bookings để đảm bảo không có đơn bị lỗi/xoá sót lại
       const activeBookings = CACHE.bookings.filter(b => b.status !== BookingStatus.DELETED && b.status !== BookingStatus.CANCELLED);
 
       const conflict = activeBookings.find(b => {

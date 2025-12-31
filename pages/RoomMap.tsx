@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Download, FileUp, Loader2 } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Download, FileUp, Loader2, RotateCcw } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
@@ -16,7 +16,6 @@ interface RoomMapProps {
   customers: Customer[];
   tags: Tag[];
   properties: Property[]; // NEW: Require properties list for sorting
-  onUpdateStatus: (roomId: string, status: RoomStatus) => void;
   onRefresh: () => void;
   currentProperty: Property;
   currentUser: User; 
@@ -112,7 +111,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, properties, onUpdateStatus, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -145,6 +144,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canEdit = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
+  const canManageRooms = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS);
 
   const allUsers = DataService.getUsers();
 
@@ -163,6 +163,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); // NEW: Block double submit
   
+  // Status Change Confirmation Modal State
+  const [statusModal, setStatusModal] = useState<{
+      isOpen: boolean;
+      room: Room | null;
+      targetStatus: RoomStatus;
+  }>({ isOpen: false, room: null, targetStatus: RoomStatus.VACANT_CLEAN });
+
   // Receipt Modal State
   const [receiptData, setReceiptData] = useState<any | null>(null);
   
@@ -379,6 +386,33 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       return sortConfig.direction === 'asc' 
              ? <ArrowUp size={14} className="ml-1 text-blue-600" /> 
              : <ArrowDown size={14} className="ml-1 text-blue-600" />;
+  };
+
+  // --- STATUS CHANGE HANDLER ---
+  const handleStatusIconClick = (room: Room) => {
+      if (!canManageRooms) return;
+
+      if (room.status === RoomStatus.OCCUPIED) {
+          // Optional: You could allow forcing Occupied -> Dirty here if needed
+          return; 
+      }
+
+      const targetStatus = room.status === RoomStatus.VACANT_CLEAN 
+          ? RoomStatus.VACANT_DIRTY 
+          : RoomStatus.VACANT_CLEAN;
+
+      setStatusModal({
+          isOpen: true,
+          room: room,
+          targetStatus: targetStatus
+      });
+  };
+
+  const confirmStatusChange = () => {
+      if (statusModal.room) {
+          DataService.updateRoomStatus(statusModal.room.id, statusModal.targetStatus);
+          setStatusModal({ isOpen: false, room: null, targetStatus: RoomStatus.VACANT_CLEAN });
+      }
   };
 
   // --- EXCEL IMPORT LOGIC ---
@@ -601,48 +635,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       }
       openModal(null, false, dragStart.roomId, {start: toLocalISO(checkIn), end: toLocalISO(checkOut)});
       setDragStart(null); setDragEnd(null);
-  };
-
-  // --- MANUAL ROOM STATUS CHANGE ---
-  const handleRoomNameClick = (room: Room) => {
-      // ... (Keep existing status change logic)
-      const canManage = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS) || 
-                        currentUser.role === UserRole.ADMIN || 
-                        currentUser.role === UserRole.MANAGER ||
-                        currentUser.role === UserRole.RECEPTIONIST;
-
-      if (!canManage) {
-          alert("Bạn không có quyền thay đổi trạng thái phòng.");
-          return;
-      }
-
-      // 2. Prevent toggling Occupied rooms
-      if (room.status === RoomStatus.OCCUPIED) {
-          alert(`Phòng ${room.number} đang có khách (OCCUPIED).\nKhông thể thay đổi trạng thái thủ công.\nVui lòng vào đơn đặt phòng để Check-out.`);
-          return;
-      }
-
-      let nextStatus: RoomStatus | null = null;
-      let confirmMsg = "";
-
-      // 3. Determine Next Status
-      if (room.status === RoomStatus.VACANT_CLEAN) {
-          nextStatus = RoomStatus.VACANT_DIRTY;
-          confirmMsg = `Đánh dấu phòng ${room.number} là BẨN (Cần dọn)?`;
-      } else if (room.status === RoomStatus.VACANT_DIRTY) {
-          nextStatus = RoomStatus.VACANT_CLEAN;
-          confirmMsg = `Đánh dấu phòng ${room.number} là SẠCH (Đã dọn xong)?`;
-      } else if (room.status === RoomStatus.MAINTENANCE) {
-          nextStatus = RoomStatus.VACANT_CLEAN;
-          confirmMsg = `Phòng ${room.number} đã bảo trì xong? Chuyển sang SẠCH?`;
-      }
-
-      // 4. Execute
-      if (nextStatus && window.confirm(confirmMsg)) {
-          onUpdateStatus(room.id, nextStatus);
-          // Force UI refresh slightly to ensure state propagation
-          setTimeout(onRefresh, 50);
-      }
   };
 
   // --- EXTRA FEES HANDLERS ---
@@ -1048,17 +1040,17 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                          let statusBg = 'bg-white';
                          let statusIcon = null;
                          let statusBorder = '';
-                         let tooltip = 'Bấm để đổi trạng thái Sạch/Bẩn';
+                         let tooltip = '';
 
                          if (room.status === RoomStatus.VACANT_DIRTY) {
                             statusBg = 'bg-yellow-50';
                             statusBorder = 'border-l-4 border-l-yellow-400';
                             statusIcon = <AlertTriangle size={14} className="text-yellow-600" />;
-                            tooltip = 'Phòng chưa dọn (Bấm để báo Sạch)';
+                            tooltip = 'Phòng chưa dọn';
                          } else if (room.status === RoomStatus.VACANT_CLEAN) {
                              statusBorder = 'border-l-4 border-l-green-500';
                              statusIcon = <CheckCircle size={14} className="text-green-600" />;
-                             tooltip = 'Sẵn sàng (Bấm để báo Bẩn)';
+                             tooltip = 'Sẵn sàng';
                          } else if (room.status === RoomStatus.OCCUPIED) {
                              statusBg = 'bg-red-50';
                              statusBorder = 'border-l-4 border-l-red-500';
@@ -1081,15 +1073,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
                                  <div className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
                                      <div 
-                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRoomNameClick(room); }}
-                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all cursor-pointer hover:brightness-95 select-none relative group ${statusBg} ${statusBorder}`} 
+                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
                                         title={tooltip}
+                                        onClick={() => handleStatusIconClick(room)}
+                                        style={{cursor: canManageRooms ? 'pointer' : 'default'}}
                                      >
-                                         {room.status !== RoomStatus.OCCUPIED && (
-                                             <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 bg-white/50 rounded-full p-0.5">
-                                                <Edit2 size={10} />
-                                             </div>
-                                         )}
                                          <div className="flex items-center gap-1.5">
                                             <div className="font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
                                             {statusIcon}
@@ -1219,6 +1207,45 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
             </div>
           )}
       </div>
+
+      {/* --- STATUS CHANGE CONFIRMATION MODAL --- */}
+      {statusModal.isOpen && statusModal.room && (
+          <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => setStatusModal({...statusModal, isOpen: false})} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                  
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 mx-auto ${statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                      {statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
+                  </div>
+                  
+                  <h3 className="text-lg font-bold text-center text-gray-900 mb-2">
+                      Xác nhận đổi trạng thái
+                  </h3>
+                  
+                  <div className="text-sm text-center mb-6 text-gray-600">
+                      Bạn có chắc chắn muốn đổi phòng <b>{statusModal.room.number}</b> sang trạng thái <br/>
+                      <span className={`font-bold ${statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'text-green-600' : 'text-yellow-600'}`}>
+                          {statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'SẠCH (Sẵn sàng đón khách)' : 'BẨN (Cần dọn dẹp)'}
+                      </span>?
+                  </div>
+                  
+                  <div className="flex gap-3">
+                      <button 
+                          onClick={() => setStatusModal({...statusModal, isOpen: false})} 
+                          className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 transition-colors"
+                      >
+                          Huỷ bỏ
+                      </button>
+                      <button 
+                          onClick={confirmStatusChange} 
+                          className={`flex-1 py-2.5 text-white font-bold rounded-lg shadow-lg transition-colors ${statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-yellow-500 hover:bg-yellow-600 shadow-yellow-200'}`}
+                      >
+                          Xác nhận
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* CREATE/EDIT MODAL - OPTIMIZED FOR MOBILE */}
       {showModal && (

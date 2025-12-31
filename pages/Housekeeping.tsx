@@ -1,7 +1,10 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { Room, Booking, BookingStatus, RoomStatus, Property, RoomType } from '../types';
-import { Check, LogOut, LogIn, Zap, User, RotateCcw, Brush, Moon, ArrowRight, Building2, ShieldCheck, AlertCircle } from 'lucide-react';
+import { 
+    Check, LogOut, LogIn, Zap, User, RotateCcw, 
+    Brush, Moon, ArrowRight, Building2, CheckCircle
+} from 'lucide-react';
 
 interface HousekeepingProps {
   rooms: Room[];
@@ -9,16 +12,29 @@ interface HousekeepingProps {
   roomTypes: RoomType[];
   properties: Property[];
   onRefresh: () => void;
+  onUpdateStatus: (roomId: string, status: RoomStatus) => void;
 }
 
-const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, onRefresh }) => {
+type FilterType = 'ALL' | 'DIRTY' | 'CLEAN' | 'OCCUPIED';
+
+const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, onRefresh, onUpdateStatus }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [filter, setFilter] = useState<FilterType>('ALL');
   
-  // Cập nhật mỗi phút
+  // Cập nhật thời gian thực mỗi phút
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
+
+  const handleAction = (roomId: string, newStatus: RoomStatus) => {
+      // Gọi DataService. DataService đã được nâng cấp để xử lý Optimistic Update
+      // và Locking, nên ở đây chỉ cần gọi hàm là đủ.
+      onUpdateStatus(roomId, newStatus);
+      
+      // Rung phản hồi (Haptic)
+      if (navigator.vibrate) navigator.vibrate(50);
+  };
 
   // --- HELPER FORMAT ---
   const formatCompactDateTime = (iso: string | null | undefined) => {
@@ -34,26 +50,24 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       return h >= 22 || h <= 7;
   };
 
-  // --- LOGIC XỬ LÝ DỮ LIỆU ---
-  const roomList = useMemo(() => {
+  // --- DATA PROCESSING ---
+  const processedRooms = useMemo(() => {
     const nowMs = currentTime.getTime();
     const oneDayMs = 24 * 60 * 60 * 1000;
 
-    const processed = rooms.map(room => {
-        // 1. TÌM KHÁCH ĐANG Ở
+    const list = rooms.map(room => {
+        // Booking Logic
         const activeBooking = bookings.find(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_IN);
-
-        // 2. Tìm khách vừa đi
+        
         const lastBooking = bookings
             .filter(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_OUT)
             .sort((a, b) => new Date(b.checkOutDate).getTime() - new Date(a.checkOutDate).getTime())[0];
 
-        // 3. Tìm khách SẮP ĐẾN
         const nextBooking = bookings
             .filter(b => b.roomId === room.id && b.status === BookingStatus.CONFIRMED && new Date(b.checkInDate).getTime() > nowMs)
             .sort((a, b) => new Date(a.checkInDate).getTime() - new Date(b.checkInDate).getTime())[0];
 
-        // Cảnh báo gấp
+        // Urgent Check
         let isUrgent = false;
         let warningText = null;
         if (nextBooking) {
@@ -65,7 +79,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             }
         }
 
-        // Thông tin khách ĐANG Ở
+        // Occupied Info
         let currentOccupied = null;
         if (activeBooking) {
             const checkOutMs = new Date(activeBooking.checkOutDate).getTime();
@@ -77,7 +91,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             };
         }
 
-        // Logic Ca Đêm
+        // Night Shift Logic
         let nightEvent: { type: 'IN' | 'OUT', time: string, displayTime: string } | null = null;
         if (nextBooking) {
             const t = new Date(nextBooking.checkInDate).getTime();
@@ -104,8 +118,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         };
     });
 
-    // --- SORTING LOGIC ---
-    return processed.sort((a, b) => {
+    // Sort: Property -> Room Order -> Number
+    return list.sort((a, b) => {
         const propA = properties.find(p => p.id === a.room.propertyId);
         const propB = properties.find(p => p.id === b.room.propertyId);
         const pOrderA = propA?.sortOrder ?? 9999;
@@ -118,30 +132,48 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
         return a.room.number.localeCompare(b.room.number, 'vi', { numeric: true });
     });
-
   }, [rooms, bookings, currentTime, properties]);
 
-  const nightShiftRooms = roomList.filter(r => r.nightEvent !== null);
-  const countDirty = roomList.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
+  // --- FILTER ---
+  const filteredList = processedRooms.filter(item => {
+      if (filter === 'ALL') return true;
+      if (filter === 'DIRTY') return item.room.status === RoomStatus.VACANT_DIRTY;
+      if (filter === 'CLEAN') return item.room.status === RoomStatus.VACANT_CLEAN;
+      if (filter === 'OCCUPIED') return item.activeBooking || item.room.status === RoomStatus.OCCUPIED;
+      return true;
+  });
+
+  const nightShiftRooms = processedRooms.filter(r => r.nightEvent !== null);
+  const countDirty = processedRooms.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 font-sans select-none">
-      {/* HEADER COMPACT */}
-      <div className="bg-white px-4 py-3 shadow-sm sticky top-0 z-20 border-b border-gray-200 flex justify-between items-center">
-        <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <Brush className="text-orange-600" size={24} />
-          BUỒNG PHÒNG
-        </h1>
-        <div className="flex gap-2">
-            <span className="bg-orange-100 text-orange-800 text-sm font-black px-3 py-1 rounded-lg border border-orange-200">
-                CẦN DỌN: {countDirty}
-            </span>
+    <div className="min-h-screen bg-gray-100 pb-24 font-sans select-none">
+      {/* HEADER */}
+      <div className="bg-white px-4 py-3 shadow-sm sticky top-0 z-20 border-b border-gray-200">
+        <div className="flex justify-between items-center mb-3">
+            <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <Brush className="text-orange-600" size={24} />
+            BUỒNG PHÒNG
+            </h1>
+            <div className="flex gap-2">
+                <span className="bg-orange-100 text-orange-800 text-sm font-black px-3 py-1 rounded-lg border border-orange-200 shadow-sm">
+                    CẦN DỌN: {countDirty}
+                </span>
+            </div>
+        </div>
+        
+        {/* FILTERS */}
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            <button onClick={() => setFilter('ALL')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='ALL' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'}`}>Tất cả</button>
+            <button onClick={() => setFilter('DIRTY')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='DIRTY' ? 'bg-yellow-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Cần dọn ({countDirty})</button>
+            <button onClick={() => setFilter('CLEAN')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='CLEAN' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Sẵn sàng</button>
+            <button onClick={() => setFilter('OCCUPIED')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='OCCUPIED' ? 'bg-red-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Đang ở</button>
         </div>
       </div>
 
-      {/* BANNER CA ĐÊM */}
+      {/* NIGHT SHIFT BANNER */}
       {nightShiftRooms.length > 0 && (
-          <div className="bg-slate-900 text-white p-3 shadow-md">
+          <div className="bg-slate-900 text-white p-3 shadow-md mb-2">
               <div className="flex items-center gap-2 mb-2">
                   <Moon className="text-yellow-400 fill-current" size={18} />
                   <h3 className="font-bold text-sm uppercase">Ca Đêm (22h-7h)</h3>
@@ -162,33 +194,33 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
           </div>
       )}
 
-      {/* DANH SÁCH THẺ */}
-      <div className="p-2 space-y-2">
-        {roomList.map((item, index) => {
+      {/* ROOM LIST */}
+      <div className="p-2 space-y-3">
+        {filteredList.length === 0 && (
+            <div className="text-center text-gray-400 py-10 italic">Không có phòng nào trong danh sách này</div>
+        )}
+
+        {filteredList.map((item, index) => {
             const { room, activeBooking, lastOut, nextIn, isUrgent, warningText, currentOccupied, nightEvent } = item;
             const typeName = roomTypes.find(t => t.id === room.typeId)?.name || '';
-            
-            const prevRoom = roomList[index - 1]?.room;
+            const prevRoom = filteredList[index - 1]?.room;
             const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
             const branchName = properties.find(p => p.id === room.propertyId)?.name;
 
             // --- UI RENDER LOGIC ---
-            let cardBg = "";
-            let borderColor = "";
-            let statusIndicator = null; // Thay thế nút bấm bằng Indicator tĩnh
+            let cardBg = "bg-white";
+            let borderColor = "border-gray-200";
+            let actionBtn = null;
             let infoContent = null;
 
             if (activeBooking) {
                 // === CASE 1: PHÒNG ĐANG Ở ===
                 cardBg = "bg-red-50";
-                borderColor = "border-red-300";
-
+                borderColor = "border-red-200";
                 const minLeft = currentOccupied ? currentOccupied.minutesLeft : 999;
-                const isLeavingSoon = minLeft <= 60 && minLeft >= 0;
-                const isOverDue = minLeft < 0;
-
+                
                 infoContent = (
-                    <div className="flex flex-col justify-center h-full space-y-1.5">
+                    <div className="flex flex-col justify-center h-full space-y-1.5 pl-1">
                         <div className="flex items-center gap-2">
                             <LogOut size={16} className="text-red-500"/>
                             <div className="flex flex-col leading-none">
@@ -198,41 +230,34 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                                 </span>
                             </div>
                         </div>
-
                         {nextIn && (
-                            <div className="flex items-center gap-2 border-t border-red-100 pt-1">
+                            <div className="flex items-center gap-2 border-t border-red-200 pt-1">
                                 <ArrowRight size={14} className="text-green-600"/>
-                                <div className="flex flex-col leading-none">
-                                    <span className="text-[10px] text-green-600 font-bold uppercase">Khách kế:</span>
-                                    <span className="text-sm font-bold text-green-800">
-                                        {formatCompactDateTime(nextIn)}
-                                    </span>
-                                </div>
+                                <span className="text-[10px] text-green-700 font-bold">Sau đó: {formatCompactDateTime(nextIn)}</span>
                             </div>
                         )}
-
-                        {isLeavingSoon && <div className="text-orange-600 font-black text-xs animate-pulse">⚡️ SẮP RA ({minLeft}p)</div>}
-                        {isOverDue && <div className="text-red-600 font-black text-xs">⚠️ QUÁ GIỜ ({Math.abs(minLeft)}p)</div>}
+                        {minLeft <= 60 && minLeft >= 0 && <div className="text-orange-600 font-black text-xs animate-pulse">⚡️ SẮP RA ({minLeft}p)</div>}
+                        {minLeft < 0 && <div className="text-red-600 font-black text-xs">⚠️ QUÁ GIỜ ({Math.abs(minLeft)}p)</div>}
                     </div>
                 );
 
-                statusIndicator = (
-                    <div className="w-full h-full bg-red-100 flex flex-col items-center justify-center text-red-500 border-l border-red-200">
+                actionBtn = (
+                    <div className="w-full h-full bg-red-100 flex flex-col items-center justify-center text-red-400">
                         <User size={28} />
-                        <span className="text-[10px] font-bold mt-1 text-center uppercase">Đang ở</span>
+                        <span className="text-[10px] font-bold mt-1 uppercase">Đang ở</span>
                     </div>
                 );
 
             } else if (room.status === RoomStatus.VACANT_DIRTY) {
-                // === CASE 2: PHÒNG BẨN ===
+                // === CASE 2: PHÒNG BẨN (CẦN DỌN) ===
                 cardBg = "bg-yellow-50";
-                borderColor = "border-yellow-400";
+                borderColor = "border-yellow-400 shadow-md"; 
                 
                 infoContent = (
-                    <div className="flex flex-col justify-center h-full space-y-1">
+                    <div className="flex flex-col justify-center h-full space-y-1 pl-1">
                         <div className="flex items-center gap-2 text-gray-600">
                             <LogOut size={16} className="text-gray-400"/> 
-                            <span className="text-sm font-bold">{formatCompactDateTime(lastOut)}</span>
+                            <span className="text-sm font-bold">{lastOut ? formatCompactDateTime(lastOut) : '---'}</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <LogIn size={16} className={nextIn ? "text-blue-600" : "text-gray-300"}/>
@@ -241,74 +266,81 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                             </span>
                         </div>
                         {isUrgent && (
-                            <div className="text-red-600 font-black text-xs flex items-center gap-1 mt-1 animate-pulse">
+                            <div className="text-red-600 font-black text-xs flex items-center gap-1 mt-1 animate-pulse bg-red-100 px-1 rounded">
                                 <Zap size={12} fill="currentColor"/> {warningText}
                             </div>
                         )}
                     </div>
                 );
 
-                // STATIC INDICATOR - KHÔNG CÓ ONCLICK
-                statusIndicator = (
-                    <div className="w-full h-full bg-yellow-400 flex flex-col items-center justify-center text-white border-l border-yellow-500">
-                        <AlertCircle size={32} strokeWidth={3} />
-                        <span className="text-[10px] font-black uppercase mt-1">Cần dọn</span>
-                    </div>
+                // --- BIG ACTION BUTTON ---
+                actionBtn = (
+                    <button 
+                        onClick={() => handleAction(room.id, RoomStatus.VACANT_CLEAN)}
+                        className="w-full h-full bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner"
+                    >
+                        <Check size={32} strokeWidth={4} />
+                        <span className="text-[10px] font-black uppercase mt-1">SẠCH</span>
+                    </button>
                 );
 
             } else {
                 // === CASE 3: PHÒNG SẠCH ===
                 cardBg = "bg-white";
-                borderColor = "border-gray-200 opacity-80";
+                borderColor = "border-gray-200 opacity-90";
 
                 infoContent = (
-                    <div className="flex flex-col justify-center h-full space-y-1">
+                    <div className="flex flex-col justify-center h-full space-y-1 pl-1">
                         <div className="flex items-center gap-2">
+                            <CheckCircle size={16} className="text-green-500"/>
+                            <span className="text-sm font-bold text-green-700">Đã sẵn sàng</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
                             <LogIn size={16} className={nextIn ? "text-blue-600" : "text-gray-300"}/>
-                            <div className="flex flex-col leading-none">
-                                <span className="text-[10px] text-gray-400 font-bold uppercase">Khách tới:</span>
-                                <span className={`text-sm font-bold ${nextIn ? 'text-blue-700' : 'text-gray-400 italic'}`}>
-                                    {nextIn ? formatCompactDateTime(nextIn) : 'Chưa có'}
-                                </span>
-                            </div>
+                            <span className={`text-sm font-bold ${nextIn ? 'text-blue-700' : 'text-gray-400 italic'}`}>
+                                {nextIn ? formatCompactDateTime(nextIn) : 'Chưa có khách'}
+                            </span>
                         </div>
                     </div>
                 );
 
-                // STATIC INDICATOR - KHÔNG CÓ ONCLICK
-                statusIndicator = (
-                    <div className="w-full h-full bg-gray-50 flex flex-col items-center justify-center text-green-600 border-l border-gray-100">
-                        <ShieldCheck size={28} />
-                        <span className="text-[10px] font-bold mt-1 text-center uppercase">Sẵn sàng</span>
-                    </div>
+                // Nút Báo Bẩn (Để sửa sai hoặc dọn lại)
+                actionBtn = (
+                    <button 
+                        onClick={() => handleAction(room.id, RoomStatus.VACANT_DIRTY)}
+                        className="w-full h-full bg-gray-50 hover:bg-gray-100 text-gray-400 active:text-gray-600 flex flex-col items-center justify-center border-l border-gray-100 transition-colors"
+                    >
+                        <RotateCcw size={20} />
+                        <span className="text-[9px] font-bold mt-1">Báo bẩn</span>
+                    </button>
                 );
             }
 
             return (
                 <React.Fragment key={room.id}>
-                    {isNewBranch && (
-                        <div className="sticky top-[58px] z-10 bg-gray-200/90 backdrop-blur-sm px-3 py-1.5 flex items-center gap-2 text-xs font-bold text-gray-700 uppercase tracking-wider border-y border-gray-300 shadow-sm mt-2 first:mt-0">
+                    {isNewBranch && filter === 'ALL' && (
+                        <div className="sticky top-[105px] z-10 bg-gray-200/95 backdrop-blur-sm px-4 py-2 flex items-center gap-2 text-xs font-bold text-gray-700 uppercase tracking-wider border-y border-gray-300 shadow-sm mt-4 mb-2 first:mt-0">
                             <Building2 size={14} className="text-blue-600"/>
                             {branchName}
                         </div>
                     )}
 
-                    <div className={`flex min-h-[100px] rounded-xl overflow-hidden border-2 shadow-sm ${cardBg} ${borderColor}`}>
-                        {/* CỘT TRÁI (25%): Số phòng */}
-                        <div className="w-[25%] flex flex-col items-center justify-center border-r border-black/5 p-1 relative">
-                            {nightEvent && <Moon size={12} className="absolute top-1 left-1 text-indigo-600 fill-current" />}
+                    <div className={`flex min-h-[100px] rounded-xl overflow-hidden border-2 shadow-sm relative transition-all duration-300 ${cardBg} ${borderColor}`}>
+                        {/* CỘT TRÁI (28%): Số phòng */}
+                        <div className="w-[28%] flex flex-col items-center justify-center border-r border-black/5 p-1 relative bg-white/50">
+                            {nightEvent && <Moon size={14} className="absolute top-1 left-1 text-indigo-600 fill-current" />}
                             <span className="text-3xl md:text-4xl font-black text-gray-800 tracking-tighter">{room.number}</span>
-                            <span className="text-[9px] font-bold uppercase text-gray-500 text-center leading-none mt-1">{typeName}</span>
+                            <span className="text-[9px] font-bold uppercase text-gray-500 text-center leading-none mt-1 line-clamp-1">{typeName}</span>
                         </div>
 
-                        {/* CỘT GIỮA (50%): Thông tin */}
-                        <div className="w-[50%] px-3 py-2">
+                        {/* CỘT GIỮA (47%): Thông tin */}
+                        <div className="w-[47%] px-2 py-2">
                             {infoContent}
                         </div>
 
-                        {/* CỘT PHẢI (25%): TRẠNG THÁI TĨNH */}
-                        <div className="w-[25%]">
-                            {statusIndicator}
+                        {/* CỘT PHẢI (25%): Nút bấm */}
+                        <div className="w-[25%] border-l border-black/5">
+                            {actionBtn}
                         </div>
                     </div>
                 </React.Fragment>

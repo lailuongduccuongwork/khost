@@ -283,10 +283,6 @@ const App: React.FC = () => {
     localStorage.removeItem('k_host_tenant');
   };
 
-  const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
-    DataService.updateRoomStatus(roomId, status);
-  };
-
   const manualRefresh = () => setDataTick(t => t + 1);
 
   // --- Super Admin: Impersonate Tenant ---
@@ -301,6 +297,12 @@ const App: React.FC = () => {
       setIsSuperAdminView(true);
       localStorage.removeItem('k_host_tenant');
       initDataService('SYSTEM');
+  };
+
+  // --- HOUSEKEEPING HANDLER ---
+  const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
+      DataService.updateRoomStatus(roomId, status);
+      // No manualRefresh needed as DataService listeners will trigger update
   };
 
   // --- Effective User Logic (Impersonation) ---
@@ -513,7 +515,6 @@ const App: React.FC = () => {
                             customers={customers}
                             tags={tags}
                             properties={properties} // Pass properties explicitly
-                            onUpdateStatus={handleUpdateRoomStatus}
                             onRefresh={manualRefresh}
                             currentProperty={currentPropertyObj}
                             currentUser={effectiveUser} // Pass effective user
@@ -528,6 +529,7 @@ const App: React.FC = () => {
                             roomTypes={roomTypes} 
                             properties={properties}
                             onRefresh={manualRefresh}
+                            onUpdateStatus={handleUpdateRoomStatus}
                         />
                     )}
 
