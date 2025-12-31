@@ -124,6 +124,14 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       if (onRefresh) onRefresh();
   };
 
+  const handleResetAll = () => {
+      if(confirm("CẢNH BÁO CỰC KỲ QUAN TRỌNG!\n\nBạn sắp XOÁ SẠCH TOÀN BỘ dữ liệu đặt phòng trên hệ thống.\nHành động này không thể khôi phục được.\n\nBạn có chắc chắn muốn làm mới (Reset) toàn bộ không?")) {
+          DataService.resetAllBookings();
+          if(onRefresh) onRefresh();
+          alert("Đã xoá sạch dữ liệu đặt phòng!");
+      }
+  }
+
   const getStatusBadge = (status: BookingStatus) => {
       const styles = {
           [BookingStatus.PENDING]: 'bg-yellow-100 text-yellow-800',
@@ -372,6 +380,17 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
         </div>
         
         <div className="flex gap-2 w-full md:w-auto">
+            {/* RESET BUTTON */}
+            {canDelete && (
+                <button 
+                    onClick={handleResetAll}
+                    className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-2 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors"
+                    title="Xoá sạch toàn bộ dữ liệu đặt phòng"
+                >
+                    <Trash2 size={16} /> <span className="hidden sm:inline">Reset Dữ Liệu</span>
+                </button>
+            )}
+
             {canAdd && (
                 <>
                     <button 

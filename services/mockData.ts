@@ -20,17 +20,6 @@ export const INITIAL_TENANTS: Tenant[] = [
         createdAt: new Date().toISOString(),
         adminUsername: 'admin',
         adminPassword: '000'
-    },
-    { 
-        id: 'tenant_luxury', 
-        name: 'Luxury Resorts', 
-        domain: 'luxury.khost.vn',
-        status: 'ACTIVE', 
-        planId: 'plan_enterprise', 
-        subscriptionEndDate: new Date(Date.now() + 86400000 * 365).toISOString(), 
-        createdAt: new Date().toISOString(),
-        adminUsername: 'admin_lux',
-        adminPassword: '123'
     }
 ];
 
@@ -67,13 +56,13 @@ export const INITIAL_ROOM_TYPES: RoomType[] = [
 export const INITIAL_ROOMS: Room[] = [
   // Hanoi Rooms
   { id: 'r101', tenantId: DEFAULT_TENANT_ID, number: '101', typeId: 'rt1', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 0 },
-  { id: 'r102', tenantId: DEFAULT_TENANT_ID, number: '102', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.OCCUPIED, floor: 1, sortOrder: 1 },
-  { id: 'r103', tenantId: DEFAULT_TENANT_ID, number: '103', typeId: 'rt1', propertyId: 'p1', status: RoomStatus.VACANT_DIRTY, floor: 1, sortOrder: 2 },
+  { id: 'r102', tenantId: DEFAULT_TENANT_ID, number: '102', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 1 },
+  { id: 'r103', tenantId: DEFAULT_TENANT_ID, number: '103', typeId: 'rt1', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 2 },
   { id: 'r201', tenantId: DEFAULT_TENANT_ID, number: '201', typeId: 'rt3', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 2, sortOrder: 3 },
   { id: 'r202', tenantId: DEFAULT_TENANT_ID, number: '202', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.MAINTENANCE, floor: 2, sortOrder: 4 },
   // Danang Rooms
   { id: 'r301', tenantId: DEFAULT_TENANT_ID, number: '301', typeId: 'rt2', propertyId: 'p2', status: RoomStatus.VACANT_CLEAN, floor: 3, sortOrder: 0 },
-  { id: 'r302', tenantId: DEFAULT_TENANT_ID, number: '302', typeId: 'rt3', propertyId: 'p2', status: RoomStatus.OCCUPIED, floor: 3, sortOrder: 1 },
+  { id: 'r302', tenantId: DEFAULT_TENANT_ID, number: '302', typeId: 'rt3', propertyId: 'p2', status: RoomStatus.VACANT_CLEAN, floor: 3, sortOrder: 1 },
 ];
 
 export const INITIAL_CUSTOMERS: Customer[] = [
@@ -81,46 +70,8 @@ export const INITIAL_CUSTOMERS: Customer[] = [
   { id: 'c2', tenantId: DEFAULT_TENANT_ID, name: 'Trần Thị B', phone: '0987654321', identityCard: '001090000002' },
 ];
 
-export const INITIAL_BOOKINGS: Booking[] = [
-  {
-    id: 'b1',
-    tenantId: DEFAULT_TENANT_ID,
-    propertyId: 'p1',
-    roomId: 'r102',
-    customerId: 'c1',
-    guestName: 'Nguyễn Văn A',
-    guestPhone: '0912345678',
-    checkInDate: new Date().toISOString(),
-    checkOutDate: new Date(Date.now() + 86400000 * 2).toISOString(),
-    status: BookingStatus.CHECKED_IN,
-    totalPrice: 1600000,
-    paidAmount: 500000,
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    createdBy: 'u2',
-    notes: 'Khách quen, cần thêm gối',
-    tags: ['tag1'],
-    extraFees: [] // Initial empty
-  },
-  {
-    id: 'b2',
-    tenantId: DEFAULT_TENANT_ID,
-    propertyId: 'p2',
-    roomId: 'r302',
-    customerId: 'c2',
-    guestName: 'Trần Thị B',
-    guestPhone: '0987654321',
-    checkInDate: new Date().toISOString(),
-    checkOutDate: new Date(Date.now() + 86400000).toISOString(),
-    status: BookingStatus.CHECKED_IN,
-    totalPrice: 1500000,
-    paidAmount: 1500000,
-    createdAt: new Date(Date.now() - 100000).toISOString(),
-    createdBy: 'u1',
-    notes: '',
-    tags: ['tag2'],
-    extraFees: []
-  }
-];
+// EMPTY BOOKINGS TO RESET SYSTEM
+export const INITIAL_BOOKINGS: Booking[] = [];
 
 export const INITIAL_USERS: User[] = [
   {

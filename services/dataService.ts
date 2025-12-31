@@ -53,7 +53,6 @@ const getBaseRef = () => {
 };
 
 // --- CRITICAL FIX: HYBRID DATA PARSER & DEDUPLICATOR ---
-// Hàm này giải quyết vấn đề dữ liệu bị trộn lẫn giữa Array (index 0,1) và Map (key ID) trên Firebase
 const snapshotToArray = <T>(snap: any): T[] => {
     const val = snap.val();
     if (!val) return [];
@@ -62,15 +61,12 @@ const snapshotToArray = <T>(snap: any): T[] => {
     
     // 1. Lấy toàn bộ dữ liệu thô bất kể cấu trúc
     if (Array.isArray(val)) {
-        // Firebase trả về Array (nếu keys là số nguyên liên tiếp)
-        rawList = val.filter(x => x); // Lọc bỏ phần tử null/undefined
+        rawList = val.filter(x => x); 
     } else if (typeof val === 'object') {
-        // Firebase trả về Map (nếu keys là chuỗi ID)
         rawList = Object.values(val);
     }
 
-    // 2. KHỬ TRÙNG LẶP DỰA TRÊN ID (QUAN TRỌNG NHẤT)
-    // Nếu 'r101' tồn tại cả ở index 0 và key 'r101', map này sẽ chỉ giữ lại bản ghi cuối cùng (thường là bản mới nhất)
+    // 2. KHỬ TRÙNG LẶP DỰA TRÊN ID
     const uniqueMap = new Map();
     rawList.forEach((item: any) => {
         if (item && typeof item === 'object' && item.id) {
@@ -105,7 +101,6 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
 
         console.log(`🔌 Listening to: ${basePath}`);
 
-        // Helper để bind listener
         const bind = <T>(node: string, cacheKey: keyof typeof CACHE) => {
             const nodeRef = ref(db, `${basePath}/${node}`);
             onValue(nodeRef, (snap) => {
@@ -119,11 +114,8 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
              bind<Tenant>('tenants', 'tenants');
              bind<SubscriptionPlan>('plans', 'plans');
              bind<User>('users', 'systemUsers');
-             
-             // Auto-seed system data if empty
              get(ref(db, 'system/tenants')).then(snap => { if (!snap.exists()) _seedSystemData(); });
         } else {
-            // Business Data Listeners
             bind<Property>('properties', 'properties');
             bind<RoomType>('roomTypes', 'roomTypes');
             bind<Tag>('tags', 'tags');
@@ -132,19 +124,16 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             bind<Booking>('bookings', 'bookings');
             bind<Customer>('customers', 'customers');
             
-            // Users Sync (Self-Repair & Client-side Filtering)
             onValue(ref(db, `${basePath}/users`), async (snap) => { 
                 const users = snapshotToArray<User>(snap);
                 CACHE.users = users;
                 
-                // Logic tự sửa lỗi mất user khi tạo tenant mới
                 if (users.length === 0) {
                     try {
                         const sysSnap = await get(ref(db, 'system/users'));
                         if (sysSnap.exists()) {
                             const allSysUsers = snapshotToArray<User>(sysSnap);
                             const recovered = allSysUsers.filter(u => u.tenantId === tenantId);
-                            
                             if (recovered.length > 0) {
                                 CACHE.users = recovered;
                                 const updates: any = {};
@@ -157,14 +146,12 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                 onDataChange(); 
             });
 
-            // History Listener (Limit 50)
             const historyQuery = query(ref(db, `${basePath}/history`), limitToLast(50));
             onValue(historyQuery, (snap) => {
                  CACHE.history = snapshotToArray<HistoryLog>(snap).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
                  onDataChange();
             });
 
-            // Auto-seed default data for new tenants if completely empty
             get(ref(db, `${basePath}/properties`)).then(snap => { if (!snap.exists()) _seedTenantData(tenantId); });
         }
     } catch (e) {
@@ -176,18 +163,13 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
 const _seedSystemData = () => {
     if (!db) return;
     const updates: any = {};
-    
-    // Seed as Maps (Key = ID), not Arrays
     const tenantsMap: any = {}; INITIAL_TENANTS.forEach(t => tenantsMap[t.id] = t);
     const plansMap: any = {}; INITIAL_PLANS.forEach(p => plansMap[p.id] = p);
-    
     updates['system/tenants'] = tenantsMap;
     updates['system/plans'] = plansMap;
     
     const usersMap: Record<string, User> = {};
     INITIAL_USERS.forEach(u => usersMap[u.id] = u);
-    
-    // Auto generate admin for demo tenants
     INITIAL_TENANTS.forEach(t => {
         if (t.adminUsername) {
             const uid = `u_${t.id}_admin`;
@@ -205,9 +187,7 @@ const _seedSystemData = () => {
 
 const _seedTenantData = (tenantId: string) => {
     if (!db) return;
-    // Helper to map array to object keyed by ID
     const toMap = (arr: any[]) => arr.reduce((acc, item) => ({...acc, [item.id]: {...item, tenantId}}), {});
-    
     const path = `tenants/${tenantId}`;
     const updates: any = {};
     updates[`${path}/properties`] = toMap(INITIAL_PROPERTIES);
@@ -217,21 +197,17 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/customers`] = toMap(INITIAL_CUSTOMERS);
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
-    
     update(ref(db), updates);
 }
 
-// --- ATOMIC CRUD OPERATIONS (THE CORE FIX) ---
+// --- ATOMIC CRUD OPERATIONS ---
 
-// 1. Generic Save Item (Update Specific Node via ID)
 const _saveItem = (node: string, item: any) => {
     if (!item.id || !activeTenantId || !db) return;
     const basePath = getBaseRef();
-    // Luôn ghi vào path có ID cụ thể, tránh việc Firebase tự sinh index mảng
     const itemRef = ref(db, `${basePath}/${node}/${item.id}`);
     const scopedItem = { ...item, tenantId: activeTenantId };
     
-    // Optimistic Update Cache
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
     if (Array.isArray(list)) {
@@ -239,91 +215,71 @@ const _saveItem = (node: string, item: any) => {
         if (idx > -1) list[idx] = scopedItem;
         else list.push(scopedItem);
     }
-
-    // Atomic Server Update
     return set(itemRef, scopedItem).catch(e => console.error(`Save ${node} failed`, e));
 }
 
-// 2. Generic Delete Item
 const _deleteItem = (node: string, id: string) => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
     const itemRef = ref(db, `${basePath}/${node}/${id}`);
     
-    // Optimistic
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
     if (Array.isArray(list)) {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] = list.filter((x:any) => x.id !== id);
     }
-
     return remove(itemRef).catch(e => console.error(`Delete ${node} failed`, e));
 }
 
-// 3. Multi-path Update (Fixes Array vs Map issue)
-// Thay vì lưu cả mảng [A, B], hàm này chuyển đổi thành Map {A.id: A, B.id: B} để update.
-// Điều này giúp giữ nguyên cấu trúc Map trên Firebase, tránh xung đột.
 const _saveListAsMap = (node: string, list: any[]) => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
     const updates: any = {};
     
-    // Update local cache first
     // @ts-ignore
     CACHE[node as keyof typeof CACHE] = list;
 
-    // Create atomic updates for each item in the list
     list.forEach(item => {
         if(item && item.id) {
             updates[`${basePath}/${node}/${item.id}`] = { ...item, tenantId: activeTenantId };
         }
     });
-    
-    // Sử dụng update() thay vì set() để không xoá đè toàn bộ node cha nếu không cần thiết
     update(ref(db), updates).catch(e => console.error(`Bulk save ${node} failed`, e));
 };
 
-// 4. BULK DELETE (Atomic Set Null)
 const _deleteItems = (node: string, ids: string[]) => {
     if (!activeTenantId || !db || ids.length === 0) return;
     const basePath = getBaseRef();
     const updates: any = {};
-    
-    // Create null updates to delete specific keys
     ids.forEach(id => {
         updates[`${basePath}/${node}/${id}`] = null;
     });
-
-    // Optimistic Update Cache
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
     if (Array.isArray(list)) {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] = list.filter((x:any) => !ids.includes(x.id));
     }
-
     return update(ref(db), updates).catch(e => console.error(`Bulk delete ${node} failed`, e));
 }
 
-// 5. BULK SOFT DELETE BOOKINGS (Safe Delete)
-const _softDeleteBookings = (ids: string[], staffId: string) => {
+// --- HARD DELETE BOOKINGS (SỬA ĐỔI QUAN TRỌNG) ---
+// Chuyển từ Soft Delete (ẩn) sang Hard Delete (xoá null) để tránh lỗi trùng lịch
+const _hardDeleteBookings = (ids: string[], staffId: string) => {
     if (!activeTenantId || !db || ids.length === 0) return;
     const basePath = getBaseRef();
     const updates: any = {};
     
     ids.forEach(id => {
+        // 1. XOÁ VĨNH VIỄN KHỎI FIREBASE
+        updates[`${basePath}/bookings/${id}`] = null;
+        
         const booking = CACHE.bookings.find(b => b.id === id);
         if (booking) {
-            // 1. Mark as DELETED in DB
-            const deletedBooking = { ...booking, status: BookingStatus.DELETED };
-            updates[`${basePath}/bookings/${id}`] = deletedBooking;
-            
-            // 2. Release Room if occupied
+            // 2. Release Room
             if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
                 updates[`${basePath}/rooms/${booking.roomId}/status`] = RoomStatus.VACANT_CLEAN;
-                
-                // Optimistic Room Update
                 const r = CACHE.rooms.find(r => r.id === booking.roomId);
                 if (r) r.status = RoomStatus.VACANT_CLEAN;
             }
@@ -335,19 +291,39 @@ const _softDeleteBookings = (ids: string[], staffId: string) => {
                 tenantId: activeTenantId || undefined,
                 timestamp: new Date().toISOString(),
                 action: 'DELETE',
-                description: `Xoá nhiều đơn: ${id}`,
-                bookingSnapshot: deletedBooking,
+                description: `XOÁ VĨNH VIỄN đơn: ${id}`,
+                bookingSnapshot: booking,
                 staffId
             };
             updates[`${basePath}/history/${logId}`] = newLog;
-
-            // Optimistic Booking Update
-            const bIdx = CACHE.bookings.findIndex(b => b.id === id);
-            if (bIdx > -1) CACHE.bookings[bIdx] = deletedBooking;
         }
     });
 
-    return update(ref(db), updates).catch(e => console.error("Bulk soft delete failed", e));
+    // Optimistic Cache Update
+    CACHE.bookings = CACHE.bookings.filter(b => !ids.includes(b.id));
+
+    return update(ref(db), updates).catch(e => console.error("Hard delete failed", e));
+};
+
+const _resetAllBookings = () => {
+    if (!activeTenantId || !db) return;
+    const basePath = getBaseRef();
+    
+    // Xoá node bookings
+    remove(ref(db, `${basePath}/bookings`)).then(() => {
+        console.log("Đã xoá sạch toàn bộ booking trên Firebase");
+    });
+
+    // Reset trạng thái tất cả phòng về sạch
+    const updates: any = {};
+    CACHE.rooms.forEach(r => {
+        updates[`${basePath}/rooms/${r.id}/status`] = RoomStatus.VACANT_CLEAN;
+    });
+    update(ref(db), updates);
+
+    // Xoá cache
+    CACHE.bookings = [];
+    CACHE.rooms.forEach(r => r.status = RoomStatus.VACANT_CLEAN);
 };
 
 
@@ -368,13 +344,11 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
     update(ref(db, `${basePath}/rooms/${roomId}`), { status }).catch(console.error);
-    
-    // Optimistic
     const r = CACHE.rooms.find(r => r.id === roomId);
     if(r) r.status = status;
 };
 
-// Booking Operations (Strictly Atomic)
+// Booking Operations
 const _addBooking = (booking: Booking) => {
     _saveItem('bookings', booking);
     if (booking.status === BookingStatus.CHECKED_IN) {
@@ -387,7 +361,6 @@ const _updateBooking = (booking: Booking) => {
     const oldBooking = CACHE.bookings.find(b => b.id === booking.id);
     _saveItem('bookings', booking);
 
-    // Status Change Logic
     if (oldBooking && oldBooking.status !== booking.status) {
         if (booking.status === BookingStatus.CHECKED_IN) _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED);
         else if (booking.status === BookingStatus.CHECKED_OUT) _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY);
@@ -405,27 +378,14 @@ const _updateBooking = (booking: Booking) => {
 };
 
 const _deleteBooking = (id: string, staffId: string): boolean => {
-    const booking = CACHE.bookings.find(b => b.id === id);
-    if (!booking) return false;
-    
-    // Soft Delete (Atomic Update Status)
-    const deletedSnapshot = { ...booking, status: BookingStatus.DELETED };
-    _saveItem('bookings', deletedSnapshot);
-    
-    // Release Room
-    if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
-        _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN);
-    }
-    
-    _logAction('DELETE', deletedSnapshot, `Xóa đơn ${id}`, staffId);
+    // Chuyển sang xoá cứng
+    _hardDeleteBookings([id], staffId);
     return true;
 };
 
 // --- PUBLIC API EXPORT ---
 export const DataService = {
   init: _initRealtimeConnection,
-  
-  // Auth & User
   login: async (username: string, password: string) => {
       _ensureFirebase();
       if (db) {
@@ -442,11 +402,9 @@ export const DataService = {
   },
   
   findUserByUsername: async (u: string) => {
-      // Check memory cache first
       return CACHE.systemUsers.find(user => user.username === u) || CACHE.users.find(user => user.username === u) || null;
   },
 
-  // Getters (Read from Cache - Fast)
   getTenants: () => CACHE.tenants,
   getPlans: () => CACHE.plans,
   getSystemUsers: () => CACHE.systemUsers,
@@ -458,6 +416,7 @@ export const DataService = {
   },
   getRoomTypes: () => CACHE.roomTypes,
   getBookings: (propId?: string) => {
+      // Chỉ trả về các đơn chưa bị xoá (dù hàm deleteBooking giờ đã xoá cứng rồi)
       let b = CACHE.bookings.filter(x => x.status !== BookingStatus.DELETED);
       if (propId) b = b.filter(x => x.propertyId === propId);
       return b;
@@ -468,18 +427,17 @@ export const DataService = {
   getTransactionCategories: () => CACHE.transactionCategories,
   getHistory: () => CACHE.history,
 
-  // Setters (Atomic / Bulk Atomic - enforcing Map structure)
-  saveTenants: (list: Tenant[]) => _saveListAsMap('tenants', list), // System level
+  saveTenants: (list: Tenant[]) => _saveListAsMap('tenants', list), 
   deleteTenant: (id: string) => {
       if(!db) return;
       const updates: any = {};
       updates[`system/tenants/${id}`] = null;
-      updates[`tenants/${id}`] = null; // Wipe data
-      updates[`system/users/u_${id}_admin`] = null; // Wipe default admin
+      updates[`tenants/${id}`] = null; 
+      updates[`system/users/u_${id}_admin`] = null; 
       update(ref(db), updates);
   },
   
-  savePlans: (list: SubscriptionPlan[]) => _saveListAsMap('plans', list), // System level
+  savePlans: (list: SubscriptionPlan[]) => _saveListAsMap('plans', list), 
 
   seedTenantAdminUser: (user: User) => {
       if(!db) return;
@@ -489,54 +447,49 @@ export const DataService = {
       update(ref(db), updates);
   },
 
-  // Master Data (Using bulk update map for Reordering support)
-  // This will fix the "Array vs Map" issue by forcing object structure
   saveProperties: (list: Property[]) => _saveListAsMap('properties', list),
   saveRooms: (list: Room[]) => _saveListAsMap('rooms', list),
   saveRoomTypes: (list: RoomType[]) => _saveListAsMap('roomTypes', list),
   saveTags: (list: Tag[]) => _saveListAsMap('tags', list),
   saveTransactionCategories: (list: TransactionCategory[]) => _saveListAsMap('transactionCategories', list),
 
-  // Transactional Data (Strict Atomic)
   updateRoomStatus: _updateRoomStatus,
   addBooking: _addBooking,
   updateBooking: _updateBooking,
-  deleteBooking: _deleteBooking,
-  deleteBookings: _softDeleteBookings, // Exposed for batch soft delete
-  saveBookings: (list: Booking[]) => _saveListAsMap('bookings', list), // Fallback for bulk ops
+  deleteBooking: _deleteBooking, // Now Hard Delete
+  deleteBookings: _hardDeleteBookings, // Now Hard Delete
+  saveBookings: (list: Booking[]) => _saveListAsMap('bookings', list), 
+  
+  // NEW: Reset All
+  resetAllBookings: _resetAllBookings,
 
   addCustomer: (c: Customer) => _saveItem('customers', c),
   
   addUser: (u: User) => {
       _saveItem('users', u);
-      if(db) set(ref(db, `system/users/${u.id}`), u); // Sync to global system users
+      if(db) set(ref(db, `system/users/${u.id}`), u); 
   },
   updateUser: (u: User) => {
       _saveItem('users', u);
-      if(db) update(ref(db, `system/users/${u.id}`), u); // Sync to global system users
+      if(db) update(ref(db, `system/users/${u.id}`), u); 
   },
   deleteUser: (id: string) => {
       _deleteItem('users', id);
       if(db) remove(ref(db, `system/users/${id}`));
   },
 
-  // Bulk Delete Generic Helper
   deleteItems: _deleteItems,
   
-  // Undo Import
   deleteBookingsByBatchId: (batchId: string, staffId: string) => {
-      const toDelete = CACHE.bookings.filter(b => b.importBatchId === batchId && b.status !== BookingStatus.DELETED);
+      const toDelete = CACHE.bookings.filter(b => b.importBatchId === batchId);
       if (toDelete.length === 0) return 0;
       const ids = toDelete.map(b => b.id);
-      
-      _softDeleteBookings(ids, staffId);
-      
+      _hardDeleteBookings(ids, staffId);
       return ids.length;
   },
 
   logAction: _logAction,
 
-  // Utils
   generateBookingId: () => {
       const now = new Date();
       const seq = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
@@ -548,8 +501,11 @@ export const DataService = {
       const e = new Date(end).getTime();
       const buffer = 30 * 60 * 1000;
       
-      const conflict = CACHE.bookings.find(b => {
-          if(b.id === excludeId || b.status === BookingStatus.CANCELLED || b.status === BookingStatus.DELETED) return false;
+      // Lọc danh sách CACHE.bookings để đảm bảo không có đơn bị lỗi/xoá sót lại
+      const activeBookings = CACHE.bookings.filter(b => b.status !== BookingStatus.DELETED && b.status !== BookingStatus.CANCELLED);
+
+      const conflict = activeBookings.find(b => {
+          if(b.id === excludeId) return false;
           if(b.roomId !== roomId) return false;
           const bs = new Date(b.checkInDate).getTime();
           const be = new Date(b.checkOutDate).getTime();
