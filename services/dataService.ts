@@ -28,7 +28,6 @@ let activeTenantId: string | null = null;
 const SYSTEM_TENANT_ID = 'SYSTEM';
 
 // --- IN-MEMORY CACHE ---
-// Dùng để hiển thị nhanh (Optimistic UI) trong lúc chờ Firebase phản hồi
 const CACHE = {
     properties: [] as Property[],
     rooms: [] as Room[],
@@ -53,28 +52,28 @@ const getBaseRef = () => {
     return activeTenantId === SYSTEM_TENANT_ID ? 'system' : `tenants/${activeTenantId}`;
 };
 
-// Helper: Convert Firebase Snapshot to Array SAFELY
-// Fixes "Ghost Duplicates" by handling mixed Array/Map structures and deduplicating by ID
+// --- CRITICAL FIX: HYBRID DATA PARSER & DEDUPLICATOR ---
+// Hàm này giải quyết vấn đề dữ liệu bị trộn lẫn giữa Array (index 0,1) và Map (key ID) trên Firebase
 const snapshotToArray = <T>(snap: any): T[] => {
     const val = snap.val();
     if (!val) return [];
     
     let rawList: T[] = [];
     
-    // Firebase return types handling:
+    // 1. Lấy toàn bộ dữ liệu thô bất kể cấu trúc
     if (Array.isArray(val)) {
-        // Case 1: Firebase treated it as Array (indexes 0, 1, 2...)
-        rawList = val.filter(x => x); // Remove nulls from sparse arrays
+        // Firebase trả về Array (nếu keys là số nguyên liên tiếp)
+        rawList = val.filter(x => x); // Lọc bỏ phần tử null/undefined
     } else if (typeof val === 'object') {
-        // Case 2: Firebase treated it as Map (keys are IDs string)
+        // Firebase trả về Map (nếu keys là chuỗi ID)
         rawList = Object.values(val);
     }
 
-    // Critical Fix: Deduplicate by ID
-    // This removes artifacts where an item might exist in both array index AND object key during migration
+    // 2. KHỬ TRÙNG LẶP DỰA TRÊN ID (QUAN TRỌNG NHẤT)
+    // Nếu 'r101' tồn tại cả ở index 0 và key 'r101', map này sẽ chỉ giữ lại bản ghi cuối cùng (thường là bản mới nhất)
     const uniqueMap = new Map();
     rawList.forEach((item: any) => {
-        if (item && item.id) {
+        if (item && typeof item === 'object' && item.id) {
             uniqueMap.set(item.id, item);
         }
     });
@@ -101,14 +100,15 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         activeTenantId = tenantId;
         if(!_ensureFirebase()) return;
 
-        console.log(`🔌 Connecting Realtime DB for: [${tenantId}]`);
-
         const basePath = getBaseRef();
         if (!basePath) return;
 
+        console.log(`🔌 Listening to: ${basePath}`);
+
         // Helper để bind listener
         const bind = <T>(node: string, cacheKey: keyof typeof CACHE) => {
-            onValue(ref(db, `${basePath}/${node}`), (snap) => {
+            const nodeRef = ref(db, `${basePath}/${node}`);
+            onValue(nodeRef, (snap) => {
                 // @ts-ignore
                 CACHE[cacheKey] = snapshotToArray<T>(snap);
                 onDataChange(); 
@@ -140,7 +140,6 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                 // Logic tự sửa lỗi mất user khi tạo tenant mới
                 if (users.length === 0) {
                     try {
-                        // Client-side filtering to avoid "Index not defined"
                         const sysSnap = await get(ref(db, 'system/users'));
                         if (sysSnap.exists()) {
                             const allSysUsers = snapshotToArray<User>(sysSnap);
@@ -148,7 +147,6 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                             
                             if (recovered.length > 0) {
                                 CACHE.users = recovered;
-                                // Write back individually
                                 const updates: any = {};
                                 recovered.forEach(u => updates[`${basePath}/users/${u.id}`] = u);
                                 update(ref(db), updates);
@@ -166,7 +164,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                  onDataChange();
             });
 
-            // Auto-seed default data for new tenants
+            // Auto-seed default data for new tenants if completely empty
             get(ref(db, `${basePath}/properties`)).then(snap => { if (!snap.exists()) _seedTenantData(tenantId); });
         }
     } catch (e) {
@@ -174,19 +172,18 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
     }
 };
 
-// --- SEEDING (ATOMIC WRITE) ---
+// --- SEEDING (ATOMIC WRITE MAP) ---
 const _seedSystemData = () => {
     if (!db) return;
     const updates: any = {};
     
-    // Seed as Maps, not Arrays
+    // Seed as Maps (Key = ID), not Arrays
     const tenantsMap: any = {}; INITIAL_TENANTS.forEach(t => tenantsMap[t.id] = t);
     const plansMap: any = {}; INITIAL_PLANS.forEach(p => plansMap[p.id] = p);
     
     updates['system/tenants'] = tenantsMap;
     updates['system/plans'] = plansMap;
     
-    // Seed users as Map
     const usersMap: Record<string, User> = {};
     INITIAL_USERS.forEach(u => usersMap[u.id] = u);
     
@@ -226,11 +223,11 @@ const _seedTenantData = (tenantId: string) => {
 
 // --- ATOMIC CRUD OPERATIONS (THE CORE FIX) ---
 
-// 1. Generic Save Item (Update Specific Node)
-// This ensures we write to "path/ID" not "path/index"
+// 1. Generic Save Item (Update Specific Node via ID)
 const _saveItem = (node: string, item: any) => {
     if (!item.id || !activeTenantId || !db) return;
     const basePath = getBaseRef();
+    // Luôn ghi vào path có ID cụ thể, tránh việc Firebase tự sinh index mảng
     const itemRef = ref(db, `${basePath}/${node}/${item.id}`);
     const scopedItem = { ...item, tenantId: activeTenantId };
     
@@ -265,7 +262,8 @@ const _deleteItem = (node: string, id: string) => {
 }
 
 // 3. Multi-path Update (Fixes Array vs Map issue)
-// Instead of saving an Array [A, B], we convert it to Map {A.id: A, B.id: B} and update.
+// Thay vì lưu cả mảng [A, B], hàm này chuyển đổi thành Map {A.id: A, B.id: B} để update.
+// Điều này giúp giữ nguyên cấu trúc Map trên Firebase, tránh xung đột.
 const _saveListAsMap = (node: string, list: any[]) => {
     if (!activeTenantId || !db) return;
     const basePath = getBaseRef();
@@ -282,9 +280,7 @@ const _saveListAsMap = (node: string, list: any[]) => {
         }
     });
     
-    // Use root update to apply all changes
-    // Note: This adds/updates items. It does NOT delete items removed from the list locally.
-    // Use deleteItem for deletions.
+    // Sử dụng update() thay vì set() để không xoá đè toàn bộ node cha nếu không cần thiết
     update(ref(db), updates).catch(e => console.error(`Bulk save ${node} failed`, e));
 };
 
@@ -294,7 +290,7 @@ const _deleteItems = (node: string, ids: string[]) => {
     const basePath = getBaseRef();
     const updates: any = {};
     
-    // Create null updates
+    // Create null updates to delete specific keys
     ids.forEach(id => {
         updates[`${basePath}/${node}/${id}`] = null;
     });
@@ -434,7 +430,6 @@ export const DataService = {
       _ensureFirebase();
       if (db) {
           try {
-              // Client-side filtering instead of index for simplicity
               const snap = await get(ref(db, 'system/users'));
               if (snap.exists()) {
                   const users = snapshotToArray<User>(snap);
