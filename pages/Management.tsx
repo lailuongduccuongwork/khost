@@ -59,6 +59,186 @@ const InlineInput = ({
     );
 };
 
+// --- SUB-COMPONENT: SETTINGS MODAL ---
+const SettingsModal = ({ isOpen, onClose, tags, onRefresh }: { isOpen: boolean, onClose: () => void, tags: Tag[], onRefresh: () => void }) => {
+    const [activeTab, setActiveTab] = useState<'TAGS' | 'FINANCE'>('TAGS');
+    const [categories, setCategories] = useState<TransactionCategory[]>(DataService.getTransactionCategories());
+
+    // Tag State
+    const [newTagName, setNewTagName] = useState('');
+    const [newTagColor, setNewTagColor] = useState('#3b82f6'); // Default Blue
+
+    // Finance State
+    const [newCatName, setNewCatName] = useState('');
+    const [newCatType, setNewCatType] = useState<'REVENUE' | 'EXPENSE'>('EXPENSE');
+
+    useEffect(() => {
+        if (isOpen) {
+            setCategories(DataService.getTransactionCategories());
+        }
+    }, [isOpen]);
+
+    // --- TAG ACTIONS ---
+    const handleAddTag = () => {
+        if (!newTagName) return;
+        const newTag: Tag = {
+            id: `tag_${Date.now()}`,
+            name: newTagName,
+            color: newTagColor
+        };
+        DataService.saveTags([...tags, newTag]);
+        setNewTagName('');
+        onRefresh();
+    };
+
+    const handleDeleteTag = (id: string) => {
+        if (confirm('Xoá tag này?')) {
+            DataService.deleteItems('tags', [id]);
+            onRefresh();
+        }
+    };
+
+    // --- FINANCE ACTIONS ---
+    const handleAddCategory = () => {
+        if (!newCatName) return;
+        const newCat: TransactionCategory = {
+            id: `cat_${Date.now()}`,
+            name: newCatName,
+            type: newCatType
+        };
+        DataService.saveTransactionCategories([...categories, newCat]);
+        setNewCatName('');
+        setCategories([...categories, newCat]); // Optimistic update for local state
+        onRefresh();
+    };
+
+    const handleDeleteCategory = (id: string) => {
+         if (confirm('Xoá danh mục này?')) {
+            DataService.deleteItems('transactionCategories', [id]);
+            setCategories(categories.filter(c => c.id !== id));
+            onRefresh();
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col animate-fade-in relative">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                
+                <div className="p-6 border-b">
+                    <h3 className="text-xl font-bold text-gray-800">Cài đặt nâng cao</h3>
+                    <div className="flex gap-4 mt-4 border-b border-gray-100">
+                        <button 
+                            onClick={() => setActiveTab('TAGS')}
+                            className={`pb-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'TAGS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Quản lý Tags
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('FINANCE')}
+                            className={`pb-2 text-sm font-bold border-b-2 transition-colors ${activeTab === 'FINANCE' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Danh mục Thu/Chi
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                    {activeTab === 'TAGS' && (
+                        <div className="space-y-6">
+                            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Plus size={16}/> Thêm Tag mới</h4>
+                                <div className="flex gap-2">
+                                    <input 
+                                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                        placeholder="Tên tag (VD: Khách quen)..."
+                                        value={newTagName}
+                                        onChange={e => setNewTagName(e.target.value)}
+                                    />
+                                    <input 
+                                        type="color" 
+                                        className="h-10 w-10 border border-gray-200 rounded-lg cursor-pointer p-1 bg-white"
+                                        value={newTagColor}
+                                        onChange={e => setNewTagColor(e.target.value)}
+                                    />
+                                    <button onClick={handleAddTag} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700">Thêm</button>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                {tags.map(tag => (
+                                    <div key={tag.id} className="bg-white p-3 rounded-xl border border-gray-200 flex justify-between items-center group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-4 h-4 rounded-full" style={{backgroundColor: tag.color}}></div>
+                                            <span className="font-bold text-gray-700">{tag.name}</span>
+                                        </div>
+                                        <button onClick={() => handleDeleteTag(tag.id)} className="text-gray-300 hover:text-red-500 p-1 rounded-full hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all">
+                                            <Trash2 size={16}/>
+                                        </button>
+                                    </div>
+                                ))}
+                                {tags.length === 0 && <p className="text-center text-gray-400 text-sm">Chưa có tag nào.</p>}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'FINANCE' && (
+                        <div className="space-y-6">
+                            <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                                <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Plus size={16}/> Thêm Danh mục Thu/Chi</h4>
+                                <div className="flex gap-2 flex-col md:flex-row">
+                                    <input 
+                                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                        placeholder="Tên danh mục (VD: Giặt là, Nước ngọt)..."
+                                        value={newCatName}
+                                        onChange={e => setNewCatName(e.target.value)}
+                                    />
+                                    <select 
+                                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white"
+                                        value={newCatType}
+                                        onChange={e => setNewCatType(e.target.value as any)}
+                                    >
+                                        <option value="REVENUE">Khoản Thu (+)</option>
+                                        <option value="EXPENSE">Khoản Chi (-)</option>
+                                    </select>
+                                    <button onClick={handleAddCategory} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700">Thêm</button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <h5 className="font-bold text-xs text-gray-400 uppercase">Khoản Thu (Revenue)</h5>
+                                    {categories.filter(c => c.type === 'REVENUE').map(cat => (
+                                        <div key={cat.id} className="bg-white p-3 rounded-xl border border-green-200 flex justify-between items-center group shadow-sm">
+                                            <span className="font-bold text-gray-700">{cat.name}</span>
+                                            <button onClick={() => handleDeleteCategory(cat.id)} className="text-gray-300 hover:text-red-500 p-1 rounded-full hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all">
+                                                <Trash2 size={16}/>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="space-y-2">
+                                    <h5 className="font-bold text-xs text-gray-400 uppercase">Khoản Chi (Expense)</h5>
+                                    {categories.filter(c => c.type === 'EXPENSE').map(cat => (
+                                        <div key={cat.id} className="bg-white p-3 rounded-xl border border-red-200 flex justify-between items-center group shadow-sm">
+                                            <span className="font-bold text-gray-700">{cat.name}</span>
+                                            <button onClick={() => handleDeleteCategory(cat.id)} className="text-gray-300 hover:text-red-500 p-1 rounded-full hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all">
+                                                <Trash2 size={16}/>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+             </div>
+        </div>
+    );
+};
+
 const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, properties, tags, onRefresh }) => {
   // --- STATE ---
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -331,9 +511,12 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
   const handleAutoSortRooms = (propertyId: string, direction: 'ASC' | 'DESC') => {
       const propRooms = rooms.filter(r => r.propertyId === propertyId);
       propRooms.sort((a, b) => {
+          // FIX: Safe localeCompare
+          const numA = (a.number || '').toString();
+          const numB = (b.number || '').toString();
           return direction === 'ASC'
-              ? a.number.localeCompare(b.number, 'vi', { numeric: true })
-              : b.number.localeCompare(a.number, 'vi', { numeric: true });
+              ? numA.localeCompare(numB, 'vi', { numeric: true })
+              : numB.localeCompare(numA, 'vi', { numeric: true });
       });
       propRooms.forEach((r, idx) => { r.sortOrder = idx; });
       const newGlobalRooms = rooms.map(r => {
@@ -702,99 +885,6 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
 
     </div>
   );
-};
-
-// --- SUB-COMPONENT: SETTINGS MODAL (Tags & Finance) ---
-const SettingsModal = ({ isOpen, onClose, tags, onRefresh }: any) => {
-    const [tab, setTab] = useState<'TAGS' | 'FINANCE'>('TAGS');
-    const [newTag, setNewTag] = useState({ name: '', color: '#3b82f6' });
-    const [newCat, setNewCat] = useState<Partial<TransactionCategory>>({ type: 'REVENUE' });
-    
-    // Fetch categories directly
-    const categories = DataService.getTransactionCategories();
-
-    if (!isOpen) return null;
-
-    const handleSaveTag = () => {
-        if(!newTag.name) return;
-        DataService.saveTags([...tags, { id: `tag${Date.now()}`, ...newTag }]);
-        setNewTag({ name: '', color: '#3b82f6' });
-        onRefresh();
-    };
-    const handleDeleteTag = (id: string) => {
-        DataService.saveTags(tags.filter((t: any) => t.id !== id));
-        onRefresh();
-    };
-
-    const handleSaveCat = () => {
-        if(!newCat.name) return;
-        DataService.saveTransactionCategories([...categories, { id: `cat${Date.now()}`, ...newCat } as TransactionCategory]);
-        setNewCat({ name: '', type: 'REVENUE' });
-        onRefresh();
-    };
-    const handleDeleteCat = (id: string) => {
-        DataService.saveTransactionCategories(categories.filter(c => c.id !== id));
-        onRefresh();
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg h-[80vh] flex flex-col animate-fade-in overflow-hidden">
-                <div className="flex border-b">
-                    <button onClick={() => setTab('TAGS')} className={`flex-1 py-4 font-bold text-sm ${tab==='TAGS'?'border-b-2 border-blue-600 text-blue-700 bg-blue-50':'text-gray-500'}`}>Quản lý Tag</button>
-                    <button onClick={() => setTab('FINANCE')} className={`flex-1 py-4 font-bold text-sm ${tab==='FINANCE'?'border-b-2 border-green-600 text-green-700 bg-green-50':'text-gray-500'}`}>Loại Thu/Chi</button>
-                    <button onClick={onClose} className="px-4 text-gray-400 hover:text-gray-600"><X size={24}/></button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
-                    {tab === 'TAGS' && (
-                        <div className="space-y-4">
-                            <div className="flex gap-2 p-3 bg-white rounded border">
-                                <input className="flex-1 outline-none text-sm" placeholder="Tên Tag..." value={newTag.name} onChange={e => setNewTag({...newTag, name: e.target.value})} />
-                                <input type="color" className="w-8 h-8 rounded cursor-pointer border-none" value={newTag.color} onChange={e => setNewTag({...newTag, color: e.target.value})} />
-                                <button onClick={handleSaveTag} className="bg-blue-600 text-white p-2 rounded"><Plus size={16}/></button>
-                            </div>
-                            <div className="space-y-2">
-                                {tags.map((t: any) => (
-                                    <div key={t.id} className="flex justify-between items-center p-3 bg-white border rounded">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-4 h-4 rounded-full" style={{backgroundColor: t.color}}></div>
-                                            <span className="font-bold text-sm">{t.name}</span>
-                                        </div>
-                                        <button onClick={() => handleDeleteTag(t.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {tab === 'FINANCE' && (
-                        <div className="space-y-4">
-                            <div className="flex gap-2 p-3 bg-white rounded border">
-                                <input className="flex-1 outline-none text-sm" placeholder="Tên khoản mục..." value={newCat.name || ''} onChange={e => setNewCat({...newCat, name: e.target.value})} />
-                                <select className="text-sm outline-none border-l pl-2" value={newCat.type} onChange={e => setNewCat({...newCat, type: e.target.value as any})}>
-                                    <option value="REVENUE">Thu (+)</option>
-                                    <option value="EXPENSE">Chi (-)</option>
-                                </select>
-                                <button onClick={handleSaveCat} className="bg-green-600 text-white p-2 rounded"><Plus size={16}/></button>
-                            </div>
-                            <div className="space-y-2">
-                                {categories.map(c => (
-                                    <div key={c.id} className="flex justify-between items-center p-3 bg-white border rounded">
-                                        <div className="flex items-center gap-2">
-                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${c.type==='REVENUE'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{c.type === 'REVENUE' ? 'THU' : 'CHI'}</span>
-                                            <span className="font-bold text-sm">{c.name}</span>
-                                        </div>
-                                        <button onClick={() => handleDeleteCat(c.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
 };
 
 export default Management;

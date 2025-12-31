@@ -130,7 +130,10 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         const rOrderB = b.room.sortOrder ?? 9999;
         if (rOrderA !== rOrderB) return rOrderA - rOrderB;
 
-        return a.room.number.localeCompare(b.room.number, 'vi', { numeric: true });
+        // FIX: Safe localeCompare for undefined room numbers
+        const numA = (a.room.number || '').toString();
+        const numB = (b.room.number || '').toString();
+        return numA.localeCompare(numB, 'vi', { numeric: true });
     });
   }, [rooms, bookings, currentTime, properties]);
 
