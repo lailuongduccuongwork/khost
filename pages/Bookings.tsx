@@ -157,30 +157,30 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
   const handleDownloadTemplate = () => {
       // Updated Headers per request
       const headers = [
-          "Cơ sở",
+          "Chi nhánh",
           "Hạng phòng", 
           "Tên phòng",
           "Khách hàng",
           "Thời gian nhận (dd/mm/yyyy hh:mm:ss)", 
           "Thời gian trả (dd/mm/yyyy hh:mm:ss)", 
-          "Tổng tiền hàng (###0)", 
+          "Tổng tiền (###0)", 
           "Khách đã trả (###0)", 
           "Ghi chú"
       ];
       
       // Updated Sample Data
       const sampleRows = [
-          ["CS2", "301", "WAFFLE", "Nguyen Phuong Ann", "31/12/2025 00:00:00", "31/12/2025 12:00:00", 606000, 399000, "hehe"],
-          ["CS2", "401", "WAFFLE", "Phuc Anhh", "31/12/2025 14:15:00", "31/12/2025 18:15:00", 420000, 420000, "jztr"],
-          ["CS2", "302", "WAFFLE", "Tiến Anh", "31/12/2025 09:00:00", "31/12/2025 19:00:00", 699000, 699000, "b"],
-          ["CS2", "301", "WAFFLE", "Khoá phòng", "31/12/2025 20:00:00", "31/12/2025 21:00:00", 0, 0, ""]
+          ["CS2", "WAFFLE", "301", "Nguyen Phuong Ann", "31/12/2025 00:00:00", "31/12/2025 12:00:00", 606000, 399000, "hihi"],
+          ["CS2", "WAFFLE", "401", "Phuc Anhh", "31/12/2025 14:15:00", "31/12/2025 18:15:00", 420000, 420000, "jztr"],
+          ["CS2", "WAFFLE", "302", "Tiến Anh", "31/12/2025 09:00:00", "31/12/2025 19:00:00", 699000, 699000, "test"],
+          ["CS2", "WAFFLE", "301", "Khoá phòng", "31/12/2025 20:00:00", "31/12/2025 21:00:00", 0, 0, "khoá phòng"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
       
       // Set column widths for better UX
       ws['!cols'] = [
-          { wch: 15 }, // Cơ sở
+          { wch: 15 }, // Chi nhánh
           { wch: 15 }, // Hạng phòng
           { wch: 15 }, // Tên phòng
           { wch: 25 }, // Khách hàng
@@ -212,13 +212,16 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       if (val instanceof Date) {
           dateObj = val;
       } else if (typeof val === 'string') {
-          // Expected: dd/mm/yyyy hh:mm:ss
+          // Expected: dd/mm/yyyy hh:mm:ss or dd/mm/yy hh:mm
           const parts = val.split(/[/\s:]/); 
           // parts = [dd, mm, yyyy, hh, mm, ss]
           if (parts.length >= 3) {
               const day = Number(parts[0]);
               const month = Number(parts[1]) - 1; // JS Month is 0-indexed
-              const year = Number(parts[2]);
+              let year = Number(parts[2]);
+              // Handle 2-digit year (e.g., 25 -> 2025)
+              if (year < 100) year += 2000;
+              
               const hour = parts[3] ? Number(parts[3]) : 14; // Default to 14:00 if time missing
               const min = parts[4] ? Number(parts[4]) : 0;
               const sec = parts[5] ? Number(parts[5]) : 0;
@@ -228,8 +231,6 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
           }
       } else if (typeof val === 'number') {
           // Excel serial date number
-          // (val - 25569) * 86400 * 1000
-          // But usually XLSX library handles this if cellDates: true is set
           dateObj = new Date(Math.round((val - 25569)*86400*1000));
       } else {
           // Fallback
@@ -271,13 +272,13 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
               const batchId = `import_${Date.now()}`;
 
               // Mapping logic based on NEW Template
-              // 0: Cơ sở | 1: Hạng | 2: Tên phòng | 3: Khách | 4: Vào | 5: Ra | 6: Tổng | 7: Trả | 8: Note
+              // 0: Chi nhánh | 1: Hạng phòng | 2: Tên phòng | 3: Khách | 4: Vào | 5: Ra | 6: Tổng | 7: Trả | 8: Note
               for (let i = 1; i < data.length; i++) {
                   const row: any = data[i];
                   if (!row || row.length === 0) continue;
 
                   const branchName = String(row[0] || '').trim();
-                  // Index 1 (Hạng phòng) ignored, we match by room name/number
+                  // Index 1 (Hạng phòng) ignored for mapping, we match by room name/number
                   const roomNum = String(row[2] || '').trim(); 
                   const guestName = String(row[3] || 'Khách import');
                   const checkInRaw = row[4];
