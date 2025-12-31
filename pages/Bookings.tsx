@@ -206,9 +206,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
 
   // FIXED: Correct Date Parsing for dd/mm/yyyy hh:mm:ss string or Excel Date
   const parseExcelDate = (val: any): string => {
-      if (!val) return new Date().toISOString();
-      
       let dateObj: Date;
+
+      // Handle null/undefined - return current time Local ISO
+      if (!val) {
+          const now = new Date();
+          const offset = now.getTimezoneOffset() * 60000;
+          return new Date(now.getTime() - offset).toISOString().slice(0, -1);
+      }
+      
       if (val instanceof Date) {
           dateObj = val;
       } else if (typeof val === 'string') {
@@ -237,7 +243,16 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
           dateObj = new Date();
       }
 
-      return dateObj.toISOString();
+      // CRITICAL FIX FOR TIMEZONE OFFSET (-7 HOURS ISSUE)
+      // .toISOString() returns UTC (subtracts 7h from VN Time).
+      // We must adjust the time by the offset so that when .toISOString() runs, 
+      // the resulting string visually matches the Local Time.
+      
+      const offset = dateObj.getTimezoneOffset() * 60000; // e.g., -420min * 60000 = -25200000ms
+      const localDate = new Date(dateObj.getTime() - offset);
+      
+      // Return ISO string without 'Z' -> "2025-12-31T14:00:00.000"
+      return localDate.toISOString().slice(0, -1);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -311,7 +326,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
                       continue;
                   }
 
-                  // 3. Parse Dates
+                  // 3. Parse Dates (Updated Logic)
                   const checkInISO = parseExcelDate(checkInRaw);
                   const checkOutISO = parseExcelDate(checkOutRaw);
 
