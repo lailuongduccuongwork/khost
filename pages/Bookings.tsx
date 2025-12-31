@@ -152,61 +152,43 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       alert("Vui lòng sử dụng Sơ đồ phòng để tạo đơn mới trực quan hơn.");
   };
 
-  // --- EXCEL IMPORT/EXPORT LOGIC ---
+  // --- EXCEL IMPORT/EXPORT LOGIC (UPDATED) ---
 
   const handleDownloadTemplate = () => {
+      // Updated Headers per request
       const headers = [
-          "Chi nhánh",
-          "Phòng (Số phòng)", 
-          "Hạng phòng",
-          "Tên khách hàng", 
-          "Số điện thoại", 
-          "Ngày nhận (dd/mm/yyyy HH:mm)", 
-          "Ngày trả (dd/mm/yyyy HH:mm)", 
-          "Tổng tiền", 
-          "Đã thanh toán", 
-          "Trạng thái (Đang ở/Đã đặt/Đã trả)",
+          "Cơ sở",
+          "Hạng phòng", 
+          "Tên phòng",
+          "Khách hàng",
+          "Thời gian nhận (dd/mm/yyyy hh:mm:ss)", 
+          "Thời gian trả (dd/mm/yyyy hh:mm:ss)", 
+          "Tổng tiền hàng (###0)", 
+          "Khách đã trả (###0)", 
           "Ghi chú"
       ];
       
-      // Get properties/types for sample
-      const allProps = DataService.getProperties();
-      const allTypes = DataService.getRoomTypes();
-      
-      const sampleProp = allProps[0]?.name || "K-Host Hà Nội";
-      const sampleType = allTypes[0]?.name || "Standard Single";
-      const sampleRoom = rooms[0]?.number || "101";
-
-      // Sample Data Row
-      const sampleRow = [
-          sampleProp,
-          sampleRoom, 
-          sampleType,
-          "Nguyễn Văn A", 
-          "0912345678", 
-          "25/12/2024 14:00", 
-          "27/12/2024 12:00", 
-          1500000, 
-          500000, 
-          "Đang ở",
-          "Khách quen, nhập dữ liệu cũ"
+      // Updated Sample Data
+      const sampleRows = [
+          ["CS2", "301", "WAFFLE", "Nguyen Phuong Ann", "31/12/2025 00:00:00", "31/12/2025 12:00:00", 606000, 399000, "hehe"],
+          ["CS2", "401", "WAFFLE", "Phuc Anhh", "31/12/2025 14:15:00", "31/12/2025 18:15:00", 420000, 420000, "jztr"],
+          ["CS2", "302", "WAFFLE", "Tiến Anh", "31/12/2025 09:00:00", "31/12/2025 19:00:00", 699000, 699000, "b"],
+          ["CS2", "301", "WAFFLE", "Khoá phòng", "31/12/2025 20:00:00", "31/12/2025 21:00:00", 0, 0, ""]
       ];
 
-      const ws = XLSX.utils.aoa_to_sheet([headers, sampleRow]);
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
       
       // Set column widths for better UX
       ws['!cols'] = [
-          { wch: 20 }, // Branch
-          { wch: 10 }, // Room
-          { wch: 20 }, // Type
-          { wch: 20 }, // Name
-          { wch: 15 }, // Phone
-          { wch: 20 }, // In
-          { wch: 20 }, // Out
-          { wch: 12 }, // Total
-          { wch: 12 }, // Paid
-          { wch: 15 }, // Status
-          { wch: 30 }  // Note
+          { wch: 15 }, // Cơ sở
+          { wch: 15 }, // Hạng phòng
+          { wch: 15 }, // Tên phòng
+          { wch: 25 }, // Khách hàng
+          { wch: 25 }, // Thời gian nhận
+          { wch: 25 }, // Thời gian trả
+          { wch: 15 }, // Tổng tiền
+          { wch: 15 }, // Đã trả
+          { wch: 20 }  // Ghi chú
       ];
 
       const wb = XLSX.utils.book_new();
@@ -214,16 +196,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       XLSX.writeFile(wb, "KHost_Mau_Import_Booking.xlsx");
   };
 
-  const parseStatus = (val: string): BookingStatus => {
-      if (!val) return BookingStatus.CONFIRMED;
-      const v = val.toLowerCase().trim();
-      if (v.includes('đang') || v.includes('check-in') || v.includes('checkin')) return BookingStatus.CHECKED_IN;
-      if (v.includes('trả') || v.includes('xong') || v.includes('check-out') || v.includes('checkout')) return BookingStatus.CHECKED_OUT;
-      if (v.includes('hủy') || v.includes('huỷ')) return BookingStatus.CANCELLED;
+  // Helper to infer status since it's no longer in the template
+  const inferStatus = (checkIn: Date, checkOut: Date): BookingStatus => {
+      const now = new Date();
+      if (now > checkOut) return BookingStatus.CHECKED_OUT;
+      if (now >= checkIn && now <= checkOut) return BookingStatus.CHECKED_IN;
       return BookingStatus.CONFIRMED;
-  }
+  };
 
-  // FIXED: Correct Date Parsing without manual offset shifting
+  // FIXED: Correct Date Parsing for dd/mm/yyyy hh:mm:ss string or Excel Date
   const parseExcelDate = (val: any): string => {
       if (!val) return new Date().toISOString();
       
@@ -231,23 +212,30 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       if (val instanceof Date) {
           dateObj = val;
       } else if (typeof val === 'string') {
-          // Try parse string dd/mm/yyyy HH:mm
-          const parts = val.split(/[/\s:]/);
+          // Expected: dd/mm/yyyy hh:mm:ss
+          const parts = val.split(/[/\s:]/); 
+          // parts = [dd, mm, yyyy, hh, mm, ss]
           if (parts.length >= 3) {
-              // Simple parser assuming dd/mm/yyyy
-              // Note: Month is 0-indexed in JS Date
-              dateObj = new Date(Number(parts[2]), Number(parts[1])-1, Number(parts[0]), Number(parts[3]||14), Number(parts[4]||0));
+              const day = Number(parts[0]);
+              const month = Number(parts[1]) - 1; // JS Month is 0-indexed
+              const year = Number(parts[2]);
+              const hour = parts[3] ? Number(parts[3]) : 14; // Default to 14:00 if time missing
+              const min = parts[4] ? Number(parts[4]) : 0;
+              const sec = parts[5] ? Number(parts[5]) : 0;
+              dateObj = new Date(year, month, day, hour, min, sec);
           } else {
               dateObj = new Date(val);
           }
+      } else if (typeof val === 'number') {
+          // Excel serial date number
+          // (val - 25569) * 86400 * 1000
+          // But usually XLSX library handles this if cellDates: true is set
+          dateObj = new Date(Math.round((val - 25569)*86400*1000));
       } else {
           // Fallback
           dateObj = new Date();
       }
 
-      // Return standard ISO string. 
-      // If dateObj is "25/10 14:00 Local", toISOString will convert it to UTC correctly.
-      // RoomMap will then read UTC and convert back to Local 14:00 correctly.
       return dateObj.toISOString();
   };
 
@@ -282,66 +270,73 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
               // Generate Batch ID for Undo
               const batchId = `import_${Date.now()}`;
 
-              // Mapping logic
+              // Mapping logic based on NEW Template
+              // 0: Cơ sở | 1: Hạng | 2: Tên phòng | 3: Khách | 4: Vào | 5: Ra | 6: Tổng | 7: Trả | 8: Note
               for (let i = 1; i < data.length; i++) {
                   const row: any = data[i];
                   if (!row || row.length === 0) continue;
 
-                  // Indexes based on NEW Template Headers
-                  // 0: Chi nhánh, 1: Phòng, 2: Hạng, 3: Khách, 4: SĐT, 5: In, 6: Out, 7: Total, 8: Paid, 9: Status, 10: Note
                   const branchName = String(row[0] || '').trim();
-                  const roomNum = String(row[1] || '').trim();
-                  // Index 2 is Room Type (Visual only, we lookup by ID mostly via Room)
+                  // Index 1 (Hạng phòng) ignored, we match by room name/number
+                  const roomNum = String(row[2] || '').trim(); 
                   const guestName = String(row[3] || 'Khách import');
-                  const phone = String(row[4] || '');
-                  const checkInRaw = row[5];
-                  const checkOutRaw = row[6];
-                  const total = Number(row[7]) || 0;
-                  const paid = Number(row[8]) || 0;
-                  const statusRaw = String(row[9] || '');
-                  const note = String(row[10] || '');
+                  const checkInRaw = row[4];
+                  const checkOutRaw = row[5];
+                  const total = Number(row[6]) || 0;
+                  const paid = Number(row[7]) || 0;
+                  const note = String(row[8] || '');
 
                   // 1. Find Property ID if branch name is provided
                   let targetPropId: string | undefined;
                   if (branchName) {
-                      const prop = allProperties.find(p => p.name.toLowerCase() === branchName.toLowerCase());
+                      // Try exact match or partial match
+                      const prop = allProperties.find(p => 
+                          p.name.toLowerCase().includes(branchName.toLowerCase()) || 
+                          branchName.toLowerCase().includes(p.name.toLowerCase())
+                      );
                       if (prop) targetPropId = prop.id;
                   }
 
                   // 2. Find Room ID
-                  // Filter rooms by Property Name if provided to avoid duplicate room numbers conflicts
                   const targetRoom = rooms.find(r => {
-                      const numMatch = r.number === roomNum;
+                      const numMatch = r.number.toLowerCase() === roomNum.toLowerCase();
                       if (!numMatch) return false;
                       if (targetPropId) return r.propertyId === targetPropId;
-                      return true; // If no branch specified in Excel, match first room found (Risky but fallback)
+                      return true; // If no branch specified, first match
                   });
 
                   if (!targetRoom) {
-                      errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng "${roomNum}"${branchName ? ` tại chi nhánh "${branchName}"` : ''}`);
+                      errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng "${roomNum}"${branchName ? ` tại "${branchName}"` : ''}`);
                       continue;
                   }
 
-                  // 2. Create Booking Object
+                  // 3. Parse Dates
+                  const checkInISO = parseExcelDate(checkInRaw);
+                  const checkOutISO = parseExcelDate(checkOutRaw);
+
+                  // 4. Infer Status
+                  const inferredStatus = inferStatus(new Date(checkInISO), new Date(checkOutISO));
+
+                  // 5. Create Booking Object
                   const newBooking: Booking = {
                       id: DataService.generateBookingId(),
-                      tenantId: targetRoom.tenantId || currentUser.tenantId, // Inherit
+                      tenantId: targetRoom.tenantId || currentUser.tenantId,
                       propertyId: targetRoom.propertyId,
                       roomId: targetRoom.id,
-                      customerId: 'c_import', // Placeholder or create new customer logic if needed
+                      customerId: 'c_import',
                       guestName: guestName,
-                      guestPhone: phone,
-                      checkInDate: parseExcelDate(checkInRaw),
-                      checkOutDate: parseExcelDate(checkOutRaw),
-                      status: parseStatus(statusRaw),
+                      guestPhone: '', // Not in template anymore
+                      checkInDate: checkInISO,
+                      checkOutDate: checkOutISO,
+                      status: inferredStatus,
                       totalPrice: total,
                       paidAmount: paid,
                       createdAt: new Date().toISOString(),
                       createdBy: currentUser.id,
-                      notes: note + " [Imported]",
+                      notes: note + " [Excel]",
                       tags: [],
                       extraFees: [],
-                      importBatchId: batchId // Assign Batch ID
+                      importBatchId: batchId
                   };
 
                   DataService.addBooking(newBooking);
