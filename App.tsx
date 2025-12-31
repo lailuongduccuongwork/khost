@@ -168,48 +168,68 @@ const App: React.FC = () => {
   }, [dataTick, currentPropertyId, isLoading, currentUser?.id, activeTenantId]);
 
 
-  // --- Automation System ---
+  // --- SMART AUTOMATION SYSTEM (NON-DESTRUCTIVE) ---
   useEffect(() => {
+      // Chỉ chạy khi user đã đăng nhập, không phải lúc đang load, và không phải SuperAdmin đang ở view hệ thống
       if (!currentUser || isLoading || activeTenantId === 'SYSTEM') return;
 
       const runAutomation = () => {
           const now = new Date();
           const allBookings = DataService.getBookings();
-          let hasChanges = false;
+          const allRooms = DataService.getRooms();
           
-          const updatedBookings = allBookings.map(b => {
+          // Lọc ra các booking cần update để tránh loop qua toàn bộ DB
+          const activeBookings = allBookings.filter(b => 
+              b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.CHECKED_IN
+          );
+
+          activeBookings.forEach(b => {
               const checkIn = new Date(b.checkInDate);
               const checkOut = new Date(b.checkOutDate);
-              let updated = { ...b };
-              let modified = false;
+              
+              let needsUpdate = false;
+              let newStatus = b.status;
 
+              // 1. AUTO CHECK-IN
               if (b.status === BookingStatus.CONFIRMED && now >= checkIn) {
-                  updated.status = BookingStatus.CHECKED_IN;
-                  DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED);
-                  modified = true;
-                  hasChanges = true;
+                  newStatus = BookingStatus.CHECKED_IN;
+                  // Cập nhật trạng thái phòng thành OCCUPIED nếu chưa phải
+                  const room = allRooms.find(r => r.id === b.roomId);
+                  if (room && room.status !== RoomStatus.OCCUPIED) {
+                      DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED);
+                  }
+                  needsUpdate = true;
               }
 
-              if (b.status === BookingStatus.CHECKED_IN && now >= checkOut) {
-                  updated.status = BookingStatus.CHECKED_OUT;
-                  DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY);
-                  modified = true;
-                  hasChanges = true;
+              // 2. AUTO CHECK-OUT
+              else if (b.status === BookingStatus.CHECKED_IN && now >= checkOut) {
+                  newStatus = BookingStatus.CHECKED_OUT;
+                  // Cập nhật trạng thái phòng thành VACANT_DIRTY chỉ khi nó chưa phải là VACANT_DIRTY
+                  // Điều này ngăn việc update liên tục ghi đè trạng thái
+                  const room = allRooms.find(r => r.id === b.roomId);
+                  if (room && room.status !== RoomStatus.VACANT_DIRTY) {
+                      DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY);
+                  }
+                  needsUpdate = true;
               }
 
-              return modified ? updated : b;
+              // Lưu thay đổi nếu có
+              if (needsUpdate) {
+                  const updatedBooking = { ...b, status: newStatus };
+                  DataService.updateBooking(updatedBooking);
+              }
           });
-
-          if (hasChanges) {
-              DataService.saveBookings(updatedBookings);
-          }
       };
 
+      // Chạy ngay khi mount
       runAutomation();
+
+      // Chạy định kỳ mỗi 30 giây
       const intervalId = setInterval(runAutomation, 30000);
 
       return () => clearInterval(intervalId);
-  }, [currentUser, isLoading, activeTenantId]);
+  }, [dataTick, currentUser, isLoading, activeTenantId]); 
+  // Dependency 'dataTick' ensures we use the latest data from DataService
 
 
   // --- Handlers ---
