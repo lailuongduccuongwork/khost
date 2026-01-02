@@ -44,15 +44,19 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
   const getRoomNumber = (id: string) => rooms.find(r => r.id === id)?.number || 'N/A';
 
   const filteredBookings = bookings.filter(b => {
-    const customerName = getDisplayName(b).toLowerCase();
+    // Safety check
+    if (!b) return false;
+
+    const customerName = (getDisplayName(b) || '').toLowerCase();
     const customerPhone = (b.guestPhone || customers.find(c => c.id === b.customerId)?.phone || '').toLowerCase();
-    const roomNumber = getRoomNumber(b.roomId).toLowerCase();
+    const roomNumber = (getRoomNumber(b.roomId) || '').toLowerCase();
     const term = searchTerm.toLowerCase();
+    const bId = (b.id || '').toLowerCase();
     
     return customerName.includes(term) || 
            customerPhone.includes(term) || 
            roomNumber.includes(term) || 
-           b.id.toLowerCase().includes(term);
+           bId.includes(term);
   });
 
   // --- SELECTION LOGIC ---
@@ -168,17 +172,13 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
           "Ghi chú"
       ];
       
-      // Updated Sample Data
       const sampleRows = [
-          ["CS2", "WAFFLE", "301", "Nguyen Phuong Ann", "31/12/2025 00:00:00", "31/12/2025 12:00:00", 606000, 399000, "hihi"],
-          ["CS2", "WAFFLE", "401", "Phuc Anhh", "31/12/2025 14:15:00", "31/12/2025 18:15:00", 420000, 420000, "jztr"],
-          ["CS2", "WAFFLE", "302", "Tiến Anh", "31/12/2025 09:00:00", "31/12/2025 19:00:00", 699000, 699000, "test"],
-          ["CS2", "WAFFLE", "301", "Khoá phòng", "31/12/2025 20:00:00", "31/12/2025 21:00:00", 0, 0, "khoá phòng"]
+          ["HD", "HD", "202", "Đức Anh", "31/12/2025 23:30:00", "01/01/2026 07:30:00", 350000, 350000, "Ghi chú mẫu"],
+          ["K-Host ĐN", "Std", "301", "Nguyễn Văn A", "05/05/2025 14:00:00", "06/05/2025 12:00:00", 500000, 200000, "Khách quen"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
       
-      // Set column widths for better UX
       ws['!cols'] = [
           { wch: 15 }, // Chi nhánh
           { wch: 15 }, // Hạng phòng
@@ -204,54 +204,54 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
       return BookingStatus.CONFIRMED;
   };
 
-  // FIXED: Correct Date Parsing for dd/mm/yyyy hh:mm:ss string or Excel Date
-  const parseExcelDate = (val: any): string => {
-      let dateObj: Date;
+  // ROBUST DATE PARSER (VIETNAM FORMAT + EXCEL SERIAL + ISO)
+  const parseImportDate = (val: any): string | null => {
+      if (!val) return null;
 
-      // Handle null/undefined - return current time Local ISO
-      if (!val) {
-          const now = new Date();
-          const offset = now.getTimezoneOffset() * 60000;
-          return new Date(now.getTime() - offset).toISOString().slice(0, -1);
+      let dateObj: Date | null = null;
+
+      // 1. Handle Excel Serial Number (e.g., 45657.9)
+      if (typeof val === 'number') {
+           // Excel base date is 1900-01-01. JS is 1970-01-01. Diff is ~25569 days.
+           dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
+      } 
+      // 2. Handle JS Date Object (SheetJS with cellDates: true)
+      else if (val instanceof Date) {
+           dateObj = val;
       }
-      
-      if (val instanceof Date) {
-          dateObj = val;
-      } else if (typeof val === 'string') {
-          // Expected: dd/mm/yyyy hh:mm:ss or dd/mm/yy hh:mm
-          const parts = val.split(/[/\s:]/); 
-          // parts = [dd, mm, yyyy, hh, mm, ss]
+      // 3. Handle String Format (Crucial for "31/12/2025 23:30:00")
+      else if (typeof val === 'string') {
+          const str = val.trim();
+          // Regex for dd/mm/yyyy hh:mm:ss or dd/mm/yy hh:mm
+          // Split by any non-digit character
+          const parts = str.split(/[\s/:\-]+/);
+          
           if (parts.length >= 3) {
-              const day = Number(parts[0]);
-              const month = Number(parts[1]) - 1; // JS Month is 0-indexed
-              let year = Number(parts[2]);
-              // Handle 2-digit year (e.g., 25 -> 2025)
+              const day = parseInt(parts[0], 10);
+              const month = parseInt(parts[1], 10) - 1; // JS Month is 0-11
+              let year = parseInt(parts[2], 10);
+              // Handle 2-digit year (e.g. 25 -> 2025)
               if (year < 100) year += 2000;
-              
-              const hour = parts[3] ? Number(parts[3]) : 14; // Default to 14:00 if time missing
-              const min = parts[4] ? Number(parts[4]) : 0;
-              const sec = parts[5] ? Number(parts[5]) : 0;
+
+              const hour = parts[3] ? parseInt(parts[3], 10) : 12; // Default to noon if no time
+              const min = parts[4] ? parseInt(parts[4], 10) : 0;
+              const sec = parts[5] ? parseInt(parts[5], 10) : 0;
+
               dateObj = new Date(year, month, day, hour, min, sec);
           } else {
-              dateObj = new Date(val);
+              // Try standard parsing as fallback
+              const tryDate = new Date(str);
+              if (!isNaN(tryDate.getTime())) dateObj = tryDate;
           }
-      } else if (typeof val === 'number') {
-          // Excel serial date number
-          dateObj = new Date(Math.round((val - 25569)*86400*1000));
-      } else {
-          // Fallback
-          dateObj = new Date();
       }
 
-      // CRITICAL FIX FOR TIMEZONE OFFSET (-7 HOURS ISSUE)
-      // .toISOString() returns UTC (subtracts 7h from VN Time).
-      // We must adjust the time by the offset so that when .toISOString() runs, 
-      // the resulting string visually matches the Local Time.
-      
-      const offset = dateObj.getTimezoneOffset() * 60000; // e.g., -420min * 60000 = -25200000ms
+      if (!dateObj || isNaN(dateObj.getTime())) return null;
+
+      // ADJUST TIMEZONE: We want the string to "Look" like the local time without UTC conversion shift.
+      const offset = dateObj.getTimezoneOffset() * 60000; 
       const localDate = new Date(dateObj.getTime() - offset);
       
-      // Return ISO string without 'Z' -> "2025-12-31T14:00:00.000"
+      // Return ISO string without 'Z' -> "2025-12-31T23:30:00.000"
       return localDate.toISOString().slice(0, -1);
   };
 
@@ -282,58 +282,78 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
               }
 
               const allProperties = DataService.getProperties();
-              
-              // Generate Batch ID for Undo
               const batchId = `import_${Date.now()}`;
 
-              // Mapping logic based on NEW Template
-              // 0: Chi nhánh | 1: Hạng phòng | 2: Tên phòng | 3: Khách | 4: Vào | 5: Ra | 6: Tổng | 7: Trả | 8: Note
+              // Loop through rows
               for (let i = 1; i < data.length; i++) {
                   const row: any = data[i];
                   if (!row || row.length === 0) continue;
 
+                  // --- EXTRACT DATA ---
                   const branchName = String(row[0] || '').trim();
-                  // Index 1 (Hạng phòng) ignored for mapping, we match by room name/number
-                  const roomNum = String(row[2] || '').trim(); 
-                  const guestName = String(row[3] || 'Khách import');
+                  const roomNum = String(row[2] || '').trim(); // Tên phòng
+                  const guestName = String(row[3] || 'Khách Import');
                   const checkInRaw = row[4];
                   const checkOutRaw = row[5];
                   const total = Number(row[6]) || 0;
                   const paid = Number(row[7]) || 0;
                   const note = String(row[8] || '');
 
-                  // 1. Find Property ID if branch name is provided
+                  if (!roomNum) continue; // Skip empty rows
+
+                  // --- 1. SMART PROPERTY MATCHING ---
                   let targetPropId: string | undefined;
+                  
                   if (branchName) {
-                      // Try exact match or partial match
+                      // Attempt 1: Exact or Partial match
+                      // Safeguard: Ensure p.name is string
                       const prop = allProperties.find(p => 
-                          p.name.toLowerCase().includes(branchName.toLowerCase()) || 
-                          branchName.toLowerCase().includes(p.name.toLowerCase())
+                          (p.name || '').toLowerCase().includes(branchName.toLowerCase()) || 
+                          branchName.toLowerCase().includes((p.name || '').toLowerCase())
                       );
                       if (prop) targetPropId = prop.id;
                   }
 
-                  // 2. Find Room ID
-                  const targetRoom = rooms.find(r => {
-                      const numMatch = r.number.toLowerCase() === roomNum.toLowerCase();
-                      if (!numMatch) return false;
-                      if (targetPropId) return r.propertyId === targetPropId;
-                      return true; // If no branch specified, first match
-                  });
+                  // --- 2. ROOM FINDING LOGIC ---
+                  let targetRoom: Room | undefined;
 
-                  if (!targetRoom) {
-                      errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng "${roomNum}"${branchName ? ` tại "${branchName}"` : ''}`);
+                  // Find all rooms with this number
+                  // Safeguard: Ensure r.number is string
+                  const matches = rooms.filter(r => (r.number || '').toLowerCase() === roomNum.toLowerCase());
+
+                  if (matches.length === 0) {
+                      errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng số "${roomNum}" trong hệ thống.`);
+                      continue;
+                  } else if (matches.length === 1) {
+                      // Perfect! Only one room exists with this number (even if branch name is wrong/missing)
+                      targetRoom = matches[0];
+                  } else {
+                      // Multiple rooms with same number. Need to filter by Property.
+                      if (targetPropId) {
+                          targetRoom = matches.find(r => r.propertyId === targetPropId);
+                      }
+                      
+                      // If still no match (e.g. Branch "HD" didn't match "K-Host Hà Nội"), fail strictly to avoid wrong assignment
+                      if (!targetRoom) {
+                          // Try one last fuzzy fallback: Check if the Branch string provided starts with same letter? 
+                          // No, too risky. Just Error out.
+                          errorLog.push(`Dòng ${i+1}: Có nhiều phòng số "${roomNum}". Vui lòng nhập đúng tên Chi nhánh (VD: ${allProperties.map(p=>p.name).join(', ')}) để phân biệt.`);
+                          continue;
+                      }
+                  }
+
+                  // --- 3. DATE PARSING ---
+                  const checkInISO = parseImportDate(checkInRaw);
+                  const checkOutISO = parseImportDate(checkOutRaw);
+
+                  if (!checkInISO || !checkOutISO) {
+                      errorLog.push(`Dòng ${i+1}: Định dạng ngày tháng không hợp lệ (Yêu cầu: dd/mm/yyyy hh:mm:ss).`);
                       continue;
                   }
 
-                  // 3. Parse Dates (Updated Logic)
-                  const checkInISO = parseExcelDate(checkInRaw);
-                  const checkOutISO = parseExcelDate(checkOutRaw);
-
-                  // 4. Infer Status
+                  // --- 4. CREATE BOOKING ---
                   const inferredStatus = inferStatus(new Date(checkInISO), new Date(checkOutISO));
 
-                  // 5. Create Booking Object
                   const newBooking: Booking = {
                       id: DataService.generateBookingId(),
                       tenantId: targetRoom.tenantId || currentUser.tenantId,
@@ -341,7 +361,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
                       roomId: targetRoom.id,
                       customerId: 'c_import',
                       guestName: guestName,
-                      guestPhone: '', // Not in template anymore
+                      guestPhone: '', 
                       checkInDate: checkInISO,
                       checkOutDate: checkOutISO,
                       status: inferredStatus,
@@ -349,7 +369,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
                       paidAmount: paid,
                       createdAt: new Date().toISOString(),
                       createdBy: currentUser.id,
-                      notes: note + " [Excel]",
+                      notes: note + (branchName ? ` [CN: ${branchName}]` : '') + " [Excel]",
                       tags: [],
                       extraFees: [],
                       importBatchId: batchId
@@ -362,8 +382,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, customers, onRefre
               if (successCount > 0) {
                   setLastImportBatch({ id: batchId, count: successCount, fileName: file.name });
                   if (onRefresh) onRefresh();
+                  
+                  if (errorLog.length > 0) {
+                      alert(`Đã nhập thành công ${successCount} dòng.\n\nTUY NHIÊN CÓ MỘT SỐ LỖI:\n${errorLog.join('\n')}`);
+                  } else {
+                      alert(`Đã nhập thành công ${successCount} đơn đặt phòng!`);
+                  }
               } else {
-                  if (errorLog.length > 0) alert(`Có lỗi xảy ra:\n${errorLog.slice(0, 5).join('\n')}...`);
+                  if (errorLog.length > 0) alert(`KHÔNG NHẬP ĐƯỢC DÒNG NÀO!\n\nNguyên nhân:\n${errorLog.slice(0, 10).join('\n')}${errorLog.length > 10 ? '\n...' : ''}`);
+                  else alert("File không có dữ liệu hợp lệ.");
               }
 
           } catch (error) {

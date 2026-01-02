@@ -309,9 +309,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     if (filters.search) {
         const lower = filters.search.toLowerCase();
         res = res.filter(b => 
-            b.guestName.toLowerCase().includes(lower) || 
-            b.guestPhone.includes(lower) || 
-            b.id.toLowerCase().includes(lower)
+            (b.guestName || '').toLowerCase().includes(lower) || 
+            (b.guestPhone || '').toLowerCase().includes(lower) || 
+            (b.id || '').toLowerCase().includes(lower)
         );
     }
     
@@ -1208,7 +1208,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           )}
       </div>
 
-      {/* --- STATUS CHANGE CONFIRMATION MODAL --- */}
+      {/* ... (Keep existing Modals) ... */}
+      {/* ... STATUS MODAL, CREATE/EDIT MODAL, TICKET MODAL ... */}
+      {/* STATUS CHANGE CONFIRMATION MODAL */}
       {statusModal.isOpen && statusModal.room && (
           <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
@@ -1650,22 +1652,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         </div>
                                     )}
                                     {receiptData.notes && (
-                                        <div className="text-xs italic text-gray-500 bg-yellow-50 p-2 rounded border border-yellow-100">
-                                            Ghi chú: {receiptData.notes}
+                                        <div className="text-xs text-gray-500 italic bg-gray-50 p-2 rounded border border-gray-100">
+                                            {receiptData.notes}
                                         </div>
                                     )}
                                 </div>
                             )}
-                        </div>
 
-                        <p className="text-xs text-center italic text-gray-400 mt-6">Cảm ơn quý khách đã sử dụng dịch vụ!</p>
-                   </div>
-                   
-                   <div className="mt-6 flex gap-3">
-                       <button onClick={() => setShowTicketModal(false)} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors">Đóng</button>
-                       <button className="flex-1 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-200">
-                           <Printer size={18}/> In phiếu
-                       </button>
+                            <div className="mt-6 no-print">
+                                <button 
+                                    onClick={() => window.print()} 
+                                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"
+                                >
+                                    <Printer size={20}/> In phiếu xác nhận
+                                </button>
+                            </div>
+                        </div>
                    </div>
                </div>
           </div>
