@@ -406,7 +406,8 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
 // --- FIX: ROBUST ROOM STATUS UPDATE (NO CROSS CONTAMINATION) ---
 const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
     if (!db || !activeTenantId) {
-        alert("Chưa kết nối CSDL. Vui lòng tải lại trang.");
+        // Suppress alert during initial load or reconnection
+        // console.warn("CSDL not ready");
         return;
     }
     const basePath = getBaseRef();
@@ -549,13 +550,16 @@ export const DataService = {
 
   addCustomer: (c: Customer) => _saveItem('customers', c),
   
+  // FIX: Force TenantID injection for Users to ensure Login works
   addUser: (u: User) => {
-      _saveItem('users', u);
-      if(db) set(ref(db, `system/users/${u.id}`), u); 
+      const userWithTenant = { ...u, tenantId: activeTenantId || u.tenantId };
+      _saveItem('users', userWithTenant);
+      if(db) set(ref(db, `system/users/${u.id}`), userWithTenant); 
   },
   updateUser: (u: User) => {
-      _saveItem('users', u);
-      if(db) update(ref(db, `system/users/${u.id}`), u); 
+      const userWithTenant = { ...u, tenantId: activeTenantId || u.tenantId };
+      _saveItem('users', userWithTenant);
+      if(db) update(ref(db, `system/users/${u.id}`), userWithTenant); 
   },
   deleteUser: (id: string) => {
       _deleteItem('users', id);

@@ -124,6 +124,11 @@ const App: React.FC = () => {
     setRoomTypes(DataService.getRoomTypes());
     setTags(DataService.getTags());
 
+    // --- CRITICAL FIX: WAIT FOR PROPERTIES TO LOAD ---
+    // If props are empty (initial load), don't run access logic yet.
+    // This prevents defaulting to 'ALL' when data hasn't arrived.
+    if (props.length === 0) return;
+
     // 3. Determine Effective Property ID
     let activePropId = currentPropertyId;
     
@@ -140,10 +145,12 @@ const App: React.FC = () => {
         if (!hasRestrictions) {
             activePropId = 'ALL';
         } else {
+            // Default to first allowed property if restricted
             activePropId = allowedIds.length > 1 ? 'ALL' : allowedIds[0];
         }
         if (activePropId !== currentPropertyId) {
             setCurrentPropertyId(activePropId);
+            // Return here to let next render handle filter with correct ID
             return;
         }
     }
