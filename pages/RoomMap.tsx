@@ -15,7 +15,7 @@ interface RoomMapProps {
   bookings: Booking[];
   customers: Customer[];
   tags: Tag[];
-  properties: Property[]; // NEW: Require properties list for sorting
+  properties: Property[];
   onRefresh: () => void;
   currentProperty: Property;
   currentUser: User; 
@@ -37,9 +37,11 @@ const parseNumber = (str: string) => {
     return Number(str.replace(/\./g, ''));
 };
 
-const formatTicketDate = (isoStr: string) => {
+// --- FIX: Standardized Date Time Format (dd/mm/yyyy hh:mm) ---
+const formatStandardDateTime = (isoStr: string | Date | undefined) => {
     if (!isoStr) return '';
-    const d = new Date(isoStr);
+    const d = typeof isoStr === 'string' ? new Date(isoStr) : isoStr;
+    if (isNaN(d.getTime())) return '';
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
@@ -74,7 +76,7 @@ const MoneyInput = ({ value, onChange, className, disabled, placeholder }: { val
     )
 }
 
-// 2. Simplified Date/Time Picker using Native Input
+// 2. Simplified Date/Time Picker using Native Input (Masked as Text for dd/mm/yyyy hh:mm)
 const DateTimeControl = ({ 
     dateValue, 
     onChange,
@@ -84,28 +86,99 @@ const DateTimeControl = ({
     onChange: (newIso: string) => void,
     disabled?: boolean
 }) => {
-    // Helper: Convert "Local ISO" (from DB) to "yyyy-MM-ddThh:mm" (for input)
-    const toInputFormat = (isoStr: string) => {
-        if (!isoStr) return '';
-        // We just need the first 16 chars "YYYY-MM-DDTHH:mm" for datetime-local
-        return isoStr.substring(0, 16);
+    // Helper: Parse display string "dd/mm/yyyy hh:mm" back to Local ISO "yyyy-MM-ddThh:mm"
+    const parseDisplayToIso = (str: string) => {
+        const parts = str.trim().split(/[\s/:]+/);
+        if (parts.length < 5) return null;
+        
+        let d = parseInt(parts[0], 10);
+        let m = parseInt(parts[1], 10) - 1;
+        let y = parseInt(parts[2], 10);
+        let h = parseInt(parts[3], 10);
+        let min = parseInt(parts[4], 10);
+
+        if (y < 100) y += 2000; // Handle 2-digit year
+
+        const date = new Date(y, m, d, h, min);
+        if (isNaN(date.getTime())) return null;
+
+        // Convert to "Local ISO" string by shifting timezone
+        const offset = date.getTimezoneOffset() * 60000;
+        const localIso = new Date(date.getTime() - offset).toISOString().slice(0, 16);
+        return localIso;
     };
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value; 
-        if (!val) return;
-        // Append seconds/ms to maintain format consistency
-        onChange(`${val}:00.000`);
+    const [textVal, setTextVal] = useState(formatStandardDateTime(dateValue));
+    const pickerRef = useRef<HTMLInputElement>(null);
+
+    // Sync state when prop changes
+    useEffect(() => {
+        setTextVal(formatStandardDateTime(dateValue));
+    }, [dateValue]);
+
+    const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setTextVal(e.target.value);
+    };
+
+    const handleBlur = () => {
+        const iso = parseDisplayToIso(textVal);
+        if (iso) {
+            // Valid format -> Update Parent
+            onChange(iso + ':00.000'); 
+        } else {
+            // Invalid -> Revert to prop value
+            setTextVal(formatStandardDateTime(dateValue));
+        }
+    };
+
+    const handleIconClick = () => {
+        if (!disabled && pickerRef.current) {
+            try {
+                pickerRef.current.showPicker();
+            } catch (e) {
+                // Fallback: Focus input if showPicker not supported
+                pickerRef.current.focus();
+            }
+        }
+    };
+
+    const handlePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.value) {
+            onChange(e.target.value + ':00.000');
+        }
     };
 
     return (
-        <input 
-            type="datetime-local"
-            className={`w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none font-semibold ${disabled ? 'bg-gray-100 text-gray-500' : ''}`}
-            value={toInputFormat(dateValue)}
-            onChange={handleChange}
-            disabled={disabled}
-        />
+        <div className="relative w-full group">
+            {/* Visible Text Input */}
+            <input 
+                type="text"
+                className={`w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none font-semibold ${disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+                value={textVal}
+                onChange={handleTextChange}
+                onBlur={handleBlur}
+                disabled={disabled}
+                placeholder="dd/mm/yyyy hh:mm"
+            />
+            
+            {/* Calendar Icon Trigger */}
+            <div 
+                className={`absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 p-1.5 rounded-md transition-colors ${!disabled ? 'hover:text-blue-600 hover:bg-blue-50 cursor-pointer' : 'cursor-not-allowed'}`}
+                onClick={handleIconClick}
+            >
+                <Clock size={16} />
+            </div>
+
+            {/* Hidden Native Picker (Source of Truth for mobile/calendar UI) */}
+            <input 
+                ref={pickerRef}
+                type="datetime-local"
+                className="absolute top-full left-0 w-0 h-0 opacity-0 pointer-events-none"
+                value={dateValue ? dateValue.substring(0, 16) : ''}
+                onChange={handlePickerChange}
+                tabIndex={-1}
+            />
+        </div>
     );
 };
 
@@ -198,6 +271,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       tempId: string;
       bookingId?: string; // Existing Booking ID from DB
       roomId: string;
+      // Temporary selection state for cascading dropdowns (Branch -> Type -> Room)
+      tempPropId?: string; 
+      tempTypeId?: string;
       checkIn: string;
       checkOut: string;
       price: number;
@@ -265,7 +341,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     });
 
     // 2. Sort Logic: Property Order -> Room Order
-    // Removed intermediate RoomType sort to match Management page order exactly
     return filtered.sort((a, b) => {
         const propA = properties.find(p => p.id === a.propertyId);
         const propB = properties.find(p => p.id === b.propertyId);
@@ -393,7 +468,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       if (!canManageRooms) return;
 
       if (room.status === RoomStatus.OCCUPIED) {
-          // Optional: You could allow forcing Occupied -> Dirty here if needed
           return; 
       }
 
@@ -416,12 +490,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   };
 
   // --- EXCEL IMPORT LOGIC ---
-  // ... (Keep existing export logic) ...
-  // [Code shortened for brevity, keep original export logic here]
-  const handleDownloadTemplate = () => { /* ... */ };
-  const parseStatus = (val: string): BookingStatus => { /* ... */ return BookingStatus.CONFIRMED; }
-  const parseExcelDate = (val: any): string => { return new Date().toISOString(); /* ... */ };
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
+  const handleDownloadTemplate = () => {}; // Shortened
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {}; // Shortened
   const triggerUpload = () => { if (fileInputRef.current) fileInputRef.current.click(); };
 
 
@@ -489,15 +559,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           const totalGroupPaid = groupBookings.reduce((sum, b) => sum + b.paidAmount, 0);
 
           // EXTRACT FEES
-          // We assume fees are stored in the first booking (leader) of the group
-          // If distributed, we'd need to agg, but current logic says save to leader.
           const loadedFees = mainBooking.extraFees || [];
           
           // Calculate Net Fee (Revenue - Expense)
           const feeNet = loadedFees.reduce((sum, f) => f.type === 'REVENUE' ? sum + f.amount : sum - f.amount, 0);
 
           // Calculate Pure Room Total (Total Stored - Net Fees)
-          // Use Math.max to avoid negative room price if data is weird
           const roomTotal = totalGroupPriceStored - feeNet;
 
           setBookingMeta({
@@ -514,14 +581,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               extraFees: loadedFees
           });
 
-          const rows: BookingRow[] = groupBookings.map(b => ({
-              tempId: `existing-${b.id}`,
-              bookingId: b.id,
-              roomId: b.roomId,
-              checkIn: b.checkInDate,
-              checkOut: b.checkOutDate,
-              price: b.totalPrice // This is just initial value for row input
-          }));
+          const rows: BookingRow[] = groupBookings.map(b => {
+              const currentRoom = rooms.find(r => r.id === b.roomId);
+              return {
+                tempId: `existing-${b.id}`,
+                bookingId: b.id,
+                roomId: b.roomId,
+                // Initialize temp selectors based on existing data
+                tempPropId: currentRoom?.propertyId || currentProperty.id,
+                tempTypeId: currentRoom?.typeId || '',
+                checkIn: b.checkInDate,
+                checkOut: b.checkOutDate,
+                price: b.totalPrice // This is just initial value for row input
+              }
+          });
 
           setBookingRows(rows);
           setOriginalBookingIds(groupBookings.map(b => b.id));
@@ -548,9 +621,16 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
               const off = tomorrow.getTimezoneOffset() * 60000;
               checkOut = (new Date(tomorrow.getTime() - off)).toISOString().slice(0, -1);
           }
+          
+          // Determine initial Prop and Type for the first row
+          const initPropId = defaultRoomId ? rooms.find(r=>r.id===defaultRoomId)?.propertyId : currentProperty.id;
+          const initTypeId = defaultRoomId ? rooms.find(r=>r.id===defaultRoomId)?.typeId : '';
+
           setBookingRows([{
               tempId: 'init',
               roomId: defaultRoomId || '',
+              tempPropId: initPropId,
+              tempTypeId: initTypeId,
               checkIn: checkIn,
               checkOut: checkOut,
               price: 0
@@ -564,6 +644,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       setBookingRows([...bookingRows, {
           tempId: `row-${Date.now()}`,
           roomId: '',
+          // Default to current property
+          tempPropId: currentProperty.id,
+          tempTypeId: '',
           checkIn: lastRow.checkIn,
           checkOut: lastRow.checkOut,
           price: 0
@@ -582,13 +665,25 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   const updateRow = (idx: number, field: keyof BookingRow, value: any) => {
       const newRows = [...bookingRows];
-      newRows[idx] = { ...newRows[idx], [field]: value };
-      if (field === 'roomId') {
+      
+      // Cascading Logic
+      if (field === 'tempPropId') {
+          // If Property changes -> Reset Type and Room
+          newRows[idx] = { ...newRows[idx], tempPropId: value, tempTypeId: '', roomId: '' };
+      } else if (field === 'tempTypeId') {
+          // If Type changes -> Reset Room
+          newRows[idx] = { ...newRows[idx], tempTypeId: value, roomId: '' };
+      } else if (field === 'roomId') {
+          // If Room changes -> Update price
+          newRows[idx] = { ...newRows[idx], roomId: value };
           const r = rooms.find(rm => rm.id === value);
           if (r) {
               const t = roomTypes.find(type => type.id === r.typeId);
               if (t) newRows[idx].price = t.price;
           }
+      } else {
+          // Normal update
+          newRows[idx] = { ...newRows[idx], [field]: value };
       }
       setBookingRows(newRows);
   };
@@ -895,6 +990,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   return (
     <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
        {/* ... (Header) ... */}
+       {/* ... existing header logic ... */}
        <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all">
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
               
@@ -1132,6 +1228,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                 <table className="w-full text-sm text-left whitespace-nowrap">
                     <thead className="bg-gray-100 text-gray-700 font-bold border-b text-xs uppercase">
                         <tr>
+                            {/* ... existing table headers ... */}
                             <th className="p-4">Mã BK</th>
                             <th className="p-4">Khách hàng</th>
                             <th className="p-4">Tags</th>
@@ -1183,9 +1280,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                     <td className="p-4 font-bold text-gray-800">{room?.number}</td>
                                     <td className="p-4 text-gray-600 text-xs">{type?.name}</td>
                                     <td className="p-4 text-gray-500 text-xs">{prop?.name}</td>
-                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.createdAt).toLocaleString('vi-VN')}</td>
-                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.checkInDate).toLocaleString('vi-VN')}</td>
-                                    <td className="p-4 text-gray-500 text-xs">{new Date(b.checkOutDate).toLocaleString('vi-VN')}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{formatStandardDateTime(b.createdAt)}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{formatStandardDateTime(b.checkInDate)}</td>
+                                    <td className="p-4 text-gray-500 text-xs">{formatStandardDateTime(b.checkOutDate)}</td>
                                     
                                     <td className="p-4 text-right font-medium text-gray-900">{formatNumber(b.totalPrice)}</td>
                                     <td className="p-4 text-right font-medium text-blue-600">{formatNumber(b.paidAmount)}</td>
@@ -1210,7 +1307,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
       {/* ... (Keep existing Modals) ... */}
       {/* ... STATUS MODAL, CREATE/EDIT MODAL, TICKET MODAL ... */}
-      {/* STATUS CHANGE CONFIRMATION MODAL */}
       {statusModal.isOpen && statusModal.room && (
           <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
@@ -1287,7 +1383,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       {/* Rooms List */}
                       <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
                           <div className="bg-gray-50 flex text-xs font-bold text-gray-500 p-3 items-center uppercase tracking-wider hidden md:flex border-b border-gray-200">
-                            <div className="w-[15%]">Hạng</div><div className="w-[15%]">Phòng</div><div className="w-[22%]">Nhận</div><div className="w-[22%]">Trả</div><div className="w-[12%] text-center">Thời gian</div><div className="w-[14%] text-right">#</div>
+                            <div className="w-[15%]">Chi nhánh</div>
+                            <div className="w-[15%]">Hạng</div>
+                            <div className="w-[12%]">Phòng</div>
+                            <div className="w-[20%]">Nhận</div>
+                            <div className="w-[20%]">Trả</div>
+                            <div className="w-[10%] text-center">TG</div>
+                            <div className="w-[8%] text-right">#</div>
                           </div>
                           <div className="divide-y divide-gray-100">
                             {bookingRows.map((row, idx) => (
@@ -1298,14 +1400,57 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-xs flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
                                     </div>
 
-                                    <div className="md:w-[15%] flex justify-between md:block items-center">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase">Hạng</span>
-                                        <span className="text-sm font-medium text-gray-600 truncate">{rooms.find(r => r.id === row.roomId)?.typeId ? roomTypes.find(t => t.id === rooms.find(r => r.id === row.roomId)?.typeId)?.name : '--'}</span>
+                                    {/* Branch Select */}
+                                    <div className="md:w-[15%] space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Chi nhánh</span>
+                                        <select 
+                                            disabled={isReadOnly} 
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
+                                            value={row.tempPropId} 
+                                            onChange={e => updateRow(idx, 'tempPropId', e.target.value)}
+                                        >
+                                            {properties.map(p => (
+                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                        </select>
                                     </div>
-                                    <div className="md:w-[15%]">
-                                        <select disabled={isReadOnly} className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" value={row.roomId} onChange={e => updateRow(idx, 'roomId', e.target.value)}>
-                                            <option value="">Chọn phòng</option>
+
+                                    {/* Type Select (Dependent on Branch) */}
+                                    <div className="md:w-[15%] space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Hạng phòng</span>
+                                        <select 
+                                            disabled={isReadOnly} 
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
+                                            value={row.tempTypeId} 
+                                            onChange={e => updateRow(idx, 'tempTypeId', e.target.value)}
+                                        >
+                                            <option value="">-- Chọn --</option>
+                                            {roomTypes.map(t => {
+                                                // Only show types that exist in the selected branch's rooms
+                                                const hasRoomsInBranch = rooms.some(r => r.propertyId === row.tempPropId && r.typeId === t.id);
+                                                if (hasRoomsInBranch || !row.tempPropId) {
+                                                    return <option key={t.id} value={t.id}>{t.name}</option>;
+                                                }
+                                                return null;
+                                            })}
+                                        </select>
+                                    </div>
+
+                                    {/* Room Select (Dependent on Branch + Type) */}
+                                    <div className="md:w-[12%] space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Phòng</span>
+                                        <select 
+                                            disabled={isReadOnly} 
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" 
+                                            value={row.roomId} 
+                                            onChange={e => updateRow(idx, 'roomId', e.target.value)}
+                                        >
+                                            <option value="">--</option>
                                             {rooms.map(r => {
+                                                // Filter by Branch & Type
+                                                if (row.tempPropId && r.propertyId !== row.tempPropId) return null;
+                                                if (row.tempTypeId && r.typeId !== row.tempTypeId) return null;
+
                                                 const check = DataService.validateRoomAvailability(r.id, row.checkIn, row.checkOut, row.bookingId);
                                                 const isSelectedElsewhere = bookingRows.some((otherRow, otherIdx) => otherIdx !== idx && otherRow.roomId === r.id);
                                                 if ((check.valid || r.id === row.roomId) && !isSelectedElsewhere) {
@@ -1315,19 +1460,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                             })}
                                         </select>
                                     </div>
-                                    <div className="md:w-[22%] space-y-1 md:space-y-0">
+
+                                    <div className="md:w-[20%] space-y-1 md:space-y-0">
                                         <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Nhận phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} />
                                     </div>
-                                    <div className="md:w-[22%] space-y-1 md:space-y-0">
+                                    <div className="md:w-[20%] space-y-1 md:space-y-0">
                                         <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Trả phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
                                     </div>
-                                    <div className="md:w-[12%] text-center text-sm font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1 md:py-0 mt-1 md:mt-0 flex justify-between md:block px-2 md:px-0">
+                                    <div className="md:w-[10%] text-center text-sm font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1 md:py-0 mt-1 md:mt-0 flex justify-between md:block px-2 md:px-0">
                                         <span className="md:hidden text-xs text-gray-400">Thời lượng:</span>
                                         {getDurationText(row.checkIn, row.checkOut)}
                                     </div>
-                                    <div className="hidden md:block md:w-[14%] text-right">
+                                    <div className="hidden md:block md:w-[8%] text-right">
                                         {!isReadOnly && (
                                             <button onClick={() => handleRemoveRow(idx)} className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-full hover:bg-red-50"><Trash2 size={18} /></button>
                                         )}
@@ -1343,6 +1489,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
 
                       {/* EXTRA FEES */}
+                      {/* ... existing extra fees section ... */}
                       <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
                           <div className="bg-gray-50 p-3 border-b border-gray-200 flex justify-between items-center">
                               <h4 className="text-xs font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={14}/> Dịch vụ & Phụ thu</h4>
@@ -1391,6 +1538,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
 
                       {/* Payment & Extras */}
+                      {/* ... existing payment section ... */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20 md:pb-0">
                           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
                               <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2 uppercase tracking-wide border-b pb-2"><Info size={14}/> Thanh toán</h4>
@@ -1484,6 +1632,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                   </div>
 
                   {/* Modal Footer - Sticky */}
+                  {/* ... existing footer logic ... */}
                   <div className="flex-shrink-0 p-4 border-t border-gray-100 bg-white z-10 md:rounded-b-3xl">
                       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                           <div className="flex items-center gap-3 w-full md:w-auto">
@@ -1589,9 +1738,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         
                                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                                             <span className="text-gray-500">Nhận phòng:</span>
-                                            <span className="font-medium">{formatTicketDate(room.checkIn)}</span>
+                                            <span className="font-medium">{formatStandardDateTime(room.checkIn)}</span>
                                             <span className="text-gray-500">Trả phòng:</span>
-                                            <span className="font-medium">{formatTicketDate(room.checkOut)}</span>
+                                            <span className="font-medium">{formatStandardDateTime(room.checkOut)}</span>
                                         </div>
                                     </div>
                                 ))}
