@@ -1,125 +1,89 @@
-
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Booking, BookingStatus } from '../types';
 
-export interface AlertItem {
+export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'CHECK_IN' | 'CHECK_OUT';
+  type: 'CHECK_IN' | 'CHECK_OUT' | 'DEBT' | 'INFO';
   time: string;
+  isVisible?: boolean; // Dành cho Toast (hiển thị 3s)
+  isRead?: boolean;    // Dành cho Lịch sử cái chuông
 }
 
-const SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'; // Tiếng "Ding" nhẹ nhàng
+const SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
-export const useBookingAlert = (bookings: Booking[]) => {
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  
-  // Dùng useRef để lưu danh sách các sự kiện đã thông báo trong phiên làm việc này
-  // Format key: "{bookingId}_{type}_{trigger}" (VD: b1_CHECK_IN_5MIN)
+export const useBookingAlert = (bookings: Booking[], onNewAlert: (alert: AppNotification) => void) => {
   const processedRef = useRef<Set<string>>(new Set());
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const onNewAlertRef = useRef(onNewAlert);
 
   useEffect(() => {
-    // 1. Xin quyền Notification khi mount
+      onNewAlertRef.current = onNewAlert;
+  }, [onNewAlert]);
+
+  useEffect(() => {
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
-    
-    // Init Audio
     audioRef.current = new Audio(SOUND_URL);
   }, []);
-
-  const triggerAlert = (booking: Booking, type: 'CHECK_IN' | 'CHECK_OUT', trigger: '5MIN' | 'NOW') => {
-    const key = `${booking.id}_${type}_${trigger}`;
-    
-    // Cơ chế chống Spam: Nếu đã báo rồi thì bỏ qua
-    if (processedRef.current.has(key)) return;
-
-    // --- A. DATA PREPARATION ---
-    const title = type === 'CHECK_IN' ? `Sắp có khách đến!` : `Sắp đến giờ trả phòng!`;
-    const guestInfo = `${booking.guestName} (${booking.roomId})`; // Cần join Room number nếu có thể, ở đây dùng ID tạm hoặc map ở UI
-    const timeInfo = trigger === '5MIN' ? 'còn 5 phút nữa' : 'ngay bây giờ';
-    const message = `${guestInfo} - ${type === 'CHECK_IN' ? 'Check-in' : 'Check-out'} ${timeInfo}.`;
-
-    // --- B. ACTIONS ---
-    
-    // 1. Play Sound
-    if (audioRef.current) {
-        audioRef.current.play().catch(err => console.warn("Audio play blocked", err));
-    }
-
-    // 2. Browser Notification
-    if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(title, { body: message, icon: '/icon.png' });
-    }
-
-    // 3. App Toast State
-    const newAlert: AlertItem = {
-        id: key,
-        title,
-        message,
-        type,
-        time: new Date().toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'})
-    };
-
-    setAlerts(prev => [newAlert, ...prev]);
-    
-    // Đánh dấu đã xử lý
-    processedRef.current.add(key);
-  };
 
   useEffect(() => {
     const checkBookings = () => {
         const now = new Date().getTime();
-        
         bookings.forEach(b => {
-            if (b.status === BookingStatus.DELETED || b.status === BookingStatus.CANCELLED) return;
-
-            // --- CHECK-IN LOGIC (Chỉ áp dụng cho đơn CONFIRMED) ---
             if (b.status === BookingStatus.CONFIRMED) {
                 const checkInTime = new Date(b.checkInDate).getTime();
                 const diffMin = (checkInTime - now) / 60000;
-
-                // Trước 5 phút (4 < diff <= 5)
-                if (diffMin > 4 && diffMin <= 5) {
-                    triggerAlert(b, 'CHECK_IN', '5MIN');
-                }
-                // Đúng giờ (chênh lệch <= 1 phút)
-                if (Math.abs(diffMin) <= 1) {
-                    triggerAlert(b, 'CHECK_IN', 'NOW');
-                }
+                if (diffMin > 4 && diffMin <= 5) triggerAlert(b, 'CHECK_IN', '5MIN');
+                if (Math.abs(diffMin) <= 1) triggerAlert(b, 'CHECK_IN', 'NOW');
             }
-
-            // --- CHECK-OUT LOGIC (Chỉ áp dụng cho đơn CHECKED_IN) ---
             if (b.status === BookingStatus.CHECKED_IN) {
                 const checkOutTime = new Date(b.checkOutDate).getTime();
                 const diffMin = (checkOutTime - now) / 60000;
-
-                // Trước 5 phút
-                if (diffMin > 4 && diffMin <= 5) {
-                    triggerAlert(b, 'CHECK_OUT', '5MIN');
-                }
-                // Đúng giờ
-                if (Math.abs(diffMin) <= 1) {
-                    triggerAlert(b, 'CHECK_OUT', 'NOW');
-                }
+                if (diffMin > 4 && diffMin <= 5) triggerAlert(b, 'CHECK_OUT', '5MIN');
+                if (Math.abs(diffMin) <= 1) triggerAlert(b, 'CHECK_OUT', 'NOW');
             }
         });
     };
 
-    // Chạy ngay lần đầu
+    const triggerAlert = (booking: Booking, type: 'CHECK_IN' | 'CHECK_OUT', trigger: '5MIN' | 'NOW') => {
+        const key = `${booking.id}_${type}_${trigger}`;
+        if (processedRef.current.has(key)) return;
+        processedRef.current.add(key);
+
+        let title = ''; let message = '';
+        if (type === 'CHECK_IN') {
+            title = 'Sắp đến giờ Check-in';
+            message = trigger === '5MIN' ? `Đơn ${booking.id} sẽ check-in trong 5 phút nữa.` : `Đã đến giờ check-in cho đơn ${booking.id}.`;
+        } else {
+            title = 'Sắp đến giờ Check-out';
+            message = trigger === '5MIN' ? `Đơn ${booking.id} sẽ check-out trong 5 phút nữa.` : `Đã đến giờ check-out cho đơn ${booking.id}.`;
+        }
+
+        const newAlert: AppNotification = {
+            id: key + '_' + Date.now(),
+            title,
+            message,
+            type,
+            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+        };
+
+        if (audioRef.current) {
+            audioRef.current.currentTime = 0;
+            audioRef.current.play().catch(e => console.log('Audio play blocked:', e));
+        }
+
+        if (Notification.permission === 'granted') {
+            new Notification(title, { body: message, icon: '/favicon.ico' });
+        }
+
+        onNewAlertRef.current(newAlert);
+    };
+
     checkBookings();
-
-    // Loop mỗi 60 giây
     const interval = setInterval(checkBookings, 60000);
-
     return () => clearInterval(interval);
-  }, [bookings]); // Re-run khi danh sách booking thay đổi
-
-  const removeAlert = (id: string) => {
-      setAlerts(prev => prev.filter(a => a.id !== id));
-  };
-
-  return { alerts, removeAlert };
+  }, [bookings]);
 };

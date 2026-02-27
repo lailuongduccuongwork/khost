@@ -1,4 +1,3 @@
-
 import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, HistoryLog, Tag, Tenant, SubscriptionPlan, PERMISSIONS, TransactionCategory } from '../types';
 import { INITIAL_BOOKINGS, INITIAL_CUSTOMERS, INITIAL_PROPERTIES, INITIAL_ROOMS, INITIAL_ROOM_TYPES, INITIAL_USERS, INITIAL_TAGS, INITIAL_TENANTS, INITIAL_PLANS, INITIAL_TRANSACTION_CATEGORIES } from './mockData';
 import { initializeApp } from "firebase/app";
@@ -55,60 +54,34 @@ const getBaseRef = () => {
     return activeTenantId === SYSTEM_TENANT_ID ? 'system' : `tenants/${activeTenantId}`;
 };
 
-// --- FIX: SMART MERGE DATA PARSER ---
-// Hàm này giải quyết vấn đề: Dữ liệu bị trùng lặp VÀ dữ liệu bị mất tên phòng.
-// Nó sẽ gom tất cả lại, nếu trùng ID thì hợp nhất (Merge) thay vì ghi đè hoàn toàn.
 const snapshotToArray = <T extends { id?: string, number?: string, name?: string }>(snap: any): T[] => {
     const val = snap.val();
     if (!val) return [];
     
     let rawList: T[] = [];
-
-    // 1. Extract data (Lấy hết mọi dữ liệu bất kể cấu trúc Array hay Map)
     if (typeof val === 'object') {
         Object.keys(val).forEach(key => {
             const item = val[key];
             if (item && typeof item === 'object') {
-                // Spread để copy object, đảm bảo ID tồn tại
                 rawList.push({ ...item, id: item.id || key });
             }
         });
     }
 
-    // 2. DEDUPLICATION WITH INTELLIGENT MERGE (Khử trùng lặp thông minh)
     const uniqueMap = new Map<string, T>();
-
     rawList.forEach(item => {
         const id = (item as any).id;
         if (!id) return;
 
         if (uniqueMap.has(id)) {
-            // --- LOGIC HỒI PHỤC DỮ LIỆU ---
-            // Nếu ID đã tồn tại, ta lấy cái cũ ra
             const existing = uniqueMap.get(id)!;
-
-            // Tạo bản ghi mới bằng cách ghi đè cái cũ bằng cái mới
             const merged = { ...existing, ...item };
-
-            // QUAN TRỌNG: Bảo vệ các trường định danh quan trọng.
-            // Nếu bản ghi MỚI (item) bị mất 'number' (Tên phòng) mà bản ghi CŨ (existing) lại có
-            // -> Thì phải giữ lại 'number' của bản ghi cũ.
-            if ((existing as any).number && !(item as any).number) {
-                (merged as any).number = (existing as any).number;
-            }
-            if ((existing as any).name && !(item as any).name) {
-                (merged as any).name = (existing as any).name;
-            }
-            if ((existing as any).typeId && !(item as any).typeId) {
-                (merged as any).typeId = (existing as any).typeId;
-            }
-            if ((existing as any).propertyId && !(item as any).propertyId) {
-                (merged as any).propertyId = (existing as any).propertyId;
-            }
-
+            if ((existing as any).number && !(item as any).number) (merged as any).number = (existing as any).number;
+            if ((existing as any).name && !(item as any).name) (merged as any).name = (existing as any).name;
+            if ((existing as any).typeId && !(item as any).typeId) (merged as any).typeId = (existing as any).typeId;
+            if ((existing as any).propertyId && !(item as any).propertyId) (merged as any).propertyId = (existing as any).propertyId;
             uniqueMap.set(id, merged);
         } else {
-            // Chưa có thì thêm mới
             uniqueMap.set(id, item);
         }
     });
@@ -140,8 +113,6 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         const basePath = getBaseRef();
         if (!basePath) return;
 
-        console.log(`🔌 Listening to: ${basePath}`);
-
         const bind = <T>(node: string, cacheKey: keyof typeof CACHE) => {
             const nodeRef = ref(db, `${basePath}/${node}`);
             onValue(nodeRef, (snap) => {
@@ -169,12 +140,10 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             bind<Booking>('bookings', 'bookings');
             bind<Customer>('customers', 'customers');
             
-            // Users Sync (Special handling for self-repair)
             onValue(ref(db, `${basePath}/users`), async (snap) => { 
                 const users = snapshotToArray<User>(snap);
                 CACHE.users = users;
                 
-                // Self-repair: Recover from System if empty
                 if (users.length === 0) {
                     try {
                         const sysSnap = await get(ref(db, 'system/users'));
@@ -193,18 +162,14 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                 _dataChangeCallback(); 
             });
 
-            // History Sync
             const historyQuery = query(ref(db, `${basePath}/history`), limitToLast(50));
             onValue(historyQuery, (snap) => {
                  CACHE.history = snapshotToArray<HistoryLog>(snap).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
                  _dataChangeCallback();
             });
 
-            // FIX: STRICT SEEDING CHECK (PREVENT F5 RESET)
-            // Chỉ seed khi node 'rooms' VÀ 'properties' hoàn toàn không tồn tại.
             get(ref(db, `${basePath}/properties`)).then(pSnap => {
                 if (!pSnap.exists() || pSnap.size === 0) {
-                     // Kiểm tra kép (Double check)
                      get(ref(db, `${basePath}/rooms`)).then(rSnap => {
                          if (!rSnap.exists()) {
                              console.log("🌱 Database truly empty. Seeding Initial Data for " + tenantId);
@@ -258,7 +223,6 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
     
-    // Use update from root to be safe
     update(ref(db), updates).then(() => console.log("✅ Seeding Complete"));
 }
 
@@ -270,7 +234,6 @@ const _saveItem = (node: string, item: any) => {
     const itemRef = ref(db, `${basePath}/${node}/${item.id}`);
     const scopedItem = { ...item, tenantId: activeTenantId };
     
-    // Optimistic Update
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
     if (Array.isArray(list)) {
@@ -332,7 +295,6 @@ const _deleteItems = (node: string, ids: string[]) => {
     return update(ref(db), updates).catch(e => console.error(`Bulk delete ${node} failed`, e));
 }
 
-// --- HARD DELETE BOOKINGS ---
 const _hardDeleteBookings = (ids: string[], staffId: string) => {
     if (!activeTenantId || !db || ids.length === 0) return;
     const basePath = getBaseRef();
@@ -344,7 +306,6 @@ const _hardDeleteBookings = (ids: string[], staffId: string) => {
         const booking = CACHE.bookings.find(b => b.id === id);
         if (booking) {
             if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
-                // Unlock room immediately
                 updates[`${basePath}/rooms/${booking.roomId}/status`] = RoomStatus.VACANT_CLEAN;
                 CACHE.rooms = CACHE.rooms.map(r => r.id === booking.roomId ? {...r, status: RoomStatus.VACANT_CLEAN} : r);
             }
@@ -389,9 +350,6 @@ const _resetAllBookings = () => {
     _dataChangeCallback();
 };
 
-
-// --- DOMAIN SPECIFIC METHODS ---
-
 const _logAction = (action: HistoryLog['action'], booking: Booking, description: string, staffId: string) => {
     const logId = `log_${Date.now()}`;
     const newLog: HistoryLog = {
@@ -403,41 +361,22 @@ const _logAction = (action: HistoryLog['action'], booking: Booking, description:
     _saveItem('history', newLog);
 };
 
-// --- FIX: ROBUST ROOM STATUS UPDATE (NO CROSS CONTAMINATION) ---
 const _updateRoomStatus = (roomId: string, status: RoomStatus) => {
-    if (!db || !activeTenantId) {
-        // Suppress alert during initial load or reconnection
-        // console.warn("CSDL not ready");
-        return;
-    }
+    if (!db || !activeTenantId) return;
     const basePath = getBaseRef();
     
-    // 1. Validation: Ensure roomId is valid string
-    if (!roomId || typeof roomId !== 'string') {
-        console.error("Invalid RoomID for status update:", roomId);
-        return;
-    }
+    if (!roomId || typeof roomId !== 'string') return;
 
-    // 2. Optimistic Update (Only update the specific matching ID)
-    // CRITICAL: Spread {...r} to create a new object reference. 
     const newRooms = CACHE.rooms.map(r => r.id === roomId ? { ...r, status } : r);
     CACHE.rooms = newRooms;
     _dataChangeCallback();
 
-    // 3. SEND TO SERVER (Use DIRECT UPDATE on ROOT to allow proper path resolution)
     const updates: any = {};
     updates[`${basePath}/rooms/${roomId}/status`] = status;
     
-    update(ref(db), updates)
-        .then(() => {
-            console.log(`✅ Synced room ${roomId} to ${status}`);
-        })
-        .catch(e => {
-            console.error("🔥 Sync Failed:", e);
-        });
+    update(ref(db), updates).catch(e => console.error("🔥 Sync Failed:", e));
 };
 
-// Booking Operations
 const _addBooking = (booking: Booking) => {
     _saveItem('bookings', booking);
     if (booking.status === BookingStatus.CHECKED_IN) {
@@ -496,13 +435,16 @@ export const DataService = {
   getTenants: () => CACHE.tenants,
   getPlans: () => CACHE.plans,
   getSystemUsers: () => CACHE.systemUsers,
+  
+  // ĐÃ SỬA: LUÔN LUÔN TRẢ VỀ MẢNG ĐÃ SẮP XẾP THEO sortOrder
   getProperties: () => [...CACHE.properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)),
+  getRoomTypes: () => [...CACHE.roomTypes].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)),
   getRooms: (propId?: string) => {
       let r = [...CACHE.rooms];
       if (propId) r = r.filter(x => x.propertyId === propId);
       return r.sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
   },
-  getRoomTypes: () => CACHE.roomTypes,
+  
   getBookings: (propId?: string) => {
       let b = CACHE.bookings.filter(x => x.status !== BookingStatus.DELETED);
       if (propId) b = b.filter(x => x.propertyId === propId);
@@ -550,7 +492,6 @@ export const DataService = {
 
   addCustomer: (c: Customer) => _saveItem('customers', c),
   
-  // FIX: Force TenantID injection for Users to ensure Login works
   addUser: (u: User) => {
       const userWithTenant = { ...u, tenantId: activeTenantId || u.tenantId };
       _saveItem('users', userWithTenant);

@@ -1,67 +1,67 @@
-
 <!DOCTYPE html>
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>K-Host - Quản lý khách sạn</title>
+    
+    <!-- PWA Setup: Link với file manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="K-Host" />
+    
+    <!-- Icons Mobile -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏨</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏨</text></svg>">
+    
+    <!-- Thư viện -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    
     <script>
       tailwind.config = {
         theme: {
           extend: {
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-            },
-            colors: {
-              primary: {
-                50: '#eff6ff',
-                100: '#dbeafe',
-                500: '#3b82f6',
-                600: '#2563eb',
-                700: '#1d4ed8',
-              }
-            }
-          },
-        },
+            fontFamily: { sans: ['Inter', 'sans-serif'] },
+            colors: { primary: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' } }
+          }
+        }
       }
     </script>
     <style>
-      body {
-        font-family: 'Inter', sans-serif;
-        background-color: #f3f4f6;
-      }
-      /* Hide scrollbar for clean UI but allow scroll */
-      .no-scrollbar::-webkit-scrollbar {
-          display: none;
-      }
-      .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-      }
+      body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; overscroll-behavior-y: none; }
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.3.1",
-    "react/": "https://esm.sh/react@18.3.1/",
-    "react-dom": "https://esm.sh/react-dom@18.3.1?deps=react@18.3.1",
-    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
-    "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom",
-    "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
-    "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
-    "firebase/database": "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js",
-    "firebase/": "https://esm.sh/firebase@^12.6.0/"
-  }
-}
-</script>
-</head>
+    
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react/": "https://esm.sh/react@18.3.1/",
+        "react-dom": "https://esm.sh/react-dom@18.3.1?deps=react@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+        "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom",
+        "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react,react-dom"
+      }
+    }
+    </script>
+  </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
+    
+    <!-- Kích hoạt PWA tự động (Chỉ chạy khi đẩy lên mạng, tuyệt đối an toàn cho máy bạn) -->
+    <script>
+      if ('serviceWorker' in navigator && window.location.hostname !== 'localhost') {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW setup failed', err));
+        });
+      }
+    </script>
   </body>
 </html>

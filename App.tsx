@@ -1,10 +1,9 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import RoomMap from './pages/RoomMap';
-import Bookings from './pages/Bookings'; // Import Bookings Page
+import Bookings from './pages/Bookings'; 
 import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
@@ -13,7 +12,7 @@ import SuperAdmin from './pages/SuperAdmin';
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
-import { useBookingAlert } from './hooks/useBookingAlert'; 
+import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
 
 const App: React.FC = () => {
@@ -48,15 +47,33 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
-  // --- NOTIFICATION HOOKS INTEGRATION ---
-  // 1. Standard Alerts (Check-in/Check-out)
-  const { alerts, removeAlert } = useBookingAlert(bookings);
-  
-  // 2. Debt Alerts (Financial Warning) - Pass rooms to get room numbers
-  const { debtAlerts, removeDebtAlert } = useDebtAlert(bookings, rooms);
+  // --- NOTIFICATION ENGINE ---
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+  const handleNewNotification = useCallback((notif: AppNotification) => {
+      // 1. Lưu thông báo mới vào lịch sử (isRead = false) và hiển thị Toast (isVisible = true)
+      const newNotif = { ...notif, isVisible: true, isRead: false };
+      setNotifications(prev => [newNotif, ...prev]);
+
+      // 2. Tự động tắt Toast sau 3 giây (Vẫn giữ lại trong lịch sử cái chuông)
+      setTimeout(() => {
+          setNotifications(prev => prev.map(n => n.id === newNotif.id ? { ...n, isVisible: false } : n));
+      }, 3000);
+  }, []);
+
+  useBookingAlert(bookings, handleNewNotification);
+  useDebtAlert(bookings, rooms, handleNewNotification);
+
+  const handleMarkAllRead = () => {
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
+  const handleMarkRead = (id: string) => {
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  };
+
 
   // --- INITIALIZATION ---
-  // Try to restore session on mount
   useEffect(() => {
     const savedUser = localStorage.getItem('k_host_user');
     const savedTenant = localStorage.getItem('k_host_tenant');
@@ -66,15 +83,12 @@ const App: React.FC = () => {
             const parsedUser = JSON.parse(savedUser);
             setCurrentUser(parsedUser);
             
-            // If user has a specific tenant, load it
             if (parsedUser.tenantId !== 'SYSTEM' && parsedUser.tenantId) {
                 initDataService(parsedUser.tenantId);
             } else if (parsedUser.role === UserRole.SUPER_ADMIN) {
-                // If Super Admin was impersonating
                 if (savedTenant && savedTenant !== 'SYSTEM') {
                     initDataService(savedTenant);
                 } else {
-                    // Super Admin in Dashboard View (System context)
                     initDataService('SYSTEM');
                     setIsSuperAdminView(true);
                 }
@@ -94,8 +108,8 @@ const App: React.FC = () => {
           
           if (tenantId === 'SYSTEM') {
               setTenantList(DataService.getTenants());
-              setPlanList(DataService.getPlans()); // Fetch Plans
-              setSystemUsers(DataService.getSystemUsers()); // Fetch System Users
+              setPlanList(DataService.getPlans()); 
+              setSystemUsers(DataService.getSystemUsers()); 
           }
           
           setIsLoading(false);
@@ -107,14 +121,12 @@ const App: React.FC = () => {
     if (isLoading || !activeTenantId) return;
 
     if (activeTenantId === 'SYSTEM') {
-        // Super Admin Mode: Update system lists
         setTenantList(DataService.getTenants());
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
         return;
     }
 
-    // Normal Tenant Mode: Sync Business Data
     const props = DataService.getProperties();
     const allUsers = DataService.getUsers();
     
@@ -124,38 +136,27 @@ const App: React.FC = () => {
     setRoomTypes(DataService.getRoomTypes());
     setTags(DataService.getTags());
 
-    // --- CRITICAL FIX: WAIT FOR PROPERTIES TO LOAD ---
-    // If props are empty (initial load), don't run access logic yet.
-    // This prevents defaulting to 'ALL' when data hasn't arrived.
     if (props.length === 0) return;
 
-    // 3. Determine Effective Property ID
     let activePropId = currentPropertyId;
-    
-    // Check Permissions
     const allowedIds = currentUser?.allowedPropertyIds || [];
     const hasRestrictions = allowedIds.length > 0;
 
-    // Validate activePropId
     const isValid = activePropId && (activePropId === 'ALL' || props.some(p => p.id === activePropId));
     const isAllowed = !hasRestrictions || (activePropId === 'ALL' ? allowedIds.length > 1 : allowedIds.includes(activePropId));
 
-    // If invalid or not allowed, reset to sensible default
     if (!isValid || !isAllowed) {
         if (!hasRestrictions) {
             activePropId = 'ALL';
         } else {
-            // Default to first allowed property if restricted
             activePropId = allowedIds.length > 1 ? 'ALL' : allowedIds[0];
         }
         if (activePropId !== currentPropertyId) {
             setCurrentPropertyId(activePropId);
-            // Return here to let next render handle filter with correct ID
             return;
         }
     }
 
-    // 4. Get & Filter Dynamic Data
     let allRooms = DataService.getRooms(); 
     let allBookings = DataService.getBookings();
 
@@ -174,10 +175,8 @@ const App: React.FC = () => {
 
   }, [dataTick, currentPropertyId, isLoading, currentUser?.id, activeTenantId]);
 
-
-  // --- SMART AUTOMATION SYSTEM (NON-DESTRUCTIVE) ---
+  // --- SMART AUTOMATION SYSTEM ---
   useEffect(() => {
-      // Chỉ chạy khi user đã đăng nhập, không phải lúc đang load, và không phải SuperAdmin đang ở view hệ thống
       if (!currentUser || isLoading || activeTenantId === 'SYSTEM') return;
 
       const runAutomation = () => {
@@ -185,7 +184,6 @@ const App: React.FC = () => {
           const allBookings = DataService.getBookings();
           const allRooms = DataService.getRooms();
           
-          // Lọc ra các booking cần update để tránh loop qua toàn bộ DB
           const activeBookings = allBookings.filter(b => 
               b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.CHECKED_IN
           );
@@ -197,22 +195,16 @@ const App: React.FC = () => {
               let needsUpdate = false;
               let newStatus = b.status;
 
-              // 1. AUTO CHECK-IN
               if (b.status === BookingStatus.CONFIRMED && now >= checkIn) {
                   newStatus = BookingStatus.CHECKED_IN;
-                  // Cập nhật trạng thái phòng thành OCCUPIED nếu chưa phải
                   const room = allRooms.find(r => r.id === b.roomId);
                   if (room && room.status !== RoomStatus.OCCUPIED) {
                       DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED);
                   }
                   needsUpdate = true;
               }
-
-              // 2. AUTO CHECK-OUT
               else if (b.status === BookingStatus.CHECKED_IN && now >= checkOut) {
                   newStatus = BookingStatus.CHECKED_OUT;
-                  // Cập nhật trạng thái phòng thành VACANT_DIRTY chỉ khi nó chưa phải là VACANT_DIRTY
-                  // Điều này ngăn việc update liên tục ghi đè trạng thái
                   const room = allRooms.find(r => r.id === b.roomId);
                   if (room && room.status !== RoomStatus.VACANT_DIRTY) {
                       DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY);
@@ -220,7 +212,6 @@ const App: React.FC = () => {
                   needsUpdate = true;
               }
 
-              // Lưu thay đổi nếu có
               if (needsUpdate) {
                   const updatedBooking = { ...b, status: newStatus };
                   DataService.updateBooking(updatedBooking);
@@ -228,42 +219,31 @@ const App: React.FC = () => {
           });
       };
 
-      // Chạy ngay khi mount
       runAutomation();
-
-      // Chạy định kỳ mỗi 30 giây
       const intervalId = setInterval(runAutomation, 30000);
-
       return () => clearInterval(intervalId);
   }, [dataTick, currentUser, isLoading, activeTenantId]); 
-  // Dependency 'dataTick' ensures we use the latest data from DataService
-
 
   // --- Handlers ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Use Global Login to find tenant
     const foundUser = await DataService.login(loginUsername, loginPassword);
 
     if (foundUser) {
       setCurrentUser(foundUser);
       localStorage.setItem('k_host_user', JSON.stringify(foundUser));
-      
       setCurrentPropertyId('');
       
-      // Determine Start Page & Tenant
       if (foundUser.role === UserRole.SUPER_ADMIN) {
           setIsSuperAdminView(true);
           initDataService('SYSTEM');
           setCurrentPage('dashboard');
       } else {
-          // Standard User: Load their specific tenant
           initDataService(foundUser.tenantId);
           localStorage.setItem('k_host_tenant', foundUser.tenantId);
           
-          // Redirect logic based on role
           if (foundUser.role === UserRole.HOUSEKEEPING) {
               setCurrentPage('housekeeping');
           } else if (foundUser.permissions && !foundUser.permissions.includes(PERMISSIONS.VIEW_DASHBOARD)) {
@@ -292,7 +272,6 @@ const App: React.FC = () => {
 
   const manualRefresh = () => setDataTick(t => t + 1);
 
-  // --- Super Admin: Impersonate Tenant ---
   const handleAccessTenant = (tenantId: string) => {
       setIsSuperAdminView(false);
       localStorage.setItem('k_host_tenant', tenantId);
@@ -306,21 +285,17 @@ const App: React.FC = () => {
       initDataService('SYSTEM');
   };
 
-  // --- HOUSEKEEPING HANDLER ---
   const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
       DataService.updateRoomStatus(roomId, status);
-      // No manualRefresh needed as DataService listeners will trigger update
   };
 
-  // --- Effective User Logic (Impersonation) ---
   const effectiveUser = useMemo(() => {
     if (!currentUser) return null;
     if (currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView) {
-        // Create a virtual ADMIN user for the current tenant
         return {
             ...currentUser,
-            role: UserRole.ADMIN, // Masquerade as Tenant Admin
-            permissions: Object.values(PERMISSIONS), // Give full permissions
+            role: UserRole.ADMIN, 
+            permissions: Object.values(PERMISSIONS), 
             tenantId: activeTenantId || 'temp_view',
             fullName: `[Super Admin] ${currentUser.fullName}`
         } as User;
@@ -328,8 +303,6 @@ const App: React.FC = () => {
     return currentUser;
   }, [currentUser, isSuperAdminView, activeTenantId]);
 
-
-  // --- Loading Screen ---
   if (isLoading) {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-4">
@@ -339,7 +312,6 @@ const App: React.FC = () => {
       )
   }
 
-  // --- Login Screen ---
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-slate-900 flex items-center justify-center p-4">
@@ -385,58 +357,36 @@ const App: React.FC = () => {
     );
   }
 
-  // Safe check for typescript
   if (!effectiveUser) return null;
 
-  // --- STANDARD TENANT VIEW OBJECT ---
   const currentPropertyObj = currentPropertyId === 'ALL' 
         ? { id: 'ALL', name: 'Toàn bộ chi nhánh', address: '' } as Property
         : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''} as Property);
 
   return (
     <div className="min-h-screen bg-gray-50 relative">
-      {/* NOTIFICATION TOAST CONTAINER */}
+      
+      {/* KHU VỰC HIỂN THỊ THÔNG BÁO NỔI (TOAST) - Tự ẩn sau 3 giây */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
-          {/* 1. DEBT ALERTS (URGENT - RED) */}
-          {debtAlerts.map(alert => (
-              <div key={alert.id} className="bg-red-50 border-l-4 border-red-600 p-4 rounded shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
-                  <div className="p-2 rounded-full bg-red-100 text-red-600 animate-pulse">
-                      <Wallet size={20} />
+          {notifications.filter(n => n.isVisible).map(alert => (
+              <div key={alert.id} className={`p-4 rounded-xl shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform transition-all hover:scale-105 ${alert.type === 'DEBT' ? 'bg-red-50 border-l-4 border-red-600' : 'bg-white border-l-4 border-blue-600'}`}>
+                  <div className={`p-2 rounded-full ${alert.type === 'DEBT' ? 'bg-red-100 text-red-600 animate-pulse' : alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
+                      {alert.type === 'DEBT' ? <Wallet size={20} /> : alert.type === 'CHECK_IN' ? <CheckCircle size={20} /> : <Clock size={20} />}
                   </div>
                   <div className="flex-1">
-                      <h4 className="font-bold text-red-800 text-sm flex items-center gap-1">
-                          <AlertTriangle size={14} /> CẢNH BÁO CÔNG NỢ
+                      <h4 className={`font-bold text-sm flex items-center gap-1 ${alert.type === 'DEBT' ? 'text-red-800' : 'text-gray-800'}`}>
+                          {alert.type === 'DEBT' && <AlertTriangle size={14} />} {alert.title}
                       </h4>
-                      <p className="text-xs text-red-700 mt-1 font-semibold">
-                          Phòng {alert.roomNumber}: Còn thiếu {new Intl.NumberFormat('vi-VN').format(alert.debtAmount)}đ
-                      </p>
-                      <p className="text-[10px] text-red-500 mt-1">{alert.guestName} - {alert.time}</p>
+                      <p className={`text-xs mt-1 ${alert.type === 'DEBT' ? 'text-red-700 font-semibold' : 'text-gray-600'}`}>{alert.message}</p>
+                      <p className={`text-[10px] mt-1.5 font-medium ${alert.type === 'DEBT' ? 'text-red-500' : 'text-gray-400'}`}>{alert.time}</p>
                   </div>
-                  <button onClick={() => removeDebtAlert(alert.id)} className="text-red-400 hover:text-red-600">
-                      <X size={16} />
-                  </button>
-              </div>
-          ))}
-
-          {/* 2. STANDARD ALERTS (NORMAL - BLUE/GREEN) */}
-          {alerts.map(alert => (
-              <div key={alert.id} className="bg-white border-l-4 border-blue-600 p-4 rounded shadow-xl flex items-start gap-3 pointer-events-auto animate-fade-in transform hover:scale-105 transition-transform">
-                  <div className={`p-2 rounded-full ${alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
-                      {alert.type === 'CHECK_IN' ? <CheckCircle size={20} /> : <Clock size={20} />}
-                  </div>
-                  <div className="flex-1">
-                      <h4 className="font-bold text-gray-800 text-sm">{alert.title}</h4>
-                      <p className="text-xs text-gray-600 mt-1">{alert.message}</p>
-                      <p className="text-[10px] text-gray-400 mt-1">{alert.time}</p>
-                  </div>
-                  <button onClick={() => removeAlert(alert.id)} className="text-gray-400 hover:text-gray-600">
+                  <button onClick={() => setNotifications(prev => prev.map(n => n.id === alert.id ? { ...n, isVisible: false } : n))} className={`p-1 rounded hover:bg-black/5 ${alert.type === 'DEBT' ? 'text-red-400 hover:text-red-600' : 'text-gray-400 hover:text-gray-600'}`}>
                       <X size={16} />
                   </button>
               </div>
           ))}
       </div>
 
-      {/* Conditional Sidebar: Only show full sidebar if not pure Housekeeping view on mobile (Optional UX choice, here we keep sidebar for Logout but maybe simpler) */}
       <Sidebar 
         currentPage={currentPage} 
         onNavigate={(page) => { setCurrentPage(page); setIsMobileMenuOpen(false); }}
@@ -447,7 +397,6 @@ const App: React.FC = () => {
       />
       
       <div className="md:ml-64 min-h-screen flex flex-col transition-all duration-300">
-        {/* Banner for Super Admin Impersonation */}
         {currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView && (
             <div className="bg-purple-600 text-white px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 shadow-md">
                 <span className="flex items-center gap-2">
@@ -460,18 +409,19 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* Standard Header (Used for both flows to provide logout/menu) */}
         {!isSuperAdminView && (
             <Header 
-            user={effectiveUser}
-            properties={properties}
-            currentPropertyId={currentPropertyId}
-            onPropertyChange={setCurrentPropertyId}
-            onMenuClick={() => setIsMobileMenuOpen(true)}
+              user={effectiveUser}
+              properties={properties}
+              currentPropertyId={currentPropertyId}
+              onPropertyChange={setCurrentPropertyId}
+              onMenuClick={() => setIsMobileMenuOpen(true)}
+              notifications={notifications}
+              onMarkAllRead={handleMarkAllRead}
+              onMarkRead={handleMarkRead}
             />
         )}
         
-        {/* Super Admin Header */}
         {isSuperAdminView && (
              <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 shadow-sm">
                  <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
@@ -482,11 +432,9 @@ const App: React.FC = () => {
              </header>
         )}
 
-        {/* Content Wrapper */}
         <main className="flex-1 p-3 md:p-6">
           <div className="max-w-7xl mx-auto h-full">
             
-            {/* SUPER ADMIN VIEW */}
             {isSuperAdminView && (
                  <SuperAdmin 
                     tenants={tenantList} 
@@ -497,7 +445,6 @@ const App: React.FC = () => {
                  />
             )}
 
-            {/* TENANT VIEWS */}
             {!isSuperAdminView && (
                 <>
                     {currentPage === 'dashboard' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
@@ -521,14 +468,13 @@ const App: React.FC = () => {
                             bookings={bookings} 
                             customers={customers}
                             tags={tags}
-                            properties={properties} // Pass properties explicitly
+                            properties={properties}
                             onRefresh={manualRefresh}
                             currentProperty={currentPropertyObj}
-                            currentUser={effectiveUser} // Pass effective user
+                            currentUser={effectiveUser} 
                         />
                     )}
 
-                    {/* NEW: Housekeeping Route */}
                     {currentPage === 'housekeeping' && (
                         <Housekeeping 
                             rooms={rooms} 
@@ -548,7 +494,7 @@ const App: React.FC = () => {
                             roomTypes={roomTypes} 
                             properties={properties} 
                             tags={tags}
-                            currentUser={effectiveUser} // Pass effective user
+                            currentUser={effectiveUser} 
                         />
                     )}
                     
