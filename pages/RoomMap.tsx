@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
 import { DataService } from '../services/dataService';
@@ -37,7 +36,7 @@ const parseNumber = (str: string) => {
     return Number(str.replace(/\./g, ''));
 };
 
-// --- FIX: Standardized Date Time Format (dd/mm/yyyy hh:mm) ---
+// --- Standardized Date Time Format ---
 const formatStandardDateTime = (isoStr: string | Date | undefined) => {
     if (!isoStr) return '';
     const d = typeof isoStr === 'string' ? new Date(isoStr) : isoStr;
@@ -47,8 +46,6 @@ const formatStandardDateTime = (isoStr: string | Date | undefined) => {
 };
 
 // --- Custom Components ---
-
-// 1. Money Input Control (Auto formats 1.000.000)
 const MoneyInput = ({ value, onChange, className, disabled, placeholder }: { value: number, onChange: (val: number) => void, className?: string, disabled?: boolean, placeholder?: string }) => {
     const [displayVal, setDisplayVal] = useState('');
 
@@ -57,7 +54,6 @@ const MoneyInput = ({ value, onChange, className, disabled, placeholder }: { val
     }, [value]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        // Allow digits only
         const raw = e.target.value.replace(/[^0-9]/g, '');
         const val = Number(raw);
         setDisplayVal(formatNumber(val));
@@ -76,7 +72,6 @@ const MoneyInput = ({ value, onChange, className, disabled, placeholder }: { val
     )
 }
 
-// 2. Simplified Date/Time Picker using Native Input (Masked as Text for dd/mm/yyyy hh:mm)
 const DateTimeControl = ({ 
     dateValue, 
     onChange,
@@ -86,23 +81,17 @@ const DateTimeControl = ({
     onChange: (newIso: string) => void,
     disabled?: boolean
 }) => {
-    // Helper: Parse display string "dd/mm/yyyy hh:mm" back to Local ISO "yyyy-MM-ddThh:mm"
     const parseDisplayToIso = (str: string) => {
         const parts = str.trim().split(/[\s/:]+/);
         if (parts.length < 5) return null;
-        
         let d = parseInt(parts[0], 10);
         let m = parseInt(parts[1], 10) - 1;
         let y = parseInt(parts[2], 10);
         let h = parseInt(parts[3], 10);
         let min = parseInt(parts[4], 10);
-
-        if (y < 100) y += 2000; // Handle 2-digit year
-
+        if (y < 100) y += 2000; 
         const date = new Date(y, m, d, h, min);
         if (isNaN(date.getTime())) return null;
-
-        // Convert to "Local ISO" string by shifting timezone
         const offset = date.getTimezoneOffset() * 60000;
         const localIso = new Date(date.getTime() - offset).toISOString().slice(0, 16);
         return localIso;
@@ -111,7 +100,6 @@ const DateTimeControl = ({
     const [textVal, setTextVal] = useState(formatStandardDateTime(dateValue));
     const pickerRef = useRef<HTMLInputElement>(null);
 
-    // Sync state when prop changes
     useEffect(() => {
         setTextVal(formatStandardDateTime(dateValue));
     }, [dateValue]);
@@ -123,22 +111,16 @@ const DateTimeControl = ({
     const handleBlur = () => {
         const iso = parseDisplayToIso(textVal);
         if (iso) {
-            // Valid format -> Update Parent
             onChange(iso + ':00.000'); 
         } else {
-            // Invalid -> Revert to prop value
             setTextVal(formatStandardDateTime(dateValue));
         }
     };
 
     const handleIconClick = () => {
         if (!disabled && pickerRef.current) {
-            try {
-                pickerRef.current.showPicker();
-            } catch (e) {
-                // Fallback: Focus input if showPicker not supported
-                pickerRef.current.focus();
-            }
+            try { pickerRef.current.showPicker(); } 
+            catch (e) { pickerRef.current.focus(); }
         }
     };
 
@@ -150,26 +132,21 @@ const DateTimeControl = ({
 
     return (
         <div className="relative w-full group">
-            {/* Visible Text Input */}
             <input 
                 type="text"
-                className={`w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none font-semibold ${disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+                className={`w-full bg-gray-50 border border-gray-200 text-gray-900 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none font-semibold ${disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
                 value={textVal}
                 onChange={handleTextChange}
                 onBlur={handleBlur}
                 disabled={disabled}
                 placeholder="dd/mm/yyyy hh:mm"
             />
-            
-            {/* Calendar Icon Trigger */}
             <div 
-                className={`absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 p-1.5 rounded-md transition-colors ${!disabled ? 'hover:text-blue-600 hover:bg-blue-50 cursor-pointer' : 'cursor-not-allowed'}`}
+                className={`absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 p-1 rounded-md transition-colors ${!disabled ? 'hover:text-blue-600 hover:bg-blue-50 cursor-pointer' : 'cursor-not-allowed'}`}
                 onClick={handleIconClick}
             >
-                <Clock size={16} />
+                <Clock size={14} />
             </div>
-
-            {/* Hidden Native Picker (Source of Truth for mobile/calendar UI) */}
             <input 
                 ref={pickerRef}
                 type="datetime-local"
@@ -188,102 +165,70 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
-  
-  // Real-time current time for indicator
   const [now, setNow] = useState(new Date());
 
-  // SORTING STATE
   const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
-
-  // IMPORT STATE
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // DATA STATES
   const [financeCategories, setFinanceCategories] = useState<TransactionCategory[]>([]);
 
   useEffect(() => {
-      // Update time every minute
       const timer = setInterval(() => setNow(new Date()), 60000);
       return () => clearInterval(timer);
   }, []);
 
-  // Refresh categories when needed (e.g. modal open)
   const refreshCategories = () => {
       setFinanceCategories(DataService.getTransactionCategories());
   }
 
-  // Permissions
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canEdit = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
   const canManageRooms = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS);
-
   const allUsers = DataService.getUsers();
 
   const [filters, setFilters] = useState({
-      // Removed branchId filter from local state as it is controlled globally
-      typeId: 'ALL',
-      roomId: 'ALL',
-      status: 'STAYING', // Default to STAYING (Thời gian lưu trú)
-      search: ''
+      typeId: 'ALL', roomId: 'ALL', status: 'STAYING', search: ''
   });
 
-  // Modal State
   const [showModal, setShowModal] = useState(false);
-  const [showTicketModal, setShowTicketModal] = useState(false); // NEW STATE FOR TICKET
+  const [showTicketModal, setShowTicketModal] = useState(false); 
   const [isEditMode, setIsEditMode] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
-  const [isSubmitting, setIsSubmitting] = useState(false); // NEW: Block double submit
+  const [isSubmitting, setIsSubmitting] = useState(false); 
   
-  // Status Change Confirmation Modal State
+  // DRAG & DROP CHO ĐƠN ĐÃ CÓ
+  const [movingBookingId, setMovingBookingId] = useState<string | null>(null);
+  const [isDraggingBooking, setIsDraggingBooking] = useState(false); 
+  const [hoveredDrop, setHoveredDrop] = useState<{roomId: string, time: Date} | null>(null);
+
+  const [moveConfirmModal, setMoveConfirmModal] = useState<{
+      isOpen: boolean, booking?: Booking, newRoom?: Room, newCheckIn?: Date, newCheckOut?: Date
+  } | null>(null);
+
   const [statusModal, setStatusModal] = useState<{
-      isOpen: boolean;
-      room: Room | null;
-      targetStatus: RoomStatus;
+      isOpen: boolean; room: Room | null; targetStatus: RoomStatus;
   }>({ isOpen: false, room: null, targetStatus: RoomStatus.VACANT_CLEAN });
 
-  // Receipt Modal State
   const [receiptData, setReceiptData] = useState<any | null>(null);
-  
-  // Data for the modal
   const [bookingMeta, setBookingMeta] = useState<{
-      id?: string;
-      groupId?: string; // Track Group ID
-      guestName: string;
-      guestPhone: string;
-      totalPrice: number; // This acts as ROOM TOTAL in UI state
-      paidAmount: number;
-      notes: string;
-      status: BookingStatus;
-      isManualPrice: boolean;
-      tags: string[]; // Selected tag IDs
-      extraFees: ExtraFee[]; // NEW: Manage fees
+      id?: string; groupId?: string; guestName: string; guestPhone: string;
+      totalPrice: number; paidAmount: number; notes: string; status: BookingStatus;
+      isManualPrice: boolean; tags: string[]; extraFees: ExtraFee[]; 
   }>({
       guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
   });
 
-  // Local state for adding new fee in modal
   const [pendingFee, setPendingFee] = useState<{ categoryId: string, amount: number }>({ categoryId: '', amount: 0 });
 
-  // Multiple Rows for Rooms
   interface BookingRow {
-      tempId: string;
-      bookingId?: string; // Existing Booking ID from DB
-      roomId: string;
-      // Temporary selection state for cascading dropdowns (Branch -> Type -> Room)
-      tempPropId?: string; 
-      tempTypeId?: string;
-      checkIn: string;
-      checkOut: string;
-      price: number;
+      tempId: string; bookingId?: string; roomId: string; tempPropId?: string; 
+      tempTypeId?: string; checkIn: string; checkOut: string; price: number;
   }
   const [bookingRows, setBookingRows] = useState<BookingRow[]>([]);
-  
-  // Track original bookings in edit mode to handle deletions
   const [originalBookingIds, setOriginalBookingIds] = useState<string[]>([]);
 
-  // Drag State
+  // Drag State (Kéo lưới tạo đơn)
   const [dragStart, setDragStart] = useState<{roomId: string, time: Date} | null>(null);
   const [dragEnd, setDragEnd] = useState<{roomId: string, time: Date} | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -298,7 +243,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const days = Math.floor(hours / 24);
-    
     if (days > 0) {
         const remainingHours = hours % 24;
         return remainingHours > 0 ? `${days} ngày ${remainingHours}h` : `${days} ngày`;
@@ -306,23 +250,16 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
     return `${hours} giờ`;
   }
   
-  // Determine if a slot is the current time/date
   const isCurrentTimeSlot = (slot: Date) => {
       if (timelineMode === 'DAY') {
-          // Compare Hour and Date
-          return slot.getDate() === now.getDate() && 
-                 slot.getMonth() === now.getMonth() &&
-                 slot.getFullYear() === now.getFullYear() &&
-                 slot.getHours() === now.getHours();
+          return slot.getDate() === now.getDate() && slot.getMonth() === now.getMonth() &&
+                 slot.getFullYear() === now.getFullYear() && slot.getHours() === now.getHours();
       } else {
-          // Compare Date only (Week/Month view)
-          return slot.getDate() === now.getDate() && 
-                 slot.getMonth() === now.getMonth() &&
+          return slot.getDate() === now.getDate() && slot.getMonth() === now.getMonth() &&
                  slot.getFullYear() === now.getFullYear();
       }
   };
 
-  // Auto-update price if not manual
   useEffect(() => {
      if (!bookingMeta.isManualPrice) {
          const sum = bookingRows.reduce((sum, row) => sum + (row.price || 0), 0);
@@ -330,118 +267,73 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      }
   }, [bookingRows, bookingMeta.isManualPrice]);
 
-
-  // --- Filter & Sort Logic ---
   const sortedRooms = useMemo(() => {
-    // 1. Filter
     const filtered = rooms.filter(r => {
         if (filters.typeId !== 'ALL' && r.typeId !== filters.typeId) return false;
         if (filters.roomId !== 'ALL' && r.id !== filters.roomId) return false;
         return true;
     });
 
-    // 2. Sort Logic: Property Order -> Room Order
     return filtered.sort((a, b) => {
         const propA = properties.find(p => p.id === a.propertyId);
         const propB = properties.find(p => p.id === b.propertyId);
-
-        // Level 1: Property Order
         const pOrderA = propA?.sortOrder ?? 9999;
         const pOrderB = propB?.sortOrder ?? 9999;
         if (pOrderA !== pOrderB) return pOrderA - pOrderB;
-
-        // Level 2: Room Order (Matches Drag & Drop order in Settings)
         return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
     });
   }, [rooms, filters, properties, roomTypes]);
 
-  // Calculate View Range
   const { viewStart, viewEnd } = useMemo(() => {
       let vStart = new Date(startDate);
       vStart.setHours(0,0,0,0);
       let vEnd = new Date(vStart);
       
-      if(timelineMode === 'DAY') {
-          vEnd = addDays(vStart, 1);
-      } else if(timelineMode === 'WEEK') {
-          // Week view starts from selected startDate and adds 7 days
-          vEnd = addDays(vStart, 7);
-      } else { 
-          // MONTH Mode: Strict 1st to Last Day
-          // 1. Force start to 1st of month
+      if(timelineMode === 'DAY') vEnd = addDays(vStart, 1);
+      else if(timelineMode === 'WEEK') vEnd = addDays(vStart, 7);
+      else { 
           vStart.setDate(1); 
-          // 2. End is last day of the current month
           vEnd = new Date(vStart.getFullYear(), vStart.getMonth() + 1, 0); 
           vEnd.setHours(23, 59, 59, 999);
       }
-
       return { viewStart: vStart, viewEnd: vEnd };
   }, [startDate, timelineMode]);
 
   const filteredBookings = useMemo(() => {
-    let res = bookings.filter(b => b.status !== BookingStatus.DELETED); 
-    
+    let res = bookings.filter(b => b.status !== BookingStatus.DELETED && b.status !== BookingStatus.CANCELLED); 
     if (filters.search) {
         const lower = filters.search.toLowerCase();
-        res = res.filter(b => 
-            (b.guestName || '').toLowerCase().includes(lower) || 
-            (b.guestPhone || '').toLowerCase().includes(lower) || 
-            (b.id || '').toLowerCase().includes(lower)
-        );
+        res = res.filter(b => (b.guestName || '').toLowerCase().includes(lower) || (b.guestPhone || '').toLowerCase().includes(lower) || (b.id || '').toLowerCase().includes(lower));
     }
-    
-    // Apply Time Range Filter based on selected STATUS (Filter Type)
     res = res.filter(b => {
         const bStart = new Date(b.checkInDate).getTime();
         const bEnd = new Date(b.checkOutDate).getTime();
         const fStart = viewStart.getTime();
         const fEnd = viewEnd.getTime();
-
-        if (filters.status === 'ARRIVING') {
-            // "Thời gian nhận": Booking STARTS within the view range
-            return bStart >= fStart && bStart < fEnd;
-        } else if (filters.status === 'DEPARTING') {
-            // "Thời gian trả": Booking ENDS within the view range
-            return bEnd >= fStart && bEnd < fEnd;
-        } else {
-            // "Thời gian lưu trú" (STAYING/Default): Booking OVERLAPS with the view range
-            return bStart < fEnd && bEnd > fStart;
-        }
+        if (filters.status === 'ARRIVING') return bStart >= fStart && bStart < fEnd;
+        else if (filters.status === 'DEPARTING') return bEnd >= fStart && bEnd < fEnd;
+        else return bStart < fEnd && bEnd > fStart;
     });
-
     return res;
   }, [bookings, filters, viewStart, viewEnd]);
 
-  // --- Date Range Label Helper ---
   const dateRangeLabel = useMemo(() => {
       const pad = (n: number) => n.toString().padStart(2, '0');
       const fmt = (d: Date) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-      
-      if (timelineMode === 'DAY') {
-          return fmt(viewStart);
-      } else if (timelineMode === 'MONTH') {
-          return `Tháng ${viewStart.getMonth() + 1}/${viewStart.getFullYear()}`;
-      } else {
-          // WEEK: Show range start - end
+      if (timelineMode === 'DAY') return fmt(viewStart);
+      else if (timelineMode === 'MONTH') return `Tháng ${viewStart.getMonth() + 1}/${viewStart.getFullYear()}`;
+      else {
           const endDisplay = new Date(viewEnd);
-          endDisplay.setDate(endDisplay.getDate() - 1); // Display inclusive end date (e.g. Mon-Sun)
+          endDisplay.setDate(endDisplay.getDate() - 1); 
           return `${fmt(viewStart)} - ${fmt(endDisplay)}`;
       }
   }, [viewStart, viewEnd, timelineMode]);
 
-
-  // --- SORTING LOGIC ---
   const sortedBookings = useMemo(() => {
       if (!sortConfig) return filteredBookings;
-      
       return [...filteredBookings].sort((a, b) => {
-          let valA = a[sortConfig.key];
-          let valB = b[sortConfig.key];
-          
-          if (!valA) valA = '';
-          if (!valB) valB = '';
-
-          // String comparison for ISO Dates
+          let valA = a[sortConfig.key] || '';
+          let valB = b[sortConfig.key] || '';
           if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
           if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
           return 0;
@@ -449,37 +341,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   }, [filteredBookings, sortConfig]);
 
   const handleSort = (key: keyof Booking) => {
-      let direction: 'asc' | 'desc' = 'desc'; // Default to newest first
-      if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
-          direction = 'asc';
-      }
+      let direction: 'asc' | 'desc' = 'desc'; 
+      if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') direction = 'asc';
       setSortConfig({ key, direction });
   };
 
   const SortIcon = ({ colKey }: { colKey: keyof Booking }) => {
       if (sortConfig?.key !== colKey) return <ArrowUpDown size={14} className="ml-1 opacity-30" />;
-      return sortConfig.direction === 'asc' 
-             ? <ArrowUp size={14} className="ml-1 text-blue-600" /> 
-             : <ArrowDown size={14} className="ml-1 text-blue-600" />;
+      return sortConfig.direction === 'asc' ? <ArrowUp size={14} className="ml-1 text-blue-600" /> : <ArrowDown size={14} className="ml-1 text-blue-600" />;
   };
 
-  // --- STATUS CHANGE HANDLER ---
   const handleStatusIconClick = (room: Room) => {
-      if (!canManageRooms) return;
-
-      if (room.status === RoomStatus.OCCUPIED) {
-          return; 
-      }
-
-      const targetStatus = room.status === RoomStatus.VACANT_CLEAN 
-          ? RoomStatus.VACANT_DIRTY 
-          : RoomStatus.VACANT_CLEAN;
-
-      setStatusModal({
-          isOpen: true,
-          room: room,
-          targetStatus: targetStatus
-      });
+      if (!canManageRooms || room.status === RoomStatus.OCCUPIED) return; 
+      const targetStatus = room.status === RoomStatus.VACANT_CLEAN ? RoomStatus.VACANT_DIRTY : RoomStatus.VACANT_CLEAN;
+      setStatusModal({ isOpen: true, room: room, targetStatus: targetStatus });
   };
 
   const confirmStatusChange = () => {
@@ -489,24 +364,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       }
   };
 
-  // --- EXCEL IMPORT LOGIC ---
-  const handleDownloadTemplate = () => {}; // Shortened
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {}; // Shortened
+  const handleDownloadTemplate = () => {}; 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {}; 
   const triggerUpload = () => { if (fileInputRef.current) fileInputRef.current.click(); };
 
-
-  // --- Grid Calculation ---
   const gridColumns = useMemo(() => {
       if (timelineMode === 'DAY') return 24;
       if (timelineMode === 'WEEK') return 7;
-      
-      // MONTH: Calculate days in the specific month
       return new Date(viewStart.getFullYear(), viewStart.getMonth() + 1, 0).getDate();
   }, [timelineMode, viewStart]);
 
   const timeSlots = useMemo(() => {
       const slots = [];
-      // Use the calculated viewStart which is already 1st of month for MONTH mode
       for(let i=0; i<gridColumns; i++) {
           if (timelineMode === 'DAY') slots.push(addHours(viewStart, i));
           else slots.push(addDays(viewStart, i));
@@ -514,177 +383,99 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       return slots;
   }, [gridColumns, timelineMode, viewStart]);
 
-  // --- Date Navigator Handler ---
   const handleNavigate = (direction: 'PREV' | 'NEXT') => {
       const factor = direction === 'NEXT' ? 1 : -1;
-      
-      if (timelineMode === 'DAY') {
-          setStartDate(addDays(startDate, factor));
-      } else if (timelineMode === 'WEEK') {
-          setStartDate(addDays(startDate, factor * 7));
-      } else {
-          // MONTH: Move by 1 Month
-          setStartDate(addMonths(startDate, factor));
-      }
+      if (timelineMode === 'DAY') setStartDate(addDays(startDate, factor));
+      else if (timelineMode === 'WEEK') setStartDate(addDays(startDate, factor * 7));
+      else setStartDate(addMonths(startDate, factor));
   };
 
   const handleDateInput = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.value) return;
       const d = new Date(e.target.value);
-      if (!isNaN(d.getTime())) {
-          setStartDate(d);
-      }
+      if (!isNaN(d.getTime())) setStartDate(d);
   };
 
-  // --- Modal Opening Logic ---
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
-      setIsEditMode(editMode);
-      setShowDeleteConfirm(false); 
-      refreshCategories(); // Load categories
-      setPendingFee({ categoryId: '', amount: 0 }); // Reset pending fee input
-      setIsSubmitting(false); // RESET SUBMIT STATE
+      setIsEditMode(editMode); setShowDeleteConfirm(false); refreshCategories(); 
+      setPendingFee({ categoryId: '', amount: 0 }); setIsSubmitting(false); 
       
       if (editMode && booking) {
-          // GROUP LOGIC: Fetch all bookings in the same group
           let groupBookings: Booking[] = [booking as Booking];
           if (booking.groupId) {
               groupBookings = bookings.filter(b => b.groupId === booking.groupId && b.status !== BookingStatus.DELETED);
-              // Fallback if filter fails (shouldn't happen)
               if (groupBookings.length === 0) groupBookings = [booking as Booking];
           }
 
           const mainBooking = groupBookings[0];
-          // Calculate Totals for Group (DB Stored Total)
           const totalGroupPriceStored = groupBookings.reduce((sum, b) => sum + b.totalPrice, 0);
           const totalGroupPaid = groupBookings.reduce((sum, b) => sum + b.paidAmount, 0);
-
-          // EXTRACT FEES
           const loadedFees = mainBooking.extraFees || [];
-          
-          // Calculate Net Fee (Revenue - Expense)
           const feeNet = loadedFees.reduce((sum, f) => f.type === 'REVENUE' ? sum + f.amount : sum - f.amount, 0);
-
-          // Calculate Pure Room Total (Total Stored - Net Fees)
           const roomTotal = totalGroupPriceStored - feeNet;
 
           setBookingMeta({
-              id: mainBooking.id, // ID of first booking (used for ref)
-              groupId: mainBooking.groupId,
-              guestName: mainBooking.guestName || '',
-              guestPhone: mainBooking.guestPhone || '',
-              totalPrice: roomTotal, // UI State tracks ROOM TOTAL only
-              paidAmount: totalGroupPaid,
-              notes: mainBooking.notes || '',
-              status: mainBooking.status || BookingStatus.CONFIRMED,
-              isManualPrice: true,
-              tags: mainBooking.tags || [],
-              extraFees: loadedFees
+              id: mainBooking.id, groupId: mainBooking.groupId, guestName: mainBooking.guestName || '', guestPhone: mainBooking.guestPhone || '',
+              totalPrice: roomTotal, paidAmount: totalGroupPaid, notes: mainBooking.notes || '', status: mainBooking.status || BookingStatus.CONFIRMED,
+              isManualPrice: true, tags: mainBooking.tags || [], extraFees: loadedFees
           });
 
           const rows: BookingRow[] = groupBookings.map(b => {
               const currentRoom = rooms.find(r => r.id === b.roomId);
               return {
-                tempId: `existing-${b.id}`,
-                bookingId: b.id,
-                roomId: b.roomId,
-                // Initialize temp selectors based on existing data
-                tempPropId: currentRoom?.propertyId || currentProperty.id,
-                tempTypeId: currentRoom?.typeId || '',
-                checkIn: b.checkInDate,
-                checkOut: b.checkOutDate,
-                price: b.totalPrice // This is just initial value for row input
+                tempId: `existing-${b.id}`, bookingId: b.id, roomId: b.roomId,
+                tempPropId: currentRoom?.propertyId || currentProperty.id, tempTypeId: currentRoom?.typeId || '',
+                checkIn: b.checkInDate, checkOut: b.checkOutDate, price: b.totalPrice 
               }
           });
-
-          setBookingRows(rows);
-          setOriginalBookingIds(groupBookings.map(b => b.id));
-
+          setBookingRows(rows); setOriginalBookingIds(groupBookings.map(b => b.id));
       } else {
-          // Create Mode
-          setBookingMeta({
-              guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
-          });
+          setBookingMeta({ guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: [] });
           setOriginalBookingIds([]);
           
           let checkIn = defaultDates ? defaultDates.start : '';
           let checkOut = defaultDates ? defaultDates.end : '';
           if (!checkIn) {
-              const now = new Date();
-              now.setHours(14,0,0,0);
+              const now = new Date(); now.setHours(14,0,0,0);
               const off = now.getTimezoneOffset() * 60000;
               checkIn = (new Date(now.getTime() - off)).toISOString().slice(0, -1);
           }
           if (!checkOut) {
-              const tomorrow = new Date();
-              tomorrow.setDate(tomorrow.getDate() + 1);
-              tomorrow.setHours(12,0,0,0);
+              const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(12,0,0,0);
               const off = tomorrow.getTimezoneOffset() * 60000;
               checkOut = (new Date(tomorrow.getTime() - off)).toISOString().slice(0, -1);
           }
           
-          // Determine initial Prop and Type for the first row
           const initPropId = defaultRoomId ? rooms.find(r=>r.id===defaultRoomId)?.propertyId : currentProperty.id;
           const initTypeId = defaultRoomId ? rooms.find(r=>r.id===defaultRoomId)?.typeId : '';
 
-          setBookingRows([{
-              tempId: 'init',
-              roomId: defaultRoomId || '',
-              tempPropId: initPropId,
-              tempTypeId: initTypeId,
-              checkIn: checkIn,
-              checkOut: checkOut,
-              price: 0
-          }]);
+          setBookingRows([{ tempId: 'init', roomId: defaultRoomId || '', tempPropId: initPropId, tempTypeId: initTypeId, checkIn: checkIn, checkOut: checkOut, price: 0 }]);
       }
       setShowModal(true);
   };
 
   const handleAddRow = () => {
       const lastRow = bookingRows[bookingRows.length - 1];
-      setBookingRows([...bookingRows, {
-          tempId: `row-${Date.now()}`,
-          roomId: '',
-          // Default to current property
-          tempPropId: currentProperty.id,
-          tempTypeId: '',
-          checkIn: lastRow.checkIn,
-          checkOut: lastRow.checkOut,
-          price: 0
-      }]);
+      setBookingRows([...bookingRows, { tempId: `row-${Date.now()}`, roomId: '', tempPropId: currentProperty.id, tempTypeId: '', checkIn: lastRow.checkIn, checkOut: lastRow.checkOut, price: 0 }]);
   };
 
   const handleRemoveRow = (idx: number) => {
-      if (bookingRows.length === 1 && isEditMode) {
-          alert("Không thể xóa phòng duy nhất trong chế độ chỉnh sửa. Hãy sử dụng chức năng xóa đơn.");
-          return;
-      }
-      const newRows = [...bookingRows];
-      newRows.splice(idx, 1);
-      setBookingRows(newRows);
+      if (bookingRows.length === 1 && isEditMode) return alert("Không thể xóa phòng duy nhất trong chế độ chỉnh sửa. Hãy sử dụng chức năng xóa đơn.");
+      const newRows = [...bookingRows]; newRows.splice(idx, 1); setBookingRows(newRows);
   };
 
   const updateRow = (idx: number, field: keyof BookingRow, value: any) => {
       const newRows = [...bookingRows];
-      
-      // Cascading Logic
-      if (field === 'tempPropId') {
-          // If Property changes -> Reset Type and Room
-          newRows[idx] = { ...newRows[idx], tempPropId: value, tempTypeId: '', roomId: '' };
-      } else if (field === 'tempTypeId') {
-          // If Type changes -> Reset Room
-          newRows[idx] = { ...newRows[idx], tempTypeId: value, roomId: '' };
-      } else if (field === 'roomId') {
-          // If Room changes -> Update price
+      if (field === 'tempPropId') newRows[idx] = { ...newRows[idx], tempPropId: value, tempTypeId: '', roomId: '' };
+      else if (field === 'tempTypeId') newRows[idx] = { ...newRows[idx], tempTypeId: value, roomId: '' };
+      else if (field === 'roomId') {
           newRows[idx] = { ...newRows[idx], roomId: value };
           const r = rooms.find(rm => rm.id === value);
           if (r) {
               const t = roomTypes.find(type => type.id === r.typeId);
               if (t) newRows[idx].price = t.price;
           }
-      } else {
-          // Normal update
-          newRows[idx] = { ...newRows[idx], [field]: value };
-      }
+      } else newRows[idx] = { ...newRows[idx], [field]: value };
       setBookingRows(newRows);
   };
 
@@ -693,21 +484,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
      else alert("Bạn không có quyền thêm đặt phòng mới.");
   };
 
+  // --- MOUSE DRAG TO CREATE NEW BOOKING ---
   const handleMouseDown = (roomId: string, time: Date) => {
-      if (!canAdd) return; // Prevent drag if no permission
+      if (!canAdd) return; 
       setIsDragging(true); setDragStart({roomId, time}); setDragEnd({roomId, time});
   };
 
   const handleMouseEnter = (roomId: string, time: Date) => {
-      if (!isDragging || !dragStart) return;
-      if (dragStart.roomId !== roomId) return;
+      if (!isDragging || !dragStart || dragStart.roomId !== roomId) return;
       setDragEnd({roomId, time});
   };
 
   const handleMouseUp = () => {
       if (!isDragging || !dragStart || !dragEnd) {
-          setIsDragging(false); setDragStart(null); setDragEnd(null);
-          return;
+          setIsDragging(false); setDragStart(null); setDragEnd(null); return;
       }
       setIsDragging(false);
       let start = dragStart.time < dragEnd.time ? dragStart.time : dragEnd.time;
@@ -732,160 +522,140 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
       setDragStart(null); setDragEnd(null);
   };
 
+  // --- TÍNH NĂNG DRAG TO MOVE EXISTING BOOKING ---
+  const handleBookingDragStart = (e: React.DragEvent, bookingId: string) => {
+      if (!canEdit) return;
+      e.stopPropagation(); 
+      e.dataTransfer.setData('text/plain', bookingId);
+      e.dataTransfer.effectAllowed = 'move';
+      setMovingBookingId(bookingId);
+      // Giúp thẻ đang kéo xuyên thấu để chạm tới lưới bên dưới
+      setTimeout(() => setIsDraggingBooking(true), 10);
+  };
+
+  const handleBookingDragEnd = () => {
+      setMovingBookingId(null);
+      setIsDraggingBooking(false); 
+      setHoveredDrop(null);
+  };
+
+  const handleBookingDrop = (e: React.DragEvent, targetRoomId: string, targetDate: Date) => {
+      e.preventDefault(); e.stopPropagation(); 
+      setMovingBookingId(null); setIsDraggingBooking(false); setHoveredDrop(null);
+
+      const bookingId = e.dataTransfer.getData('text/plain') || movingBookingId;
+      if (!bookingId) return;
+
+      const booking = bookings.find(b => b.id === bookingId);
+      const targetRoom = rooms.find(r => r.id === targetRoomId);
+      if (!booking || !targetRoom) return;
+
+      const oldIn = new Date(booking.checkInDate);
+      const oldOut = new Date(booking.checkOutDate);
+      const durationMs = oldOut.getTime() - oldIn.getTime();
+
+      const newCheckIn = new Date(targetDate);
+      if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0); 
+      else newCheckIn.setHours(14, 0, 0, 0); 
+      
+      const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
+      
+      const isSameTime = timelineMode === 'DAY' ? oldIn.getTime() === newCheckIn.getTime() : oldIn.toDateString() === newCheckIn.toDateString();
+      if (booking.roomId === targetRoomId && isSameTime) return;
+
+      const validate = DataService.validateRoomAvailability(targetRoomId, newCheckIn.toISOString(), newCheckOut.toISOString(), booking.id);
+      if (!validate.valid) return alert(`🚫 Không thể chuyển phòng!\nLý do: ${validate.reason}`);
+
+      setMoveConfirmModal({ isOpen: true, booking, newRoom: targetRoom, newCheckIn, newCheckOut });
+  };
+
+  const confirmAndSaveMove = () => {
+      if (!moveConfirmModal || !moveConfirmModal.booking || !moveConfirmModal.newRoom) return;
+      const { booking, newRoom, newCheckIn, newCheckOut } = moveConfirmModal;
+      const updatedBooking = { ...booking, roomId: newRoom.id, propertyId: newRoom.propertyId, checkInDate: newCheckIn!.toISOString(), checkOutDate: newCheckOut!.toISOString() };
+      DataService.updateBooking(updatedBooking);
+      setMoveConfirmModal(null);
+      onRefresh();
+  };
+
   // --- EXTRA FEES HANDLERS ---
   const handleAddFee = () => {
       if (!pendingFee.categoryId) return alert("Vui lòng chọn loại phí/dịch vụ");
       if (pendingFee.amount <= 0) return alert("Vui lòng nhập số tiền hợp lệ");
-
       const cat = financeCategories.find(c => c.id === pendingFee.categoryId);
       if (!cat) return;
-
-      const newFee: ExtraFee = {
-          id: `fee_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          categoryId: cat.id,
-          name: cat.name,
-          amount: pendingFee.amount,
-          type: cat.type
-      };
-
-      setBookingMeta(prev => ({
-          ...prev,
-          extraFees: [...prev.extraFees, newFee]
-      }));
-
-      setPendingFee({ categoryId: '', amount: 0 }); // Reset input
+      const newFee: ExtraFee = { id: `fee_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, categoryId: cat.id, name: cat.name, amount: pendingFee.amount, type: cat.type };
+      setBookingMeta(prev => ({ ...prev, extraFees: [...prev.extraFees, newFee] }));
+      setPendingFee({ categoryId: '', amount: 0 }); 
   };
 
   const handleRemoveFee = (feeId: string) => {
-      setBookingMeta(prev => ({
-          ...prev,
-          extraFees: prev.extraFees.filter(f => f.id !== feeId)
-      }));
+      setBookingMeta(prev => ({ ...prev, extraFees: prev.extraFees.filter(f => f.id !== feeId) }));
   };
 
-  // Derived Totals
   const extraRevenue = bookingMeta.extraFees.reduce((s, f) => f.type === 'REVENUE' ? s + f.amount : s, 0);
   const extraExpense = bookingMeta.extraFees.reduce((s, f) => f.type === 'EXPENSE' ? s + f.amount : s, 0);
   const feeNet = extraRevenue - extraExpense;
-  const grandTotal = bookingMeta.totalPrice + feeNet; // Room Total + Net Fees
+  const grandTotal = bookingMeta.totalPrice + feeNet; 
 
   const handleSaveBooking = () => {
-     if (isSubmitting) return; // BLOCK RE-SUBMISSION
-
+     if (isSubmitting) return; 
      const validRows = bookingRows.filter(r => r.roomId);
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
-
-     // --- CHECK DUPLICATE ROOMS IN FORM ---
      const roomIds = validRows.map(r => r.roomId);
-     if (new Set(roomIds).size !== roomIds.length) {
-         alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại.");
-         return;
-     }
+     if (new Set(roomIds).size !== roomIds.length) return alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại.");
 
-     // --- Validation Logic ---
      for (const row of validRows) {
          const room = rooms.find(r => r.id === row.roomId);
          const startTime = new Date(row.checkIn).getTime();
          const endTime = new Date(row.checkOut).getTime();
-         
-         if (startTime >= endTime) {
-             alert(`Lỗi thời gian (Phòng ${room?.number || row.roomId}):\nThời gian Trả phòng phải lớn hơn thời gian Nhận phòng.\nVui lòng kiểm tra lại.`);
-             return;
-         }
-
+         if (startTime >= endTime) return alert(`Lỗi thời gian (Phòng ${room?.number || row.roomId}):\nThời gian Trả phòng phải lớn hơn thời gian Nhận phòng.\nVui lòng kiểm tra lại.`);
          const availability = DataService.validateRoomAvailability(row.roomId, row.checkIn, row.checkOut, row.bookingId);
-         if (!availability.valid) {
-             alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${availability.reason}\n\nVui lòng chọn thời gian khác cách ít nhất 30 phút.`);
-             return;
-         }
+         if (!availability.valid) return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${availability.reason}\n\nVui lòng chọn thời gian khác cách ít nhất 30 phút.`);
      }
 
-     // LOCK SUBMISSION TO PREVENT DOUBLE CLICK
      setIsSubmitting(true);
-
      try {
-         // Generate Group ID if needed (for more than 1 room, or always)
          let groupId = bookingMeta.groupId;
-         if (!groupId && validRows.length > 1) {
-             groupId = DataService.generateBookingId() + '_grp'; 
-         }
-
-         // Use ROOM TOTAL from UI state to distribute
+         if (!groupId && validRows.length > 1) groupId = DataService.generateBookingId() + '_grp'; 
          const roomTotal = bookingMeta.totalPrice;
          const pricePerRoom = Math.floor(roomTotal / validRows.length);
          
          if (isEditMode && originalBookingIds.length > 0) {
              const currentIds = validRows.map(r => r.bookingId).filter(Boolean);
              const idsToDelete = originalBookingIds.filter(oid => !currentIds.includes(oid));
-             idsToDelete.forEach(id => {
-                 DataService.deleteBooking(id, currentUser.id);
-             });
+             idsToDelete.forEach(id => { DataService.deleteBooking(id, currentUser.id); });
          }
 
          validRows.forEach((row, idx) => {
-             // Calculate Base Room Price part
              let thisPrice = idx === 0 ? pricePerRoom + (roomTotal % validRows.length) : pricePerRoom;
-             
-             // CRITICAL: ADD NET FEES TO THE FIRST BOOKING (LEADER)
-             if (idx === 0) {
-                 thisPrice += feeNet; 
-             }
-             
+             if (idx === 0) thisPrice += feeNet; 
              const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; 
              const selectedRoom = rooms.find(r => r.id === row.roomId);
 
-             // FIX: Firebase crashes if values are undefined. Force null or empty string.
              const commonData = {
-                 groupId: groupId || null, 
-                 propertyId: selectedRoom?.propertyId || currentProperty.id,
-                 roomId: row.roomId,
-                 customerId: 'c_guest',
-                 guestName: bookingMeta.guestName || 'Khách lẻ',
-                 guestPhone: bookingMeta.guestPhone || '',
-                 checkInDate: row.checkIn,
-                 checkOutDate: row.checkOut,
-                 status: bookingMeta.status,
-                 totalPrice: thisPrice, 
-                 paidAmount: thisPaid,
-                 createdBy: currentUser.id,
-                 notes: bookingMeta.notes || '',
-                 tags: bookingMeta.tags || [],
-                 // Save extra fees only to leader
+                 groupId: groupId || null, propertyId: selectedRoom?.propertyId || currentProperty.id, roomId: row.roomId,
+                 customerId: 'c_guest', guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '',
+                 checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice, 
+                 paidAmount: thisPaid, createdBy: currentUser.id, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
                  extraFees: idx === 0 ? (bookingMeta.extraFees || []) : []
              };
 
              if (row.bookingId) {
-                 // UPDATE Existing
                  const existingBooking = bookings.find(b => b.id === row.bookingId);
-                 const updatedB: Booking = {
-                     ...commonData,
-                     id: row.bookingId,
-                     createdAt: existingBooking?.createdAt || new Date().toISOString(), 
-                 };
+                 const updatedB: Booking = { ...commonData, id: row.bookingId, createdAt: existingBooking?.createdAt || new Date().toISOString() };
                  DataService.updateBooking(updatedB);
              } else {
-                 // CREATE New
-                 const newB: Booking = {
-                     ...commonData,
-                     id: DataService.generateBookingId(),
-                     createdAt: new Date().toISOString(),
-                 };
+                 const newB: Booking = { ...commonData, id: DataService.generateBookingId(), createdAt: new Date().toISOString() };
                  DataService.addBooking(newB);
              }
          });
 
-         // --- PREPARE RECEIPT DATA FOR TICKET ---
          const receiptRooms = validRows.map(row => {
              const room = rooms.find(r => r.id === row.roomId);
              const type = roomTypes.find(t => t.id === room?.typeId);
              const prop = properties.find(p => p.id === room?.propertyId); 
-             return {
-                 roomNumber: room?.number || 'N/A',
-                 typeName: type?.name || 'N/A',
-                 branchName: prop?.name || 'N/A',
-                 checkIn: row.checkIn,
-                 checkOut: row.checkOut
-             };
+             return { roomNumber: room?.number || 'N/A', typeName: type?.name || 'N/A', branchName: prop?.name || 'N/A', checkIn: row.checkIn, checkOut: row.checkOut };
          });
          
          const selectedTags = tags.filter(t => bookingMeta.tags.includes(t.id));
@@ -893,109 +663,68 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
          const receiptTotal = bookingMeta.totalPrice + extraRevenue;
 
          setReceiptData({
-             guestName: bookingMeta.guestName || 'Khách lẻ',
-             guestPhone: bookingMeta.guestPhone || '',
-             notes: bookingMeta.notes,
-             tags: selectedTags,
-             total: receiptTotal, 
-             paid: bookingMeta.paidAmount,
-             rooms: receiptRooms,
-             extraFees: receiptFees,
-             roomPrice: bookingMeta.totalPrice 
+             guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '', notes: bookingMeta.notes,
+             tags: selectedTags, total: receiptTotal, paid: bookingMeta.paidAmount, rooms: receiptRooms, extraFees: receiptFees, roomPrice: bookingMeta.totalPrice 
          });
 
-         setShowModal(false);
-         setShowTicketModal(true); // Open Ticket Modal
-         onRefresh();
+         setShowModal(false); setShowTicketModal(true); onRefresh();
      } catch (e) {
-         console.error(e);
-         setIsSubmitting(false); // Reset if error
+         console.error(e); setIsSubmitting(false); 
      } finally {
-         // Optionally reset submit state after a delay or keep it false until modal closes
          setTimeout(() => setIsSubmitting(false), 500);
      }
   };
 
-  const handleDeleteClick = () => {
-      if(!canDelete) return;
-      setShowDeleteConfirm(true);
-  };
+  const handleDeleteClick = () => { if(!canDelete) return; setShowDeleteConfirm(true); };
 
   const handleConfirmDelete = () => {
       const idsToDelete = originalBookingIds.length > 0 ? originalBookingIds : (bookingMeta.id ? [bookingMeta.id] : []);
       if (idsToDelete.length === 0) return;
-
       let successCount = 0;
-      idsToDelete.forEach(id => {
-          if (DataService.deleteBooking(id, currentUser.id)) successCount++;
-      });
-      
+      idsToDelete.forEach(id => { if (DataService.deleteBooking(id, currentUser.id)) successCount++; });
       if (successCount > 0) {
-          alert(`Đã xóa ${successCount} đơn thành công!`);
-          setShowDeleteConfirm(false);
-          setShowModal(false);
-          onRefresh();
-      } else {
-          alert("Không thể xóa đơn. Vui lòng kiểm tra console log.");
-          setShowDeleteConfirm(false);
-      }
+          alert(`Đã xóa ${successCount} đơn thành công!`); setShowDeleteConfirm(false); setShowModal(false); onRefresh();
+      } else { alert("Không thể xóa đơn. Vui lòng kiểm tra console log."); setShowDeleteConfirm(false); }
   };
 
-  const toggleTag = (tagId: string) => {
-      setBookingMeta(prev => {
-          const exists = prev.tags.includes(tagId);
-          return {
-              ...prev,
-              tags: exists ? prev.tags.filter(t => t !== tagId) : [...prev.tags, tagId]
-          };
-      });
-  };
+  const toggleTag = (tagId: string) => { setBookingMeta(prev => { const exists = prev.tags.includes(tagId); return { ...prev, tags: exists ? prev.tags.filter(t => t !== tagId) : [...prev.tags, tagId] }; }); };
 
-  // ... (Keep existing layout logic for grid/list) ...
   const getBookingStyle = (booking: Booking) => {
      const isPaid = booking.paidAmount >= booking.totalPrice;
-     let classes = "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-10 border ";
+     let classes = "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border ";
      if (isPaid) classes += "bg-green-500 text-white border-green-600 shadow-green-200"; 
      else classes += "bg-red-500 text-white border-red-600 shadow-red-200";
      return classes;
   };
 
   const renderGridCell = (room: Room, slot: Date) => {
-      let isSelected = false;
       const isCurrent = isCurrentTimeSlot(slot);
-
-      if (isDragging && dragStart && dragEnd && dragStart.roomId === room.id) {
-          const s = dragStart.time < dragEnd.time ? dragStart.time : dragEnd.time;
-          const e = dragStart.time < dragEnd.time ? dragEnd.time : dragStart.time;
-          if (slot >= s && slot <= e) isSelected = true;
-      }
       return (
           <div 
             key={slot.toISOString()}
-            className={`border-r h-full relative select-none transition-colors duration-75 ${isSelected ? 'bg-blue-100' : (isCurrent ? 'bg-amber-50' : 'hover:bg-gray-50')}`}
+            className={`border-r h-full relative select-none transition-colors duration-75 ${isCurrent ? 'bg-amber-50' : 'hover:bg-gray-50'}`}
             onMouseDown={() => handleMouseDown(room.id, slot)}
             onMouseEnter={() => handleMouseEnter(room.id, slot)}
             onMouseUp={handleMouseUp}
+            onDragEnter={(e) => e.preventDefault()} 
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setHoveredDrop({roomId: room.id, time: slot}); }}
+            onDragLeave={(e) => {}}
+            onDrop={(e) => handleBookingDrop(e, room.id, slot)}
           >
-            {/* NEW: 12:00 Line for Week View */}
-            {timelineMode === 'WEEK' && (
-                <div className="absolute left-1/2 top-0 bottom-0 w-px border-l border-dashed border-gray-200 pointer-events-none"></div>
-            )}
+            {timelineMode === 'WEEK' && <div className="absolute left-1/2 top-0 bottom-0 w-px border-l border-dashed border-gray-200 pointer-events-none"></div>}
           </div>
       )
   };
 
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
+  const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
 
   return (
-    <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in">
-       {/* ... (Header) ... */}
-       {/* ... existing header logic ... */}
-       <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all">
+    <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
+       <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all relative z-20">
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
               
               <div className="flex gap-2 w-full md:w-auto">
-                  {/* Filter Type Dropdown */}
                   <div className="relative flex-1 md:flex-none">
                       <select 
                         value={filters.status}
@@ -1009,7 +738,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={14} />
                   </div>
 
-                  {/* View Mode Dropdown */}
                   <div className="relative flex-1 md:flex-none">
                       <select 
                         value={timelineMode}
@@ -1024,7 +752,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                   </div>
               </div>
 
-              {/* Date Range Navigator */}
               <div className="flex items-center gap-2 w-full md:w-auto">
                    <button 
                       onClick={() => handleNavigate('PREV')}
@@ -1079,7 +806,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
                  {canAdd && (
                     <>
-                        {/* IMPORT EXCEL BUTTONS */}
                         <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-1">
                              <button 
                                 onClick={handleDownloadTemplate}
@@ -1110,13 +836,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
        </div>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col relative">
+      <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col relative z-0">
           {viewType === 'GRID' ? (
-             <div className="flex-1 overflow-auto no-scrollbar relative">
-                 <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative h-full min-h-full">
-                     {/* ... (Keep existing GRID implementation) ... */}
-                     <div className="sticky top-0 z-40 bg-gray-50 border-b flex h-14 shadow-sm ring-1 ring-gray-200">
-                         <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-50 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base">Phòng</div>
+             <div className="flex-1 overflow-auto no-scrollbar relative bg-white">
+                 <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative w-fit min-w-full">
+                     
+                     <div className="sticky top-0 z-[40] bg-gray-50 border-b flex h-14 shadow-sm ring-1 ring-gray-200">
+                         <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-[50] shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base">Phòng</div>
                          <div className="flex-1 grid" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                              {timeSlots.map((slot, i) => {
                                  const isCurrent = isCurrentTimeSlot(slot);
@@ -1139,37 +865,26 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                          let tooltip = '';
 
                          if (room.status === RoomStatus.VACANT_DIRTY) {
-                            statusBg = 'bg-yellow-50';
-                            statusBorder = 'border-l-4 border-l-yellow-400';
-                            statusIcon = <AlertTriangle size={14} className="text-yellow-600" />;
-                            tooltip = 'Phòng chưa dọn';
+                            statusBg = 'bg-yellow-50'; statusBorder = 'border-l-4 border-l-yellow-400'; statusIcon = <AlertTriangle size={14} className="text-yellow-600" />; tooltip = 'Phòng chưa dọn';
                          } else if (room.status === RoomStatus.VACANT_CLEAN) {
-                             statusBorder = 'border-l-4 border-l-green-500';
-                             statusIcon = <CheckCircle size={14} className="text-green-600" />;
-                             tooltip = 'Sẵn sàng';
+                             statusBorder = 'border-l-4 border-l-green-500'; statusIcon = <CheckCircle size={14} className="text-green-600" />; tooltip = 'Sẵn sàng';
                          } else if (room.status === RoomStatus.OCCUPIED) {
-                             statusBg = 'bg-red-50';
-                             statusBorder = 'border-l-4 border-l-red-500';
-                             statusIcon = <UserIcon size={14} className="text-red-600" />;
-                             tooltip = 'Đang có khách';
+                             statusBg = 'bg-red-50'; statusBorder = 'border-l-4 border-l-red-500'; statusIcon = <UserIcon size={14} className="text-red-600" />; tooltip = 'Đang có khách';
                          } else if (room.status === RoomStatus.MAINTENANCE) {
-                             statusBg = 'bg-gray-100';
-                             statusBorder = 'border-l-4 border-l-gray-500';
-                             statusIcon = <Wrench size={14} className="text-gray-600" />;
-                             tooltip = 'Bảo trì';
+                             statusBg = 'bg-gray-100'; statusBorder = 'border-l-4 border-l-gray-500'; statusIcon = <Wrench size={14} className="text-gray-600" />; tooltip = 'Bảo trì';
                          }
 
                          return (
                              <React.Fragment key={room.id}>
                                  {isNewBranch && (
-                                     <div className="sticky left-0 z-30 w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
+                                     <div className="sticky left-0 z-[20] w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
                                          <Building2 size={14} className="text-gray-500"/> {propName}
                                      </div>
                                  )}
 
                                  <div className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
                                      <div 
-                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-30 border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
+                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
                                         title={tooltip}
                                         onClick={() => handleStatusIconClick(room)}
                                         style={{cursor: canManageRooms ? 'pointer' : 'default'}}
@@ -1184,31 +899,90 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                      
                                      <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                                          {timeSlots.map((slot) => renderGridCell(room, slot))}
-                                         {filteredBookings.filter(b => b.roomId === room.id).map(b => {
-                                                const bStart = new Date(b.checkInDate);
-                                                const bEnd = new Date(b.checkOutDate);
-                                                const viewStart = timeSlots[0];
-                                                const viewEnd = timelineMode === 'DAY' 
-                                                    ? addHours(viewStart, 24) 
-                                                    : addDays(viewStart, gridColumns);
+                                         
+                                         {/* 1. Bóng mờ cho KÉO TẠO MỚI (Từ 14h đến 12h) */}
+                                         {isDragging && dragStart && dragEnd && dragStart.roomId === room.id && (() => {
+                                             const s = dragStart.time < dragEnd.time ? dragStart.time : dragEnd.time;
+                                             const e = dragStart.time < dragEnd.time ? dragEnd.time : dragStart.time;
+                                             let cIn = new Date(s);
+                                             let cOut = new Date(e);
+                                             if (timelineMode === 'DAY') cOut = addHours(cOut, 1);
+                                             else {
+                                                 cIn.setHours(14,0,0,0);
+                                                 if (s.getTime() === e.getTime()) cOut = addDays(cOut, 1);
+                                                 else cOut = addDays(cOut, 1);
+                                                 cOut.setHours(12,0,0,0);
+                                             }
+                                             const vStartMs = timeSlots[0].getTime();
+                                             const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
+                                             const bStart = cIn.getTime();
+                                             const bEnd = cOut.getTime();
+                                             if (bEnd <= vStartMs || bStart >= vEndMs) return null;
+                                             const left = (Math.max(0, bStart - vStartMs) / (vEndMs - vStartMs)) * 100;
+                                             const width = ((Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs)) / (vEndMs - vStartMs)) * 100;
+                                             
+                                             return <div className="absolute top-[10%] h-[80%] bg-blue-400 opacity-50 border-2 border-blue-600 border-dashed rounded-md pointer-events-none z-[15]" style={{left: `${left}%`, width: `${width}%`}}></div>;
+                                         })()}
 
-                                                if (bEnd <= viewStart || bStart >= viewEnd) return null;
-                                                const totalDuration = viewEnd.getTime() - viewStart.getTime();
-                                                const offset = Math.max(0, bStart.getTime() - viewStart.getTime());
-                                                const duration = Math.min(bEnd.getTime(), viewEnd.getTime()) - Math.max(bStart.getTime(), viewStart.getTime());
+                                         {/* 2. Bóng mờ cho KÉO THẢ ĐỔI PHÒNG (Từ 14h đến 12h) */}
+                                         {hoveredDrop?.roomId === room.id && movingBookingId && (() => {
+                                             const movingBooking = bookings.find(b => b.id === movingBookingId);
+                                             if (!movingBooking) return null;
+                                             const oldIn = new Date(movingBooking.checkInDate);
+                                             const oldOut = new Date(movingBooking.checkOutDate);
+                                             const durationMs = oldOut.getTime() - oldIn.getTime();
+                                             const newCheckIn = new Date(hoveredDrop.time);
+                                             if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0);
+                                             else newCheckIn.setHours(14, 0, 0, 0);
+                                             const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
+                                             
+                                             const vStartMs = timeSlots[0].getTime();
+                                             const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
+                                             const bStart = newCheckIn.getTime();
+                                             const bEnd = newCheckOut.getTime();
+                                             if (bEnd <= vStartMs || bStart >= vEndMs) return null;
+                                             const left = (Math.max(0, bStart - vStartMs) / (vEndMs - vStartMs)) * 100;
+                                             const width = ((Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs)) / (vEndMs - vStartMs)) * 100;
+                                             
+                                             return <div className="absolute top-[10%] h-[80%] bg-amber-400 opacity-60 border-2 border-amber-600 border-dashed rounded-md pointer-events-none z-[15]" style={{left: `${left}%`, width: `${width}%`}}></div>;
+                                         })()}
+
+                                         {filteredBookings.filter(b => b.roomId === room.id).map(b => {
+                                                const bStart = new Date(b.checkInDate).getTime();
+                                                const bEnd = new Date(b.checkOutDate).getTime();
+                                                const vStartMs = timeSlots[0].getTime();
+                                                const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
+
+                                                if (bEnd <= vStartMs || bStart >= vEndMs) return null;
+                                                const totalDuration = vEndMs - vStartMs;
+                                                const offset = Math.max(0, bStart - vStartMs);
+                                                const duration = Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs);
                                                 const left = (offset / totalDuration) * 100;
                                                 const width = (duration / totalDuration) * 100;
                                                 const bookingTags = tags.filter(t => b.tags?.includes(t.id));
                                                 const isGroup = !!b.groupId;
 
                                                 return (
-                                                    <div key={b.id} className={getBookingStyle(b)} style={{left: `${left}%`, width: `${width}%`, zIndex: 10}} onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}>
-                                                        <div className="absolute top-0 right-0 flex gap-0.5 z-20">
+                                                    <div 
+                                                        key={b.id} 
+                                                        draggable
+                                                        onMouseDown={(e) => e.stopPropagation()} 
+                                                        onDragStart={(e) => handleBookingDragStart(e, b.id)}
+                                                        onDragEnd={handleBookingDragEnd}
+                                                        className={`${getBookingStyle(b)} ${movingBookingId === b.id ? 'opacity-40' : 'opacity-100'}`} 
+                                                        style={{
+                                                            left: `${left}%`, width: `${width}%`, 
+                                                            zIndex: movingBookingId === b.id ? 25 : 10,
+                                                            pointerEvents: isDraggingBooking ? 'none' : 'auto' 
+                                                        }} 
+                                                        onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}
+                                                    >
+                                                        <div className="absolute top-0 right-0 flex gap-0.5 z-[12]">
                                                             {isGroup && <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>}
                                                             {b.notes && <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>}
                                                         </div>
-                                                        <div className="font-bold truncate text-[10px] md:text-xs">{b.guestName}</div>
-                                                        <div className="flex gap-0.5 mt-1">
+                                                        <div className="font-bold truncate text-[10px] md:text-xs relative z-[11]">{b.guestName}</div>
+                                                        <div className="flex gap-0.5 mt-1 relative z-[11]">
                                                             {bookingTags.map(t => (
                                                                 <div key={t.id} className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: t.color}} title={t.name}></div>
                                                             ))}
@@ -1224,11 +998,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                  </div>
              </div>
           ) : (
-            <div className="overflow-auto">
+            <div className="overflow-auto relative z-10 bg-white">
                 <table className="w-full text-sm text-left whitespace-nowrap">
-                    <thead className="bg-gray-100 text-gray-700 font-bold border-b text-xs uppercase">
+                    <thead className="bg-gray-100 text-gray-700 font-bold border-b text-xs uppercase sticky top-0 z-[40]">
                         <tr>
-                            {/* ... existing table headers ... */}
                             <th className="p-4">Mã BK</th>
                             <th className="p-4">Khách hàng</th>
                             <th className="p-4">Tags</th>
@@ -1305,8 +1078,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           )}
       </div>
 
-      {/* ... (Keep existing Modals) ... */}
-      {/* ... STATUS MODAL, CREATE/EDIT MODAL, TICKET MODAL ... */}
       {statusModal.isOpen && statusModal.room && (
           <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
@@ -1345,79 +1116,105 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           </div>
       )}
 
-      {/* CREATE/EDIT MODAL - OPTIMIZED FOR MOBILE */}
+      {moveConfirmModal && moveConfirmModal.isOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                  <div className="bg-blue-600 p-4 text-center">
+                      <div className="w-16 h-16 bg-white/20 text-white rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner">
+                          <CheckCircle size={32} />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Xác nhận chuyển lịch</h3>
+                  </div>
+                  
+                  <div className="p-6">
+                      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 space-y-3">
+                          <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                              <span className="text-gray-500 font-medium text-sm">Khách hàng:</span>
+                              <span className="font-bold text-gray-800">{moveConfirmModal.booking?.guestName}</span>
+                          </div>
+                          <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                              <span className="text-gray-500 font-medium text-sm">Chuyển sang phòng:</span>
+                              <span className="text-lg font-black text-blue-700">{moveConfirmModal.newRoom?.number}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500 font-medium">Nhận phòng mới:</span>
+                              <span className="font-bold text-gray-800">{formatStandardDateTime(moveConfirmModal.newCheckIn)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500 font-medium">Trả phòng mới:</span>
+                              <span className="font-bold text-gray-800">{formatStandardDateTime(moveConfirmModal.newCheckOut)}</span>
+                          </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                          <button onClick={() => setMoveConfirmModal(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors">Huỷ bỏ</button>
+                          <button onClick={confirmAndSaveMove} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors">Đồng ý chuyển</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-              {/* Overlay */}
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
               <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowModal(false)}></div>
               
-              {/* Modal Content */}
-              <div className="relative bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-[1200px] md:rounded-3xl shadow-2xl flex flex-col animate-fade-in md:border md:border-white/20">
+              <div className="relative bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-4xl md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200">
                   
-                  {/* Modal Header - Sticky */}
-                  <div className="flex-shrink-0 p-4 md:p-6 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-3xl">
+                  <div className="flex-shrink-0 p-4 md:p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-2xl">
                       <div>
-                          <h3 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
+                          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                               {isEditMode ? 'Chi tiết' : 'Tạo mới'}
-                              {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
+                              {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
                           </h3>
-                          {bookingMeta.id && <p className="text-xs text-gray-400 font-mono mt-0.5">#{bookingMeta.id}</p>}
+                          {bookingMeta.id && <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{bookingMeta.id}</p>}
                       </div>
                       <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 rounded-full p-2 hover:bg-gray-100"><X size={20} /></button>
                   </div>
                   
-                  {/* Modal Body - Scrollable */}
-                  <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50/30">
-                      {/* Guest Info */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <div className="flex-1 overflow-y-auto p-4 md:p-5 bg-gray-50/30">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                           <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
-                              <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Khách hàng</label>
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
                               <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} />
                           </div>
                           <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
-                              <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Số điện thoại</label>
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Số điện thoại</label>
                               <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập SĐT..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} />
                           </div>
                       </div>
 
-                      {/* Rooms List */}
-                      <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
-                          <div className="bg-gray-50 flex text-xs font-bold text-gray-500 p-3 items-center uppercase tracking-wider hidden md:flex border-b border-gray-200">
+                      <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
+                          <div className="bg-gray-50 flex gap-2 text-[10px] font-bold text-gray-500 p-2 items-center uppercase tracking-wider hidden md:flex border-b border-gray-200">
                             <div className="w-[15%]">Chi nhánh</div>
                             <div className="w-[15%]">Hạng</div>
-                            <div className="w-[12%]">Phòng</div>
-                            <div className="w-[20%]">Nhận</div>
-                            <div className="w-[20%]">Trả</div>
-                            <div className="w-[10%] text-center">TG</div>
-                            <div className="w-[8%] text-right">#</div>
+                            <div className="w-[15%]">Phòng</div>
+                            <div className="w-[22%]">Nhận</div>
+                            <div className="w-[22%]">Trả</div>
+                            <div className="w-[11%] text-center">#</div>
                           </div>
                           <div className="divide-y divide-gray-100">
                             {bookingRows.map((row, idx) => (
-                                <div key={row.tempId} className="p-3 md:p-3 hover:bg-gray-50 transition-colors flex flex-col md:flex-row gap-3 relative group">
-                                    {/* Mobile Header for Room */}
-                                    <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 mb-1">
-                                        <span className="font-bold text-blue-600">Phòng {idx + 1}</span>
-                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-xs flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
+                                <div key={row.tempId} className="p-3 md:p-2 hover:bg-gray-50 transition-colors flex flex-col md:flex-row gap-2 relative group items-center">
+                                    <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 w-full mb-1">
+                                        <span className="font-bold text-blue-600 text-xs">Phòng {idx + 1}</span>
+                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-[10px] flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
                                     </div>
 
-                                    {/* Branch Select */}
-                                    <div className="md:w-[15%] space-y-1 md:space-y-0">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Chi nhánh</span>
+                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Chi nhánh</span>
                                         <select 
                                             disabled={isReadOnly} 
                                             className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
                                             value={row.tempPropId} 
                                             onChange={e => updateRow(idx, 'tempPropId', e.target.value)}
                                         >
-                                            {properties.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name}</option>
-                                            ))}
+                                            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                                         </select>
                                     </div>
 
-                                    {/* Type Select (Dependent on Branch) */}
-                                    <div className="md:w-[15%] space-y-1 md:space-y-0">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Hạng phòng</span>
+                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Hạng phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
                                             className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
@@ -1426,19 +1223,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         >
                                             <option value="">-- Chọn --</option>
                                             {roomTypes.map(t => {
-                                                // Only show types that exist in the selected branch's rooms
                                                 const hasRoomsInBranch = rooms.some(r => r.propertyId === row.tempPropId && r.typeId === t.id);
-                                                if (hasRoomsInBranch || !row.tempPropId) {
-                                                    return <option key={t.id} value={t.id}>{t.name}</option>;
-                                                }
+                                                if (hasRoomsInBranch || !row.tempPropId) return <option key={t.id} value={t.id}>{t.name}</option>;
                                                 return null;
                                             })}
                                         </select>
                                     </div>
 
-                                    {/* Room Select (Dependent on Branch + Type) */}
-                                    <div className="md:w-[12%] space-y-1 md:space-y-0">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Phòng</span>
+                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
                                             className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" 
@@ -1447,57 +1240,53 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         >
                                             <option value="">--</option>
                                             {rooms.map(r => {
-                                                // Filter by Branch & Type
                                                 if (row.tempPropId && r.propertyId !== row.tempPropId) return null;
                                                 if (row.tempTypeId && r.typeId !== row.tempTypeId) return null;
 
                                                 const check = DataService.validateRoomAvailability(r.id, row.checkIn, row.checkOut, row.bookingId);
                                                 const isSelectedElsewhere = bookingRows.some((otherRow, otherIdx) => otherIdx !== idx && otherRow.roomId === r.id);
-                                                if ((check.valid || r.id === row.roomId) && !isSelectedElsewhere) {
-                                                    return <option key={r.id} value={r.id}>{r.number}</option>
-                                                }
+                                                if ((check.valid || r.id === row.roomId) && !isSelectedElsewhere) return <option key={r.id} value={r.id}>{r.number}</option>;
                                                 return null;
                                             })}
                                         </select>
                                     </div>
 
-                                    <div className="md:w-[20%] space-y-1 md:space-y-0">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Nhận phòng</span>
+                                    <div className="md:w-[22%] w-full space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Nhận phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} />
                                     </div>
-                                    <div className="md:w-[20%] space-y-1 md:space-y-0">
-                                        <span className="md:hidden text-xs text-gray-400 font-medium uppercase block">Trả phòng</span>
+                                    <div className="md:w-[22%] w-full space-y-1 md:space-y-0">
+                                        <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Trả phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
                                     </div>
-                                    <div className="md:w-[10%] text-center text-sm font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1 md:py-0 mt-1 md:mt-0 flex justify-between md:block px-2 md:px-0">
-                                        <span className="md:hidden text-xs text-gray-400">Thời lượng:</span>
+                                    <div className="md:w-[11%] w-full text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0">
+                                        <span className="md:hidden text-[10px] text-gray-400">TG:</span>
                                         {getDurationText(row.checkIn, row.checkOut)}
+                                        <div className="md:hidden">
+                                            {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>}
+                                        </div>
                                     </div>
-                                    <div className="hidden md:block md:w-[8%] text-right">
-                                        {!isReadOnly && (
-                                            <button onClick={() => handleRemoveRow(idx)} className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-full hover:bg-red-50"><Trash2 size={18} /></button>
-                                        )}
+                                    <div className="hidden md:flex md:absolute right-[-30px] top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500 bg-white p-1.5 rounded-full shadow-sm border border-gray-200"><Trash2 size={14} /></button>}
                                     </div>
                                 </div>
                             ))}
                           </div>
                           {!isReadOnly && (
-                            <button onClick={handleAddRow} className="w-full py-3 text-center text-sm font-bold text-green-600 hover:bg-green-50 transition-colors border-t border-gray-100 flex items-center justify-center gap-2">
-                                <PlusCircle size={16} /> Thêm phòng vào đoàn
+                            <button onClick={handleAddRow} className="w-full py-2.5 text-center text-xs font-bold text-green-600 bg-green-50/50 hover:bg-green-100 transition-colors border-t border-green-100 flex items-center justify-center gap-1.5">
+                                <PlusCircle size={14} /> Thêm phòng vào đoàn
                             </button>
                           )}
                       </div>
 
-                      {/* EXTRA FEES */}
-                      {/* ... existing extra fees section ... */}
-                      <div className="bg-white border border-gray-200 rounded-xl mb-6 shadow-sm overflow-hidden">
-                          <div className="bg-gray-50 p-3 border-b border-gray-200 flex justify-between items-center">
-                              <h4 className="text-xs font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={14}/> Dịch vụ & Phụ thu</h4>
+                      <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
+                          <div className="bg-gray-50 p-2.5 border-b border-gray-200 flex justify-between items-center">
+                              <h4 className="text-[11px] font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={12}/> Dịch vụ & Phụ thu</h4>
                           </div>
                           {!isReadOnly && (
-                              <div className="p-3 bg-gray-50/50 flex flex-col md:flex-row gap-2 border-b border-dashed border-gray-200">
+                              <div className="p-2.5 bg-gray-50/50 flex flex-col md:flex-row gap-2 border-b border-dashed border-gray-200">
                                   <select 
-                                      className="flex-[2] border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none bg-white"
+                                      className="flex-[2] border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none bg-white focus:border-blue-400"
                                       value={pendingFee.categoryId}
                                       onChange={e => setPendingFee({...pendingFee, categoryId: e.target.value})}
                                   >
@@ -1510,24 +1299,24 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                       </optgroup>
                                   </select>
                                   <MoneyInput 
-                                      className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none bg-white font-bold text-right"
+                                      className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none bg-white font-bold text-right focus:border-blue-400"
                                       placeholder="0"
                                       value={pendingFee.amount}
                                       onChange={v => setPendingFee({...pendingFee, amount: v})}
                                   />
-                                  <button onClick={handleAddFee} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors whitespace-nowrap">Thêm</button>
+                                  <button onClick={handleAddFee} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors whitespace-nowrap shadow-sm">Thêm</button>
                               </div>
                           )}
                           <div className="divide-y divide-gray-100">
-                              {bookingMeta.extraFees.length === 0 && <p className="text-center text-gray-400 text-xs italic p-4">Chưa có dịch vụ thêm.</p>}
+                              {bookingMeta.extraFees.length === 0 && <p className="text-center text-gray-400 text-[11px] italic p-3">Chưa có dịch vụ thêm.</p>}
                               {bookingMeta.extraFees.map(fee => (
-                                  <div key={fee.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
+                                  <div key={fee.id} className="p-2.5 flex justify-between items-center hover:bg-gray-50 text-sm">
                                       <div className="flex items-center gap-2">
                                           {fee.type === 'REVENUE' ? <ArrowUpCircle size={14} className="text-green-500"/> : <ArrowDownCircle size={14} className="text-red-500"/>}
-                                          <span className="text-sm font-medium text-gray-700">{fee.name}</span>
+                                          <span className="text-xs font-medium text-gray-700">{fee.name}</span>
                                       </div>
                                       <div className="flex items-center gap-3">
-                                          <span className={`font-bold text-sm ${fee.type === 'REVENUE' ? 'text-green-600' : 'text-red-600'}`}>
+                                          <span className={`font-bold text-xs ${fee.type === 'REVENUE' ? 'text-green-600' : 'text-red-600'}`}>
                                               {fee.type === 'REVENUE' ? '+' : '-'}{formatNumber(fee.amount)}
                                           </span>
                                           {!isReadOnly && <button onClick={() => handleRemoveFee(fee.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14}/></button>}
@@ -1537,65 +1326,56 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                           </div>
                       </div>
 
-                      {/* Payment & Extras */}
-                      {/* ... existing payment section ... */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20 md:pb-0">
-                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-4">
-                              <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2 uppercase tracking-wide border-b pb-2"><Info size={14}/> Thanh toán</h4>
-                              <div className="space-y-3">
-                                  {/* Room Price */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-20 md:pb-0">
+                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                              <h4 className="font-bold text-gray-800 text-[11px] flex items-center gap-1.5 uppercase tracking-wide border-b border-gray-100 pb-2"><Info size={12}/> Thanh toán</h4>
+                              <div className="space-y-2">
                                   <div className="flex justify-between items-center">
-                                      <label className="text-xs font-bold text-gray-500 uppercase">Tổng tiền phòng</label>
-                                      <div className="w-32">
+                                      <label className="text-[10px] font-bold text-gray-500 uppercase">Tổng tiền phòng</label>
+                                      <div className="w-28">
                                         <MoneyInput 
-                                            className="w-full bg-gray-50 border border-gray-200 text-gray-800 p-2 rounded-lg font-bold text-sm text-right outline-none focus:ring-1 focus:ring-blue-200"
-                                            value={bookingMeta.totalPrice} // This acts as ROOM TOTAL
+                                            className="w-full bg-gray-50 border border-gray-200 text-gray-800 p-1.5 rounded-md font-bold text-xs text-right outline-none focus:ring-1 focus:ring-blue-200"
+                                            value={bookingMeta.totalPrice} 
                                             onChange={(val) => setBookingMeta(prev => ({ ...prev, totalPrice: val, isManualPrice: true }))}
                                             disabled={isReadOnly}
                                         />
                                       </div>
                                   </div>
 
-                                  {/* Extra Revenue Summary */}
                                   {extraRevenue > 0 && (
-                                    <div className="flex justify-between items-center text-sm">
-                                        <span className="text-gray-600 flex items-center gap-1"><ArrowUpCircle size={12} className="text-green-500"/> Phụ thu / Dịch vụ:</span>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-gray-600 flex items-center gap-1"><ArrowUpCircle size={10} className="text-green-500"/> Phụ thu / Dịch vụ:</span>
                                         <span className="font-bold text-green-600">+{formatNumber(extraRevenue)}</span>
                                     </div>
                                   )}
 
-                                  {/* Extra Expense Summary */}
                                   {extraExpense > 0 && (
-                                    <div className="flex justify-between items-center text-sm">
-                                        <span className="text-gray-600 flex items-center gap-1"><ArrowDownCircle size={12} className="text-red-500"/> Giảm trừ / Chi phí:</span>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-gray-600 flex items-center gap-1"><ArrowDownCircle size={10} className="text-red-500"/> Giảm trừ / Chi phí:</span>
                                         <span className="font-bold text-red-600">-{formatNumber(extraExpense)}</span>
                                     </div>
                                   )}
                                   
-                                  {/* Divider */}
                                   <div className="border-t border-dashed border-gray-200 my-2"></div>
 
-                                  {/* GRAND TOTAL */}
                                   <div className="flex justify-between items-center">
-                                      <label className="text-sm font-extrabold text-blue-800 uppercase">TỔNG CỘNG</label>
-                                      <span className="text-xl font-extrabold text-blue-800 tracking-tight">{formatNumber(grandTotal)} đ</span>
+                                      <label className="text-xs font-extrabold text-blue-800 uppercase">TỔNG CỘNG</label>
+                                      <span className="text-lg font-extrabold text-blue-800 tracking-tight">{formatNumber(grandTotal)} đ</span>
                                   </div>
 
-                                  {/* Paid Input */}
-                                  <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100 mt-2">
-                                      <label className="block text-[10px] font-bold uppercase text-blue-700 mb-1">Khách đã trả</label>
+                                  <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 mt-2">
+                                      <label className="block text-[9px] font-bold uppercase text-blue-700 mb-1">Khách đã trả</label>
                                       <MoneyInput 
-                                            className="w-full bg-white border border-blue-200 text-blue-800 p-2 rounded-lg font-bold text-lg outline-none focus:ring-2 focus:ring-blue-200"
+                                            className="w-full bg-white border border-blue-200 text-blue-800 p-2 rounded-md font-bold text-base outline-none focus:ring-2 focus:ring-blue-200"
                                             value={bookingMeta.paidAmount || 0}
                                             onChange={(val) => setBookingMeta(prev => ({ ...prev, paidAmount: val }))}
                                             disabled={isReadOnly}
                                         />
                                   </div>
 
-                                  {/* Remaining */}
-                                  <div className="flex justify-between items-center pt-2">
-                                      <span className="text-xs text-gray-500 font-medium">Còn lại cần thu:</span>
-                                      <span className={`text-base font-bold ${(bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                  <div className="flex justify-between items-center pt-1">
+                                      <span className="text-[10px] text-gray-500 font-medium">Còn lại cần thu:</span>
+                                      <span className={`text-sm font-bold ${(bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
                                           {formatNumber((bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0))}
                                       </span>
                                   </div>
@@ -1603,14 +1383,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                           </div>
                           
                           <div className="space-y-4">
-                              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Ghi chú</label>
-                                  <textarea disabled={isReadOnly} className="w-full bg-gray-50 border-0 rounded-lg p-3 text-sm h-20 outline-none focus:ring-2 focus:ring-gray-200 resize-none" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
+                              <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                                  <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1.5">Ghi chú</label>
+                                  <textarea disabled={isReadOnly} className="w-full bg-gray-50 border-0 rounded-lg p-2.5 text-xs h-[72px] outline-none focus:ring-2 focus:ring-gray-200 resize-none" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
                               </div>
                               
-                              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Thẻ (Tags)</label>
-                                  <div className="flex flex-wrap gap-2">
+                              <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                                  <label className="block text-[10px] font-bold uppercase text-gray-500 mb-2">Thẻ (Tags)</label>
+                                  <div className="flex flex-wrap gap-1.5">
                                       {tags.map(t => {
                                           const isSelected = bookingMeta.tags.includes(t.id);
                                           return (
@@ -1618,7 +1398,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                                 key={t.id}
                                                 onClick={() => !isReadOnly && toggleTag(t.id)}
                                                 disabled={isReadOnly}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${isSelected ? 'text-white shadow-sm' : 'text-gray-500 bg-white border-gray-200'} ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-all border ${isSelected ? 'text-white shadow-sm' : 'text-gray-500 bg-white border-gray-200'} ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                                                 style={isSelected ? {backgroundColor: t.color, borderColor: t.color} : {}}
                                               >
                                                   {t.name}
@@ -1631,16 +1411,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
                   </div>
 
-                  {/* Modal Footer - Sticky */}
-                  {/* ... existing footer logic ... */}
-                  <div className="flex-shrink-0 p-4 border-t border-gray-100 bg-white z-10 md:rounded-b-3xl">
-                      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                          <div className="flex items-center gap-3 w-full md:w-auto">
+                  <div className="flex-shrink-0 p-3 md:p-4 border-t border-gray-100 bg-gray-50 z-10 md:rounded-b-2xl">
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-3">
+                          <div className="flex items-center gap-2 w-full md:w-auto">
                              {isEditMode && canEdit && (
                                 <>
                                  <div className="relative flex-1 md:flex-none">
                                      <select 
-                                        className="w-full md:w-40 appearance-none bg-gray-100 border border-gray-200 text-gray-700 font-bold py-3 pl-4 pr-8 rounded-xl outline-none focus:ring-2 focus:ring-blue-100" 
+                                        className="w-full md:w-36 appearance-none bg-white border border-gray-200 text-gray-700 font-bold py-2.5 pl-3 pr-8 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 text-xs shadow-sm" 
                                         value={bookingMeta.status} 
                                         onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}
                                      >
@@ -1649,36 +1427,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                          <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
                                          <option value={BookingStatus.CANCELLED}>CANCELLED</option>
                                      </select>
-                                     <ArrowUpDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                                     <ArrowUpDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
                                  </div>
                                  
                                  {canDelete && (
                                      !showDeleteConfirm ? (
                                         <button 
                                             type="button"
-                                            onClick={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                handleDeleteClick();
-                                            }}
-                                            className="px-4 py-3 text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors font-bold border border-red-100 flex-shrink-0"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteClick(); }}
+                                            className="px-3 py-2 text-red-600 bg-white hover:bg-red-50 rounded-lg shadow-sm transition-colors font-bold border border-gray-200 flex-shrink-0"
                                         >
-                                            <Trash2 size={20} />
+                                            <Trash2 size={16} />
                                         </button>
                                     ) : (
-                                        <div className="flex items-center gap-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-fade-in">
-                                            <button 
-                                                onClick={handleConfirmDelete} 
-                                                className="px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg"
-                                            >
-                                                Xóa thật
-                                            </button>
-                                            <button 
-                                                onClick={() => setShowDeleteConfirm(false)} 
-                                                className="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs font-bold rounded-lg"
-                                            >
-                                                Hủy
-                                            </button>
+                                        <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-100 animate-fade-in shadow-sm">
+                                            <button onClick={handleConfirmDelete} className="px-2.5 py-1.5 bg-red-600 text-white text-[10px] font-bold rounded-md">Xóa thật</button>
+                                            <button onClick={() => setShowDeleteConfirm(false)} className="px-2.5 py-1.5 bg-white border border-gray-300 text-gray-600 text-[10px] font-bold rounded-md">Hủy</button>
                                         </div>
                                     )
                                  )}
@@ -1686,16 +1450,16 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                              )}
                           </div>
                           
-                          <div className="flex gap-3 w-full md:w-auto">
-                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-6 py-3 text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-xl font-bold transition-colors">Đóng</button>
+                          <div className="flex gap-2 w-full md:w-auto">
+                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-4 py-2.5 text-gray-600 bg-white border border-gray-200 shadow-sm hover:bg-gray-100 rounded-lg font-bold text-xs transition-colors">Đóng</button>
                               {!isReadOnly && (
                                 <button 
                                     onClick={handleSaveBooking} 
                                     disabled={isSubmitting}
-                                    className={`flex-[2] md:flex-none px-8 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700 active:scale-95'}`}
+                                    className={`flex-[2] md:flex-none px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold shadow-md shadow-blue-200 transition-all flex items-center justify-center gap-1.5 text-xs ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700 active:scale-95'}`}
                                 >
-                                    {isSubmitting ? <Loader2 size={20} className="animate-spin" /> : <Check size={20} />}
-                                    <span>{isSubmitting ? 'Đang lưu...' : 'Lưu'}</span>
+                                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                                    <span>{isSubmitting ? 'Đang lưu...' : 'Lưu lại'}</span>
                                 </button>
                               )}
                           </div>
@@ -1705,9 +1469,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           </div>
       )}
 
-      {/* NEW: TICKET MODAL */}
       {showTicketModal && receiptData && (
-          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4">
                <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full animate-fade-in relative">
                    <button onClick={() => setShowTicketModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1"><X size={20}/></button>
                    
@@ -1746,16 +1509,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                 ))}
                             </div>
 
-                            {/* ADDED SECTION START */}
                             <div className="border-t border-dashed border-gray-300 py-2">
                                 <div className="flex justify-between items-center">
                                     <span className="font-bold text-xs uppercase text-gray-500">Tổng tiền phòng</span>
                                     <span className="font-bold text-gray-900">{formatNumber(receiptData.roomPrice)}</span>
                                 </div>
                             </div>
-                            {/* ADDED SECTION END */}
 
-                            {/* Extra Fees Receipt Section */}
                             {receiptData.extraFees && receiptData.extraFees.length > 0 && (
                                 <div className="border-t border-dashed border-gray-300 py-2 mb-2">
                                     <h5 className="font-bold text-xs uppercase text-gray-500 mb-2">Dịch vụ & Phụ thu</h5>
