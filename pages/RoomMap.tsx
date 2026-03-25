@@ -218,6 +218,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
   // DRAG & DROP CHO ĐƠN ĐÃ CÓ
   const [movingBookingId, setMovingBookingId] = useState<string | null>(null);
   const [isDraggingBooking, setIsDraggingBooking] = useState(false); 
+  const [dragBookingAnchorSlots, setDragBookingAnchorSlots] = useState(0);
   const [hoveredDrop, setHoveredDrop] = useState<{roomId: string, time: Date} | null>(null);
 
   const [moveConfirmModal, setMoveConfirmModal] = useState<{
@@ -542,11 +543,57 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
   };
 
   // --- TÍNH NĂNG DRAG TO MOVE EXISTING BOOKING ---
-  const handleBookingDragStart = (e: React.DragEvent, bookingId: string) => {
+  const getAnchorAdjustedTargetDate = (targetDate: Date) => {
+      const unitMs = timelineMode === 'DAY' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      return new Date(targetDate.getTime() - dragBookingAnchorSlots * unitMs);
+  };
+
+  const handleBookingDragStart = (
+      e: React.DragEvent<HTMLDivElement>,
+      bookingId: string,
+      bookingStartMs: number,
+      bookingEndMs: number,
+      viewportStartMs: number,
+      viewportEndMs: number
+  ) => {
       if (!canEdit) return;
-      e.stopPropagation(); 
+      e.stopPropagation();
       e.dataTransfer.setData('text/plain', bookingId);
       e.dataTransfer.effectAllowed = 'move';
+
+      const unitMs = timelineMode === 'DAY' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const visibleStartMs = Math.max(bookingStartMs, viewportStartMs);
+      const visibleEndMs = Math.min(bookingEndMs, viewportEndMs);
+      const visibleDurationMs = Math.max(1, visibleEndMs - visibleStartMs);
+      const bookingDurationMs = Math.max(1, bookingEndMs - bookingStartMs);
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clampedX = Math.max(0, Math.min(e.clientX - rect.left, rect.width || 1));
+      const ratio = rect.width > 0 ? Math.min(0.999999, clampedX / rect.width) : 0;
+      const pointerTimeMs = visibleStartMs + ratio * visibleDurationMs;
+
+      let rawOffsetSlots = 0;
+      let maxOffsetSlots = 0;
+
+      if (timelineMode === 'DAY') {
+          const bookingDurationSlots = Math.max(1, Math.ceil(bookingDurationMs / unitMs));
+          rawOffsetSlots = Math.floor((pointerTimeMs - bookingStartMs) / unitMs);
+          maxOffsetSlots = bookingDurationSlots - 1;
+      } else {
+          const dayMs = 24 * 60 * 60 * 1000;
+          const bookingStartDayMs = startOfDay(new Date(bookingStartMs)).getTime();
+          const bookingEndInclusiveMs = Math.max(bookingStartMs, bookingEndMs - 1);
+          const bookingEndDayMs = startOfDay(new Date(bookingEndInclusiveMs)).getTime();
+          const bookingSpanDays = Math.max(1, Math.floor((bookingEndDayMs - bookingStartDayMs) / dayMs) + 1);
+          const pointerDayMs = startOfDay(new Date(pointerTimeMs)).getTime();
+
+          rawOffsetSlots = Math.floor((pointerDayMs - bookingStartDayMs) / dayMs);
+          maxOffsetSlots = bookingSpanDays - 1;
+      }
+
+      const boundedOffsetSlots = Math.max(0, Math.min(rawOffsetSlots, maxOffsetSlots));
+      setDragBookingAnchorSlots(boundedOffsetSlots);
+
       setMovingBookingId(bookingId);
       // Giúp thẻ đang kéo xuyên thấu để chạm tới lưới bên dưới
       setTimeout(() => setIsDraggingBooking(true), 10);
@@ -555,12 +602,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
   const handleBookingDragEnd = () => {
       setMovingBookingId(null);
       setIsDraggingBooking(false); 
+      setDragBookingAnchorSlots(0);
       setHoveredDrop(null);
   };
 
   const handleBookingDrop = (e: React.DragEvent, targetRoomId: string, targetDate: Date) => {
       e.preventDefault(); e.stopPropagation(); 
-      setMovingBookingId(null); setIsDraggingBooking(false); setHoveredDrop(null);
+      setMovingBookingId(null); setIsDraggingBooking(false); setHoveredDrop(null); setDragBookingAnchorSlots(0);
 
       const bookingId = e.dataTransfer.getData('text/plain') || movingBookingId;
       if (!bookingId) return;
@@ -573,7 +621,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
       const oldOut = new Date(booking.checkOutDate);
       const durationMs = oldOut.getTime() - oldIn.getTime();
 
-      const newCheckIn = new Date(targetDate);
+      const adjustedTargetDate = getAnchorAdjustedTargetDate(targetDate);
+      const newCheckIn = new Date(adjustedTargetDate);
       if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0); 
       else newCheckIn.setHours(14, 0, 0, 0); 
       
@@ -765,7 +814,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
             onMouseEnter={() => handleMouseEnter(room.id, slot)}
             onMouseUp={handleMouseUp}
             onDragEnter={(e) => e.preventDefault()} 
-            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setHoveredDrop({roomId: room.id, time: slot}); }}
+            onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (!movingBookingId) return;
+                setHoveredDrop(prev => {
+                    if (prev?.roomId === room.id && prev.time.getTime() === slot.getTime()) return prev;
+                    return { roomId: room.id, time: slot };
+                });
+            }}
             onDragLeave={(e) => {}}
             onDrop={(e) => handleBookingDrop(e, room.id, slot)}
           >
@@ -776,6 +833,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
 
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
+  const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
 
   return (
     <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
@@ -989,7 +1047,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                              const oldIn = new Date(movingBooking.checkInDate);
                                              const oldOut = new Date(movingBooking.checkOutDate);
                                              const durationMs = oldOut.getTime() - oldIn.getTime();
-                                             const newCheckIn = new Date(hoveredDrop.time);
+                                             const adjustedHoverTime = getAnchorAdjustedTargetDate(hoveredDrop.time);
+                                             const newCheckIn = new Date(adjustedHoverTime);
                                              if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0);
                                              else newCheckIn.setHours(14, 0, 0, 0);
                                              const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
@@ -1025,7 +1084,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                                         key={b.id} 
                                                         draggable
                                                         onMouseDown={(e) => e.stopPropagation()} 
-                                                        onDragStart={(e) => handleBookingDragStart(e, b.id)}
+                                                        onDragStart={(e) => handleBookingDragStart(e, b.id, bStart, bEnd, vStartMs, vEndMs)}
                                                         onDragEnd={handleBookingDragEnd}
                                                         className={`${getBookingStyle(b)} ${movingBookingId === b.id ? 'opacity-40' : 'opacity-100'}`} 
                                                         style={{
@@ -1289,23 +1348,30 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                       </div>
 
                       <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
-                          <div className="bg-gray-50 text-[10px] font-bold text-gray-500 p-2 uppercase tracking-wider hidden md:grid md:grid-cols-12 md:gap-2 items-center border-b border-gray-200">
-                            <div className="md:col-span-2">Chi nhánh</div>
-                            <div className="md:col-span-2">Hạng</div>
-                            <div className="md:col-span-2">Phòng</div>
-                            <div className="md:col-span-3">Nhận</div>
-                            <div className="md:col-span-2">Trả</div>
-                            <div className="md:col-span-1 text-center">#</div>
+                          <div
+                            className="bg-gray-50 text-[10px] font-bold text-gray-500 px-3 py-2 uppercase tracking-wider hidden md:grid md:gap-3 items-center border-b border-gray-200"
+                            style={{ gridTemplateColumns: bookingDetailGridTemplate }}
+                          >
+                            <div>Chi nhánh</div>
+                            <div>Hạng</div>
+                            <div>Phòng</div>
+                            <div>Nhận</div>
+                            <div>Trả</div>
+                            <div className="text-center">#</div>
                           </div>
                           <div className="divide-y divide-gray-100">
                             {bookingRows.map((row, idx) => (
-                                <div key={row.tempId} className="p-3 md:p-2 hover:bg-gray-50 transition-colors flex flex-col md:grid md:grid-cols-12 gap-2 relative group items-center md:items-end">
+                                <div
+                                  key={row.tempId}
+                                  className="p-3 md:px-3 md:py-2.5 hover:bg-gray-50 transition-colors flex flex-col md:grid md:gap-3 relative group items-center md:items-center"
+                                  style={{ gridTemplateColumns: bookingDetailGridTemplate }}
+                                >
                                     <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 w-full mb-1">
                                         <span className="font-bold text-blue-600 text-xs">Phòng {idx + 1}</span>
                                         {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-[10px] flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
                                     </div>
 
-                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
+                                    <div className="w-full space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Chi nhánh</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1317,7 +1383,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                         </select>
                                     </div>
 
-                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
+                                    <div className="w-full space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Hạng phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1334,7 +1400,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                         </select>
                                     </div>
 
-                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
+                                    <div className="w-full space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1355,15 +1421,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                         </select>
                                     </div>
 
-                                    <div className="w-full md:col-span-3 space-y-1 md:space-y-0 min-w-0">
+                                    <div className="w-full space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Nhận phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} />
                                     </div>
-                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
+                                    <div className="w-full space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Trả phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
                                     </div>
-                                    <div className="w-full md:col-span-1 text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0 gap-1">
+                                    <div className="w-full text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0 gap-1">
                                         <span className="md:hidden text-[10px] text-gray-400">TG:</span>
                                         {getDurationText(row.checkIn, row.checkOut)}
                                         <div className="md:hidden">
