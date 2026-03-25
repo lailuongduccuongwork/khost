@@ -151,14 +151,56 @@ export interface User {
   permissions: string[];
 }
 
+export type HistoryAction =
+  | 'CREATE'
+  | 'UPDATE'
+  | 'DELETE'
+  | 'CHECK_IN'
+  | 'CHECK_OUT'
+  | 'CANCEL'
+  | 'LOGIN'
+  | 'LOGOUT'
+  | 'IMPORT'
+  | 'EXPORT'
+  | 'RESET'
+  | 'STATUS_CHANGE'
+  | 'REORDER'
+  | 'BULK_DELETE';
+
+export type HistoryEntityType =
+  | 'AUTH'
+  | 'BOOKING'
+  | 'ROOM'
+  | 'USER'
+  | 'CUSTOMER'
+  | 'PROPERTY'
+  | 'ROOM_TYPE'
+  | 'TAG'
+  | 'TRANSACTION_CATEGORY'
+  | 'REPORT'
+  | 'TENANT'
+  | 'PLAN'
+  | 'SYSTEM';
+
 export interface HistoryLog {
   id: string;
   tenantId?: string; // Multi-tenant Foreign Key
   timestamp: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'CHECK_IN' | 'CHECK_OUT' | 'CANCEL';
+  action: HistoryAction | string;
+  entityType?: HistoryEntityType | string;
+  entityId?: string;
+  entityLabel?: string;
   description: string;
-  bookingSnapshot: Booking; // Store full booking data
-  staffId: string;
+  actorId?: string;
+  actorName?: string;
+  actorUsername?: string;
+  actorRole?: UserRole | 'SYSTEM';
+  source?: 'WEB' | 'SYSTEM' | 'IMPORT';
+  before?: Record<string, any> | null;
+  after?: Record<string, any> | null;
+  metadata?: Record<string, any> | null;
+  bookingSnapshot?: Booking; // Legacy compatibility + booking-focused details
+  staffId?: string; // Legacy compatibility
 }
 
 // Permissions Constants
@@ -174,4 +216,5 @@ export const PERMISSIONS = {
   CAN_EDIT_BOOKING: 'can_edit_booking',
   CAN_DELETE_BOOKING: 'can_delete_booking',
   CAN_EXPORT_REPORT: 'can_export_report',
+  VIEW_AUDIT_LOGS: 'view_audit_logs',
 };

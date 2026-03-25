@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole } from '../types';
+import { createPortal } from 'react-dom';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog } from '../types';
 import { DataService } from '../services/dataService';
 import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Download, FileUp, Loader2, RotateCcw } from 'lucide-react';
 
@@ -12,6 +13,7 @@ interface RoomMapProps {
   rooms: Room[];
   roomTypes: RoomType[];
   bookings: Booking[];
+  history: HistoryLog[];
   customers: Customer[];
   tags: Tag[];
   properties: Property[];
@@ -43,6 +45,14 @@ const formatStandardDateTime = (isoStr: string | Date | undefined) => {
     if (isNaN(d.getTime())) return '';
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatAuditDateTime = (isoStr?: string) => {
+    if (!isoStr) return '--';
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
 
 // --- Custom Components ---
@@ -161,7 +171,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -186,6 +196,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
   const canManageRooms = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS);
   const allUsers = DataService.getUsers();
+  const usernameByUserId = useMemo(() => {
+      const map = new Map<string, string>();
+      allUsers.forEach(user => {
+          map.set(user.id, user.username);
+      });
+      return map;
+  }, [allUsers]);
 
   const [filters, setFilters] = useState({
       typeId: 'ALL', roomId: 'ALL', status: 'STAYING', search: ''
@@ -194,6 +211,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const [showModal, setShowModal] = useState(false);
   const [showTicketModal, setShowTicketModal] = useState(false); 
   const [isEditMode, setIsEditMode] = useState(false);
+  const [showBookingHistory, setShowBookingHistory] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); 
   
@@ -398,6 +416,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
 
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
       setIsEditMode(editMode); setShowDeleteConfirm(false); refreshCategories(); 
+      setShowBookingHistory(editMode);
       setPendingFee({ categoryId: '', amount: 0 }); setIsSubmitting(false); 
       
       if (editMode && booking) {
@@ -597,6 +616,45 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
   const extraExpense = bookingMeta.extraFees.reduce((s, f) => f.type === 'EXPENSE' ? s + f.amount : s, 0);
   const feeNet = extraRevenue - extraExpense;
   const grandTotal = bookingMeta.totalPrice + feeNet; 
+
+  const selectedBookingHistory = useMemo(() => {
+      if (!isEditMode) return [];
+
+      const targetBookingIds = new Set<string>();
+      if (bookingMeta.id) targetBookingIds.add(bookingMeta.id);
+      originalBookingIds.forEach(id => targetBookingIds.add(id));
+      bookingRows.forEach(row => {
+          if (row.bookingId) targetBookingIds.add(row.bookingId);
+      });
+
+      const targetGroupId = bookingMeta.groupId;
+
+      return history
+          .filter(log => {
+              const entityType = log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM');
+              if (entityType !== 'BOOKING') return false;
+
+              const meta: any = log.metadata || {};
+              const logBookingId = log.entityId || meta.bookingId || log.bookingSnapshot?.id || (log.after as any)?.id || (log.before as any)?.id;
+              const logGroupId = meta.groupId || log.bookingSnapshot?.groupId || (log.after as any)?.groupId || (log.before as any)?.groupId;
+
+              if (logBookingId && targetBookingIds.has(logBookingId)) return true;
+              if (targetGroupId && logGroupId && targetGroupId === logGroupId) return true;
+              return false;
+          })
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [history, isEditMode, bookingMeta.id, bookingMeta.groupId, originalBookingIds, bookingRows]);
+
+  const getBookingOperationName = (log: HistoryLog) => {
+      return log.description;
+  };
+
+  const getActorUsername = (log: HistoryLog) => {
+      if (log.actorUsername) return log.actorUsername;
+      if (log.actorId && usernameByUserId.get(log.actorId)) return usernameByUserId.get(log.actorId)!;
+      if (log.staffId && usernameByUserId.get(log.staffId)) return usernameByUserId.get(log.staffId)!;
+      return log.actorId || log.staffId || 'không rõ';
+  };
 
   const handleSaveBooking = () => {
      if (isSubmitting) return; 
@@ -1155,24 +1213,70 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
           </div>
       )}
 
-      {showModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+      {showModal && createPortal(
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 md:p-4">
               <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowModal(false)}></div>
               
-              <div className="relative bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-4xl md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200">
+              <div className="relative bg-white w-full max-w-[920px] max-h-[calc(100dvh-16px)] md:max-h-[calc(100dvh-32px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
                   
                   <div className="flex-shrink-0 p-4 md:p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-2xl">
                       <div>
-                          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                              {isEditMode ? 'Chi tiết' : 'Tạo mới'}
-                              {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
-                          </h3>
+                          <div className="flex items-center gap-2">
+                              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                  {isEditMode ? 'Chi tiết' : 'Tạo mới'}
+                                  {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
+                              </h3>
+                              {isEditMode && (
+                                  <button
+                                      type="button"
+                                      onClick={() => setShowBookingHistory(prev => !prev)}
+                                      className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors ${showBookingHistory ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+                                      title={showBookingHistory ? 'Thu gọn lịch sử thao tác đơn' : 'Mở lịch sử thao tác đơn'}
+                                  >
+                                      <Clock size={14} />
+                                  </button>
+                              )}
+                          </div>
                           {bookingMeta.id && <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{bookingMeta.id}</p>}
                       </div>
                       <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 rounded-full p-2 hover:bg-gray-100"><X size={20} /></button>
                   </div>
                   
-                  <div className="flex-1 overflow-y-auto p-4 md:p-5 bg-gray-50/30">
+                  <div className="flex-1 min-h-0 overflow-y-auto p-3 md:p-5 bg-gray-50/30">
+                      {isEditMode && showBookingHistory && (
+                          <div className="bg-white border border-gray-200 rounded-xl mb-4 shadow-sm overflow-hidden">
+                              <div className="px-3 py-2.5 flex items-center justify-between bg-gray-50 border-b border-gray-200">
+                                  <span className="text-[11px] font-bold uppercase text-gray-700">Lịch sử thao tác đơn</span>
+                                  <span className="text-xs font-semibold text-gray-500">{selectedBookingHistory.length} mục</span>
+                              </div>
+
+                              <div className="max-h-56 overflow-auto">
+                                  {selectedBookingHistory.length === 0 ? (
+                                      <p className="text-xs text-gray-400 italic text-center py-4">Chưa có lịch sử thao tác cho đơn này.</p>
+                                  ) : (
+                                      <table className="w-full text-left text-xs table-fixed">
+                                          <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider sticky top-0">
+                                              <tr>
+                                                  <th className="px-3 py-2 font-bold w-[170px]">Thời gian</th>
+                                                  <th className="px-3 py-2 font-bold w-[150px]">Người thao tác</th>
+                                                  <th className="px-3 py-2 font-bold">Tên thao tác</th>
+                                              </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-gray-100">
+                                              {selectedBookingHistory.map(log => (
+                                                  <tr key={log.id} className="hover:bg-gray-50">
+                                                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatAuditDateTime(log.timestamp)}</td>
+                                                      <td className="px-3 py-2 text-gray-700 font-semibold break-words">{getActorUsername(log)}</td>
+                                                      <td className="px-3 py-2 font-semibold text-gray-900 whitespace-normal break-words">{getBookingOperationName(log)}</td>
+                                                  </tr>
+                                              ))}
+                                          </tbody>
+                                      </table>
+                                  )}
+                              </div>
+                          </div>
+                      )}
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                           <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
@@ -1185,23 +1289,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
 
                       <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
-                          <div className="bg-gray-50 flex gap-2 text-[10px] font-bold text-gray-500 p-2 items-center uppercase tracking-wider hidden md:flex border-b border-gray-200">
-                            <div className="w-[15%]">Chi nhánh</div>
-                            <div className="w-[15%]">Hạng</div>
-                            <div className="w-[15%]">Phòng</div>
-                            <div className="w-[22%]">Nhận</div>
-                            <div className="w-[22%]">Trả</div>
-                            <div className="w-[11%] text-center">#</div>
+                          <div className="bg-gray-50 text-[10px] font-bold text-gray-500 p-2 uppercase tracking-wider hidden md:grid md:grid-cols-12 md:gap-2 items-center border-b border-gray-200">
+                            <div className="md:col-span-2">Chi nhánh</div>
+                            <div className="md:col-span-2">Hạng</div>
+                            <div className="md:col-span-2">Phòng</div>
+                            <div className="md:col-span-3">Nhận</div>
+                            <div className="md:col-span-2">Trả</div>
+                            <div className="md:col-span-1 text-center">#</div>
                           </div>
                           <div className="divide-y divide-gray-100">
                             {bookingRows.map((row, idx) => (
-                                <div key={row.tempId} className="p-3 md:p-2 hover:bg-gray-50 transition-colors flex flex-col md:flex-row gap-2 relative group items-center">
+                                <div key={row.tempId} className="p-3 md:p-2 hover:bg-gray-50 transition-colors flex flex-col md:grid md:grid-cols-12 gap-2 relative group items-center md:items-end">
                                     <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 w-full mb-1">
                                         <span className="font-bold text-blue-600 text-xs">Phòng {idx + 1}</span>
                                         {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-red-500 text-[10px] flex items-center gap-1"><Trash2 size={12}/> Xóa</button>}
                                     </div>
 
-                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Chi nhánh</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1213,7 +1317,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         </select>
                                     </div>
 
-                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Hạng phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1230,7 +1334,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         </select>
                                     </div>
 
-                                    <div className="md:w-[15%] w-full space-y-1 md:space-y-0">
+                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
@@ -1251,23 +1355,21 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                                         </select>
                                     </div>
 
-                                    <div className="md:w-[22%] w-full space-y-1 md:space-y-0">
+                                    <div className="w-full md:col-span-3 space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Nhận phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkIn} onChange={(val) => updateRow(idx, 'checkIn', val)} />
                                     </div>
-                                    <div className="md:w-[22%] w-full space-y-1 md:space-y-0">
+                                    <div className="w-full md:col-span-2 space-y-1 md:space-y-0 min-w-0">
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Trả phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
                                     </div>
-                                    <div className="md:w-[11%] w-full text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0">
+                                    <div className="w-full md:col-span-1 text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0 gap-1">
                                         <span className="md:hidden text-[10px] text-gray-400">TG:</span>
                                         {getDurationText(row.checkIn, row.checkOut)}
                                         <div className="md:hidden">
                                             {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>}
                                         </div>
-                                    </div>
-                                    <div className="hidden md:flex md:absolute right-[-30px] top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="text-gray-400 hover:text-red-500 bg-white p-1.5 rounded-full shadow-sm border border-gray-200"><Trash2 size={14} /></button>}
+                                        {!isReadOnly && <button onClick={() => handleRemoveRow(idx)} className="hidden md:inline-flex text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>}
                                     </div>
                                 </div>
                             ))}
@@ -1326,7 +1428,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                           </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-20 md:pb-0">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-2">
                           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
                               <h4 className="font-bold text-gray-800 text-[11px] flex items-center gap-1.5 uppercase tracking-wide border-b border-gray-100 pb-2"><Info size={12}/> Thanh toán</h4>
                               <div className="space-y-2">
@@ -1466,7 +1568,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, customers
                       </div>
                   </div>
               </div>
-          </div>
+          </div>,
+          document.body
       )}
 
       {showTicketModal && receiptData && (

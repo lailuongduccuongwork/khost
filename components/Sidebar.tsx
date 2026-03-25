@@ -58,8 +58,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
   // 2. Define Management/System Items (Visible for Admin ONLY)
   // Logic: Only ADMIN can see System Settings. Manager access removed.
   const showManagement = currentUser.role === UserRole.ADMIN;
+  const canViewHistory = currentUser.role === UserRole.ADMIN || currentUser.permissions?.includes(PERMISSIONS.VIEW_AUDIT_LOGS);
+  const showSystemSection = showManagement || canViewHistory;
   
   const managementItem = { id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase };
+  const historyItem = { id: 'history', label: 'Lịch sử thao tác', icon: CalendarDays };
 
   // Mobile overlay click handler
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -139,22 +142,38 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                 })}
 
                 {/* Management Items Separator */}
-                {showManagement && (
+                {showSystemSection && (
                     <>
                     <div className="my-4 border-t border-slate-700/50 mx-2"></div>
                     <div className="px-4 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Hệ thống</div>
-                    <button
-                        key={managementItem.id}
-                        onClick={() => onNavigate(managementItem.id)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
-                        currentPage === managementItem.id
-                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/50' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        }`}
-                    >
-                        <Briefcase size={20} />
-                        <span className="font-medium">{managementItem.label}</span>
-                    </button>
+                    {showManagement && (
+                      <button
+                          key={managementItem.id}
+                          onClick={() => onNavigate(managementItem.id)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
+                          currentPage === managementItem.id
+                              ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/50' 
+                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                      >
+                          <Briefcase size={20} />
+                          <span className="font-medium">{managementItem.label}</span>
+                      </button>
+                    )}
+                    {canViewHistory && (
+                      <button
+                          key={historyItem.id}
+                          onClick={() => onNavigate(historyItem.id)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
+                          currentPage === historyItem.id
+                              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/50' 
+                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                      >
+                          <CalendarDays size={20} />
+                          <span className="font-medium">{historyItem.label}</span>
+                      </button>
+                    )}
                     </>
                 )}
              </>

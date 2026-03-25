@@ -149,6 +149,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       { id: PERMISSIONS.CAN_EDIT_BOOKING, label: 'Được phép SỬA đơn' },
       { id: PERMISSIONS.CAN_DELETE_BOOKING, label: 'Được phép XOÁ đơn' },
       { id: PERMISSIONS.CAN_EXPORT_REPORT, label: 'Được phép TẢI báo cáo' },
+      { id: PERMISSIONS.VIEW_AUDIT_LOGS, label: 'Được phép XEM lịch sử thao tác' },
   ];
 
   return (

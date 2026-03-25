@@ -354,7 +354,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           return;
       }
       const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _checkInDate, _createdAt, _tags, ...rest }) => rest);
-      DataService.exportToExcel(cleanData, fileName);
+      DataService.exportToExcel(cleanData, fileName, {
+          reportType: activeTab,
+          startDate,
+          endDate,
+      });
   };
 
   const handleSort = (key: string) => {

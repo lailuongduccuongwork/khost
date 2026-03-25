@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
@@ -9,8 +9,9 @@ import Management from './pages/Management';
 import Reports from './pages/Reports';
 import Housekeeping from './pages/Housekeeping'; 
 import SuperAdmin from './pages/SuperAdmin'; 
+import HistoryPage from './pages/History';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan } from './types';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, HistoryLog } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
@@ -46,9 +47,25 @@ const App: React.FC = () => {
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [history, setHistory] = useState<HistoryLog[]>([]);
 
   // --- NOTIFICATION ENGINE ---
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const loadingFallbackRef = useRef<number | null>(null);
+
+  const clearLoadingFallback = useCallback(() => {
+    if (loadingFallbackRef.current !== null) {
+      window.clearTimeout(loadingFallbackRef.current);
+      loadingFallbackRef.current = null;
+    }
+  }, []);
+
+  const armLoadingFallback = useCallback(() => {
+    clearLoadingFallback();
+    loadingFallbackRef.current = window.setTimeout(() => {
+      setIsLoading(false);
+    }, 5000);
+  }, [clearLoadingFallback]);
 
   const handleNewNotification = useCallback((notif: AppNotification) => {
       // 1. Lưu thông báo mới vào lịch sử (isRead = false) và hiển thị Toast (isVisible = true)
@@ -101,6 +118,7 @@ const App: React.FC = () => {
 
   const initDataService = (tenantId: string) => {
       setIsLoading(true);
+      armLoadingFallback();
       setActiveTenantId(tenantId);
       
       DataService.init(tenantId, () => {
@@ -110,11 +128,19 @@ const App: React.FC = () => {
               setTenantList(DataService.getTenants());
               setPlanList(DataService.getPlans()); 
               setSystemUsers(DataService.getSystemUsers()); 
+              setHistory(DataService.getHistory());
           }
           
+          clearLoadingFallback();
           setIsLoading(false);
       });
   };
+
+  useEffect(() => {
+    return () => {
+      clearLoadingFallback();
+    };
+  }, [clearLoadingFallback]);
 
   // --- MAIN DATA REFRESH LOGIC ---
   useEffect(() => {
@@ -124,6 +150,7 @@ const App: React.FC = () => {
         setTenantList(DataService.getTenants());
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
+        setHistory(DataService.getHistory());
         return;
     }
 
@@ -135,6 +162,7 @@ const App: React.FC = () => {
     setCustomers(DataService.getCustomers());
     setRoomTypes(DataService.getRoomTypes());
     setTags(DataService.getTags());
+    setHistory(DataService.getHistory());
 
     if (props.length === 0) return;
 
@@ -199,7 +227,7 @@ const App: React.FC = () => {
                   newStatus = BookingStatus.CHECKED_IN;
                   const room = allRooms.find(r => r.id === b.roomId);
                   if (room && room.status !== RoomStatus.OCCUPIED) {
-                      DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED);
+                      DataService.updateRoomStatus(b.roomId, RoomStatus.OCCUPIED, { source: 'SYSTEM', suppressLog: true });
                   }
                   needsUpdate = true;
               }
@@ -207,14 +235,14 @@ const App: React.FC = () => {
                   newStatus = BookingStatus.CHECKED_OUT;
                   const room = allRooms.find(r => r.id === b.roomId);
                   if (room && room.status !== RoomStatus.VACANT_DIRTY) {
-                      DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY);
+                      DataService.updateRoomStatus(b.roomId, RoomStatus.VACANT_DIRTY, { source: 'SYSTEM', suppressLog: true });
                   }
                   needsUpdate = true;
               }
 
               if (needsUpdate) {
                   const updatedBooking = { ...b, status: newStatus };
-                  DataService.updateBooking(updatedBooking);
+                  DataService.updateBooking(updatedBooking, { source: 'SYSTEM' });
               }
           });
       };
@@ -235,6 +263,11 @@ const App: React.FC = () => {
       setCurrentUser(foundUser);
       localStorage.setItem('k_host_user', JSON.stringify(foundUser));
       setCurrentPropertyId('');
+      try {
+        DataService.recordLogin(foundUser);
+      } catch (e) {
+        console.error('recordLogin error', e);
+      }
       
       if (foundUser.role === UserRole.SUPER_ADMIN) {
           setIsSuperAdminView(true);
@@ -260,10 +293,20 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    if (currentUser) {
+      try {
+        DataService.recordLogout(currentUser, activeTenantId || currentUser.tenantId);
+      } catch (e) {
+        console.error('recordLogout error', e);
+      }
+    }
+    clearLoadingFallback();
+    DataService.setAuditActor(null);
     setCurrentUser(null);
     setLoginUsername('');
     setLoginPassword('');
     setActiveTenantId(null);
+    setIsLoading(false);
     setCurrentPage('dashboard');
     setIsSuperAdminView(false);
     localStorage.removeItem('k_host_user');
@@ -302,6 +345,10 @@ const App: React.FC = () => {
     }
     return currentUser;
   }, [currentUser, isSuperAdminView, activeTenantId]);
+
+  useEffect(() => {
+    DataService.setAuditActor(effectiveUser);
+  }, [effectiveUser]);
 
   if (isLoading) {
       return (
@@ -455,6 +502,11 @@ const App: React.FC = () => {
                         <Bookings 
                             bookings={bookings}
                             rooms={rooms}
+                            roomTypes={roomTypes}
+                            properties={properties}
+                            tags={tags}
+                            users={users}
+                            history={history}
                             customers={customers}
                             onRefresh={manualRefresh}
                             currentUser={effectiveUser}
@@ -466,6 +518,7 @@ const App: React.FC = () => {
                             rooms={rooms} 
                             roomTypes={roomTypes} 
                             bookings={bookings} 
+                            history={history}
                             customers={customers}
                             tags={tags}
                             properties={properties}
@@ -495,6 +548,14 @@ const App: React.FC = () => {
                             properties={properties} 
                             tags={tags}
                             currentUser={effectiveUser} 
+                        />
+                    )}
+
+                    {currentPage === 'history' && (effectiveUser.role === UserRole.ADMIN || effectiveUser.permissions?.includes(PERMISSIONS.VIEW_AUDIT_LOGS)) && (
+                        <HistoryPage
+                            history={history}
+                            users={users}
+                            currentUser={effectiveUser}
                         />
                     )}
                     
