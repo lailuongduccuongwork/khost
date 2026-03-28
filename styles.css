@@ -1,0 +1,600 @@
+:root {
+  color-scheme: light;
+  --katka-bg: #f2f2f7;
+  --katka-card: #ffffff;
+  --katka-card-muted: #f8f8fc;
+  --katka-text: #1c1c1e;
+  --katka-subtext: #4b5563;
+  --katka-caption: #8e8e93;
+  --katka-border: rgba(28, 28, 30, 0.1);
+  --katka-accent: #2563eb;
+  --katka-accent-weak: #e8f0ff;
+  --katka-money-primary: #2563eb;
+  --katka-money-danger: #ef4444;
+  --katka-shadow-soft: 0px 4px 20px rgba(15, 23, 42, 0.06);
+  --katka-shadow-strong: 0px 12px 32px rgba(15, 23, 42, 0.1);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --katka-bg: #0d1118;
+  --katka-card: #171d27;
+  --katka-card-muted: #1d2432;
+  --katka-text: #f4f7ff;
+  --katka-subtext: #dbe3f4;
+  --katka-caption: #b3bdd1;
+  --katka-border: rgba(179, 191, 214, 0.25);
+  --katka-accent: #5ea8ff;
+  --katka-accent-weak: rgba(94, 168, 255, 0.18);
+  --katka-money-primary: #66b3ff;
+  --katka-money-danger: #ff6b83;
+  --katka-shadow-soft: 0px 8px 26px rgba(0, 0, 0, 0.34);
+  --katka-shadow-strong: 0px 18px 44px rgba(0, 0, 0, 0.52);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--katka-bg);
+  color: var(--katka-text);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+.katka-app {
+  background:
+    radial-gradient(1200px 560px at 20% -15%, rgba(37, 99, 235, 0.1), transparent 60%),
+    var(--katka-bg);
+}
+
+.katka-system-bg {
+  background: var(--katka-bg);
+}
+
+.katka-card {
+  background: var(--katka-card);
+  border-radius: 16px;
+  border: 1px solid var(--katka-border);
+  box-shadow: var(--katka-shadow-soft);
+}
+
+.katka-panel {
+  background: var(--katka-card);
+  border-radius: 24px;
+  border: 1px solid var(--katka-border);
+  box-shadow: var(--katka-shadow-strong);
+}
+
+.katka-glass {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px) saturate(165%);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
+  box-shadow: var(--katka-shadow-soft);
+}
+
+:root[data-theme='dark'] .katka-glass {
+  background: rgba(20, 26, 38, 0.78);
+  border-color: rgba(179, 191, 214, 0.22);
+}
+
+.katka-primary-btn {
+  background: var(--katka-accent);
+  color: #ffffff;
+  border: 1px solid transparent;
+  font-weight: 700;
+}
+
+.katka-primary-btn:hover {
+  filter: brightness(0.95);
+}
+
+.katka-secondary-btn {
+  background: var(--katka-card-muted);
+  color: var(--katka-subtext);
+  border: 1px solid var(--katka-border);
+  font-weight: 600;
+}
+
+.katka-input {
+  background: var(--katka-card);
+  border: 1px solid var(--katka-border);
+  color: var(--katka-text);
+  border-radius: 14px;
+}
+
+.katka-input:focus {
+  outline: none;
+  border-color: var(--katka-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.katka-caption {
+  color: var(--katka-caption);
+}
+
+.katka-money-primary {
+  color: var(--katka-money-primary) !important;
+}
+
+.katka-money-danger {
+  color: var(--katka-money-danger) !important;
+}
+
+:root[data-theme='dark'] .katka-app .room-booking-chip {
+  color: #f8fbff;
+}
+
+:root[data-theme='dark'] .katka-app .room-booking-chip.room-booking-chip-paid {
+  background-color: #16553d !important;
+  border-color: #217454 !important;
+  box-shadow: 0 8px 18px rgba(8, 28, 20, 0.55);
+}
+
+:root[data-theme='dark'] .katka-app .room-booking-chip.room-booking-chip-unpaid {
+  background-color: #6f2538 !important;
+  border-color: #944058 !important;
+  box-shadow: 0 8px 18px rgba(31, 10, 18, 0.5);
+}
+
+:root[data-theme='dark'] .katka-app .room-booking-chip.room-booking-chip-hold {
+  background-color: #4c3215 !important;
+  border-color: #8b5d2b !important;
+  box-shadow: 0 8px 18px rgba(30, 18, 4, 0.48);
+}
+
+.katka-icon-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--katka-border);
+  background: var(--katka-card-muted);
+  color: var(--katka-subtext);
+}
+
+.katka-icon-btn:hover {
+  background: var(--katka-accent-weak);
+  color: var(--katka-accent);
+}
+
+.katka-modal-backdrop {
+  background: rgba(8, 12, 22, 0.32);
+  backdrop-filter: blur(4px) saturate(118%);
+  -webkit-backdrop-filter: blur(4px) saturate(118%);
+}
+
+:root[data-theme='dark'] .katka-modal-backdrop {
+  background: rgba(4, 8, 16, 0.46);
+}
+
+.katka-modal-scope {
+  background: transparent !important;
+}
+
+:root[data-theme='dark'] .katka-focus-modal {
+  --katka-card: #141b26;
+  --katka-card-muted: #1a2230;
+  --katka-border: rgba(179, 191, 214, 0.2);
+}
+
+:root[data-theme='dark'] .katka-focus-modal .text-blue-500,
+:root[data-theme='dark'] .katka-focus-modal .text-blue-600,
+:root[data-theme='dark'] .katka-focus-modal .text-blue-700,
+:root[data-theme='dark'] .katka-focus-modal .text-blue-800 {
+  color: #a9d1ff;
+}
+
+:root[data-theme='dark'] .katka-focus-modal .bg-blue-50,
+:root[data-theme='dark'] .katka-focus-modal .bg-blue-50\/50 {
+  background-color: rgba(94, 168, 255, 0.14);
+}
+
+:root[data-theme='dark'] .katka-focus-modal input::placeholder,
+:root[data-theme='dark'] .katka-focus-modal textarea::placeholder {
+  color: #98a8c6;
+}
+
+.katka-app button,
+.katka-app [role="button"],
+.katka-app a,
+.katka-app .tap-target {
+  transition: transform 0.16s ease, box-shadow 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.katka-app button:active,
+.katka-app [role="button"]:active,
+.katka-app .tap-target:active {
+  transform: scale(0.98);
+}
+
+.katka-app .rounded-lg {
+  border-radius: 16px;
+}
+
+.katka-app .rounded-xl {
+  border-radius: 20px;
+}
+
+.katka-app .rounded-2xl {
+  border-radius: 24px;
+}
+
+.katka-app .shadow-sm,
+.katka-app .shadow-xl,
+.katka-app .shadow-2xl {
+  box-shadow: var(--katka-shadow-soft);
+}
+
+.katka-app .bg-white {
+  background-color: var(--katka-card);
+}
+
+.katka-app .bg-gray-50,
+.katka-app .bg-gray-100,
+.katka-app .bg-gray-50\/50,
+.katka-app .bg-gray-50\/40 {
+  background-color: var(--katka-card-muted);
+}
+
+.katka-app [class*="bg-gray-50/"],
+.katka-app [class*="bg-gray-100/"] {
+  background-color: var(--katka-card-muted);
+}
+
+.katka-app .border-gray-100,
+.katka-app .border-gray-200,
+.katka-app .border-gray-300 {
+  border-color: var(--katka-border);
+}
+
+.katka-app .text-gray-400,
+.katka-app .text-gray-500 {
+  color: var(--katka-caption);
+}
+
+.katka-app .text-gray-600 {
+  color: var(--katka-subtext);
+}
+
+.katka-app .text-gray-700,
+.katka-app .text-gray-800,
+.katka-app .text-gray-900 {
+  color: var(--katka-text);
+}
+
+.katka-app .bg-blue-50 {
+  background-color: rgba(37, 99, 235, 0.12);
+}
+
+.katka-app .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+.katka-app .bg-green-50 {
+  background-color: rgba(34, 197, 94, 0.12);
+}
+
+.katka-app input::placeholder,
+.katka-app textarea::placeholder {
+  color: var(--katka-caption);
+  opacity: 1;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-white:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-gray-50:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-gray-100:hover {
+  background-color: #243145;
+}
+
+:root[data-theme='dark'] .katka-app [class*="bg-white/"] {
+  background-color: #1a2434 !important;
+}
+
+:root[data-theme='dark'] .katka-app [class*="bg-gray-50/"],
+:root[data-theme='dark'] .katka-app [class*="bg-gray-100/"] {
+  background-color: #1b2638 !important;
+}
+
+:root[data-theme='dark'] .katka-app [class*="hover:bg-white"]:hover,
+:root[data-theme='dark'] .katka-app [class*="hover:bg-gray-50"]:hover,
+:root[data-theme='dark'] .katka-app [class*="hover:bg-gray-100"]:hover {
+  background-color: #2a3950 !important;
+  color: var(--katka-text);
+}
+
+:root[data-theme='dark'] .katka-app [class*="hover:bg-blue-50"]:hover,
+:root[data-theme='dark'] .katka-app [class*="hover:bg-blue-100"]:hover {
+  background-color: #244667 !important;
+  color: #f5f9ff;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-blue-50:hover {
+  background-color: #244667 !important;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-blue-100:hover {
+  background-color: #244667 !important;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.22);
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-green-100:hover {
+  background-color: rgba(34, 197, 94, 0.26);
+}
+
+:root[data-theme='dark'] .katka-app .hover\:border-gray-300:hover {
+  border-color: rgba(179, 191, 214, 0.42);
+}
+
+:root[data-theme='dark'] .katka-app .hover\:text-blue-500:hover,
+:root[data-theme='dark'] .katka-app .hover\:text-blue-600:hover,
+:root[data-theme='dark'] .katka-app .hover\:text-blue-700:hover,
+:root[data-theme='dark'] .katka-app .hover\:text-blue-800:hover {
+  color: #ffffff;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:text-gray-600:hover,
+:root[data-theme='dark'] .katka-app .hover\:text-gray-700:hover,
+:root[data-theme='dark'] .katka-app .hover\:text-gray-800:hover {
+  color: #f0f5ff;
+}
+
+:root[data-theme='dark'] .katka-app .text-blue-400,
+:root[data-theme='dark'] .katka-app .text-blue-500,
+:root[data-theme='dark'] .katka-app .text-blue-600,
+:root[data-theme='dark'] .katka-app .text-blue-700,
+:root[data-theme='dark'] .katka-app .text-blue-800,
+:root[data-theme='dark'] .katka-app .text-blue-900 {
+  color: #ffffff;
+}
+
+:root[data-theme='dark'] .katka-app .bg-amber-50,
+:root[data-theme='dark'] .katka-app .bg-amber-100,
+:root[data-theme='dark'] .katka-app .bg-amber-200,
+:root[data-theme='dark'] .katka-app .bg-yellow-50,
+:root[data-theme='dark'] .katka-app .bg-yellow-100,
+:root[data-theme='dark'] .katka-app .bg-yellow-200 {
+  background-color: #3a2818;
+}
+
+:root[data-theme='dark'] .katka-app .bg-amber-50\/50,
+:root[data-theme='dark'] .katka-app .bg-yellow-50\/50 {
+  background-color: rgba(58, 40, 24, 0.72);
+}
+
+:root[data-theme='dark'] .katka-app .bg-orange-50,
+:root[data-theme='dark'] .katka-app .bg-orange-100,
+:root[data-theme='dark'] .katka-app .bg-orange-200 {
+  background-color: #3a2218;
+}
+
+:root[data-theme='dark'] .katka-app .bg-green-100,
+:root[data-theme='dark'] .katka-app .bg-green-200 {
+  background-color: #193424;
+}
+
+:root[data-theme='dark'] .katka-app .bg-red-100,
+:root[data-theme='dark'] .katka-app .bg-red-200 {
+  background-color: #3a1e25;
+}
+
+:root[data-theme='dark'] .katka-app .bg-blue-100,
+:root[data-theme='dark'] .katka-app .bg-blue-200 {
+  background-color: #1b2b46;
+}
+
+:root[data-theme='dark'] .katka-app .text-amber-500,
+:root[data-theme='dark'] .katka-app .text-amber-600,
+:root[data-theme='dark'] .katka-app .text-amber-700,
+:root[data-theme='dark'] .katka-app .text-amber-800,
+:root[data-theme='dark'] .katka-app .text-amber-900,
+:root[data-theme='dark'] .katka-app .text-yellow-500,
+:root[data-theme='dark'] .katka-app .text-yellow-600,
+:root[data-theme='dark'] .katka-app .text-yellow-700,
+:root[data-theme='dark'] .katka-app .text-yellow-800,
+:root[data-theme='dark'] .katka-app .text-yellow-900 {
+  color: #ffe2b6;
+}
+
+:root[data-theme='dark'] .katka-app .text-orange-500,
+:root[data-theme='dark'] .katka-app .text-orange-600,
+:root[data-theme='dark'] .katka-app .text-orange-700,
+:root[data-theme='dark'] .katka-app .text-orange-800,
+:root[data-theme='dark'] .katka-app .text-orange-900 {
+  color: #ffd0b3;
+}
+
+:root[data-theme='dark'] .katka-app .text-green-500,
+:root[data-theme='dark'] .katka-app .text-green-600,
+:root[data-theme='dark'] .katka-app .text-green-700,
+:root[data-theme='dark'] .katka-app .text-green-800,
+:root[data-theme='dark'] .katka-app .text-green-900 {
+  color: #acf0cb;
+}
+
+:root[data-theme='dark'] .katka-app .text-red-500,
+:root[data-theme='dark'] .katka-app .text-red-600,
+:root[data-theme='dark'] .katka-app .text-red-700,
+:root[data-theme='dark'] .katka-app .text-red-800,
+:root[data-theme='dark'] .katka-app .text-red-900 {
+  color: #ffbfcb;
+}
+
+:root[data-theme='dark'] .katka-app .border-amber-100,
+:root[data-theme='dark'] .katka-app .border-amber-200,
+:root[data-theme='dark'] .katka-app .border-amber-300,
+:root[data-theme='dark'] .katka-app .border-yellow-100,
+:root[data-theme='dark'] .katka-app .border-yellow-200,
+:root[data-theme='dark'] .katka-app .border-yellow-300 {
+  border-color: rgba(255, 194, 130, 0.45);
+}
+
+:root[data-theme='dark'] .katka-app .border-orange-100,
+:root[data-theme='dark'] .katka-app .border-orange-200,
+:root[data-theme='dark'] .katka-app .border-orange-300 {
+  border-color: rgba(255, 168, 130, 0.45);
+}
+
+:root[data-theme='dark'] .katka-app .border-green-100,
+:root[data-theme='dark'] .katka-app .border-green-200,
+:root[data-theme='dark'] .katka-app .border-green-300 {
+  border-color: rgba(118, 231, 172, 0.4);
+}
+
+:root[data-theme='dark'] .katka-app .border-red-100,
+:root[data-theme='dark'] .katka-app .border-red-200,
+:root[data-theme='dark'] .katka-app .border-red-300 {
+  border-color: rgba(255, 156, 173, 0.45);
+}
+
+:root[data-theme='dark'] .katka-app .border-blue-100,
+:root[data-theme='dark'] .katka-app .border-blue-200,
+:root[data-theme='dark'] .katka-app .border-blue-300 {
+  border-color: rgba(154, 197, 255, 0.45);
+}
+
+:root[data-theme='dark'] .katka-app .ring-amber-100,
+:root[data-theme='dark'] .katka-app .ring-amber-200,
+:root[data-theme='dark'] .katka-app .ring-yellow-100,
+:root[data-theme='dark'] .katka-app .ring-yellow-200 {
+  --tw-ring-color: rgba(255, 194, 130, 0.35);
+}
+
+:root[data-theme='dark'] .katka-app .ring-blue-100,
+:root[data-theme='dark'] .katka-app .ring-blue-200 {
+  --tw-ring-color: rgba(154, 197, 255, 0.32);
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-amber-50:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-amber-100:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-yellow-50:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-yellow-100:hover {
+  background-color: #4a3320;
+}
+
+:root[data-theme='dark'] .katka-app .hover\:bg-orange-50:hover,
+:root[data-theme='dark'] .katka-app .hover\:bg-orange-100:hover {
+  background-color: #4a2c21;
+}
+
+.room-status-panel .room-number {
+  color: var(--katka-text);
+}
+
+.room-status-panel .room-type {
+  color: var(--katka-caption);
+}
+
+.room-branch-header {
+  background-color: var(--katka-card-muted);
+  color: var(--katka-text);
+  border-color: var(--katka-border);
+}
+
+:root[data-theme='dark'] .room-branch-header {
+  background-color: #1c2534;
+  color: #eaf1ff;
+  border-color: rgba(179, 191, 214, 0.25);
+}
+
+:root[data-theme='dark'] .room-branch-header svg {
+  color: #a7c0e6;
+}
+
+:root[data-theme='dark'] .room-status-default {
+  background-color: #182131;
+}
+
+:root[data-theme='dark'] .room-status-clean {
+  background-color: #102c21;
+}
+
+:root[data-theme='dark'] .room-status-dirty {
+  background-color: #3a2314;
+}
+
+:root[data-theme='dark'] .room-status-occupied {
+  background-color: #3a171a;
+}
+
+:root[data-theme='dark'] .room-status-maintenance {
+  background-color: #242d3f;
+}
+
+:root[data-theme='dark'] .room-status-clean .text-green-600 {
+  color: #8af0ba;
+}
+
+:root[data-theme='dark'] .room-status-dirty .text-yellow-600 {
+  color: #ffd39e;
+}
+
+:root[data-theme='dark'] .room-status-occupied .text-red-600 {
+  color: #ffb1bb;
+}
+
+:root[data-theme='dark'] .room-status-maintenance .text-gray-600 {
+  color: #c5d2eb;
+}
+
+:root[data-theme='dark'] .room-dirty-badge {
+  background-color: #5d3418;
+  color: #ffe1bf;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.26s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.24s ease-out;
+}

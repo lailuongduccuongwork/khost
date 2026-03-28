@@ -10,9 +10,10 @@ interface SidebarProps {
   currentUser: User;
   isOpen?: boolean; // New prop for mobile state
   onClose?: () => void; // New prop for closing on mobile
+  isDesktopHidden?: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, currentUser, isOpen, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, currentUser, isOpen, onClose, isDesktopHidden = false }) => {
   // 1. Define Operational Menu Items (Always visible based on permissions)
   const operationMenuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
@@ -80,29 +81,29 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
     <>
       {/* Mobile Overlay */}
       <div 
-        className={`fixed inset-0 bg-black/50 z-40 md:hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        className={`fixed inset-0 bg-black/35 backdrop-blur-[2px] z-40 md:hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={handleOverlayClick}
       ></div>
 
       {/* Sidebar Content */}
       <div 
-        className={`w-64 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col shadow-xl z-50 transition-transform duration-300 transform 
-        ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
+        className={`w-64 katka-glass text-gray-800 h-screen fixed left-0 top-0 flex flex-col border-r border-white/50 shadow-soft z-50 transition-transform duration-300 transform 
+        ${isOpen ? 'translate-x-0' : '-translate-x-full'} ${isDesktopHidden ? 'md:-translate-x-full' : 'md:translate-x-0'}`}
       >
-        <div className="p-6 border-b border-slate-700 flex items-center justify-between">
+        <div className="p-6 border-b border-white/60 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-lg ${isSuperAdmin ? 'bg-purple-600' : 'bg-blue-500'}`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-lg text-white ${isSuperAdmin ? 'bg-purple-600' : 'bg-blue-600'}`}>
               K
             </div>
             <div>
-              <h1 className="text-xl font-bold">K-Host</h1>
-              <p className="text-xs text-slate-400 capitalize">
+              <h1 className="text-xl font-bold text-gray-900">K-Host</h1>
+              <p className="text-xs text-gray-500 capitalize">
                 {isSuperAdmin ? 'Platform Owner' : (currentUser.role === 'ADMIN' ? 'Quản trị viên' : (currentUser.role === 'MANAGER' ? 'Quản lý' : (currentUser.role === 'HOUSEKEEPING' ? 'Buồng phòng' : 'Lễ tân')))}
               </p>
             </div>
           </div>
           {/* Close button for mobile */}
-          <button onClick={onClose} className="md:hidden text-slate-400 hover:text-white">
+          <button onClick={onClose} className="md:hidden text-gray-500 hover:text-gray-900">
               <X size={24} />
           </button>
         </div>
@@ -112,13 +113,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
           {/* SUPER ADMIN MENU */}
           {isSuperAdmin ? (
               <>
-                <div className="px-4 text-xs font-bold text-purple-400 uppercase tracking-wider mb-2">Platform Admin</div>
+                <div className="px-4 text-xs font-bold text-purple-500 uppercase tracking-wider mb-2">Platform Admin</div>
                 <button
                     onClick={() => onNavigate('dashboard')}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
                     currentPage === 'dashboard'
-                        ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/50' 
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        ? 'bg-purple-600 text-white shadow-soft'
+                        : 'text-gray-700 hover:bg-purple-50'
                     }`}
                 >
                     <Shield size={20} />
@@ -138,8 +139,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                         onClick={() => onNavigate(item.id)}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
                         isActive 
-                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-blue-600 text-white shadow-soft'
+                            : 'text-gray-700 hover:bg-blue-50'
                         }`}
                     >
                         <Icon size={20} />
@@ -151,16 +152,16 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                 {/* Management Items Separator */}
                 {showSystemSection && (
                     <>
-                    <div className="my-4 border-t border-slate-700/50 mx-2"></div>
-                    <div className="px-4 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Hệ thống</div>
+                    <div className="my-4 border-t border-gray-200 mx-2"></div>
+                    <div className="px-4 text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Hệ thống</div>
                     {showManagement && (
                       <button
                           key={managementItem.id}
                           onClick={() => onNavigate(managementItem.id)}
                           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
                           currentPage === managementItem.id
-                              ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/50' 
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              ? 'bg-orange-600 text-white shadow-soft'
+                              : 'text-gray-700 hover:bg-orange-50'
                           }`}
                       >
                           <Briefcase size={20} />
@@ -173,8 +174,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                           onClick={() => onNavigate(historyItem.id)}
                           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
                           currentPage === historyItem.id
-                              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/50' 
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              ? 'bg-emerald-600 text-white shadow-soft'
+                              : 'text-gray-700 hover:bg-emerald-50'
                           }`}
                       >
                           <CalendarDays size={20} />
@@ -188,10 +189,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
 
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-gray-200">
           <button 
             onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors mt-2"
+            className="w-full flex items-center gap-3 px-4 py-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors mt-2"
           >
             <LogOut size={20} />
             <span className="font-medium">Đăng xuất</span>

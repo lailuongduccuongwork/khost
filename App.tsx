@@ -12,9 +12,39 @@ import SuperAdmin from './pages/SuperAdmin';
 import HistoryPage from './pages/History';
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, HistoryLog, RoomPolicyRule } from './types';
-import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
+import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
+
+type ThemeMode = 'light' | 'dark';
+
+const safeStorageGet = (key: string): string | null => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    console.warn(`localStorage.getItem failed for "${key}"`, error);
+    return null;
+  }
+};
+
+const safeStorageSet = (key: string, value: string) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn(`localStorage.setItem failed for "${key}"`, error);
+  }
+};
+
+const safeStorageRemove = (key: string) => {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(`localStorage.removeItem failed for "${key}"`, error);
+  }
+};
 
 const normalizeStringList = (list?: string[]) =>
   Array.from(new Set((list || []).filter(Boolean))).sort();
@@ -45,10 +75,18 @@ const App: React.FC = () => {
   
   // --- Mobile Sidebar State ---
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDesktopSidebarHidden, setIsDesktopSidebarHidden] = useState<boolean>(() => {
+    const saved = safeStorageGet('k_host_sidebar_hidden');
+    return saved === 'true';
+  });
   
   // --- Data State ---
   const [isLoading, setIsLoading] = useState(false); 
   const [dataTick, setDataTick] = useState(0); 
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = safeStorageGet('k_host_theme');
+    return saved === 'dark' ? 'dark' : 'light';
+  });
   
   const [properties, setProperties] = useState<Property[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -82,6 +120,19 @@ const App: React.FC = () => {
     }, 5000);
   }, [clearLoadingFallback]);
 
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', themeMode);
+    safeStorageSet('k_host_theme', themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    safeStorageSet('k_host_sidebar_hidden', String(isDesktopSidebarHidden));
+  }, [isDesktopSidebarHidden]);
+
+  const toggleTheme = () => {
+    setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   const handleNewNotification = useCallback((notif: AppNotification) => {
       // 1. Lưu thông báo mới vào lịch sử (isRead = false) và hiển thị Toast (isVisible = true)
       const newNotif = { ...notif, isVisible: true, isRead: false };
@@ -104,11 +155,28 @@ const App: React.FC = () => {
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
   };
 
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const hapticTarget = target.closest('[data-haptic], .katka-primary-btn');
+      if (!hapticTarget) return;
+      const mode = hapticTarget.getAttribute('data-haptic');
+      if (mode === 'medium') navigator.vibrate([12, 10, 12]);
+      else navigator.vibrate(8);
+    };
+
+    document.addEventListener('click', handleClick, { passive: true });
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+
 
   // --- INITIALIZATION ---
   useEffect(() => {
-    const savedUser = localStorage.getItem('k_host_user');
-    const savedTenant = localStorage.getItem('k_host_tenant');
+    const savedUser = safeStorageGet('k_host_user');
+    const savedTenant = safeStorageGet('k_host_tenant');
     
     if (savedUser) {
         try {
@@ -126,7 +194,7 @@ const App: React.FC = () => {
                 }
             }
         } catch (e) {
-            localStorage.removeItem('k_host_user');
+            safeStorageRemove('k_host_user');
         }
     }
   }, []);
@@ -176,8 +244,8 @@ const App: React.FC = () => {
     setCurrentPage('dashboard');
     setIsSuperAdminView(false);
     userDirectoryHydrationRef.current = { tenantId: null, ready: false };
-    localStorage.removeItem('k_host_user');
-    localStorage.removeItem('k_host_tenant');
+    safeStorageRemove('k_host_user');
+    safeStorageRemove('k_host_tenant');
     if (reason) {
       alert(reason);
     }
@@ -235,7 +303,7 @@ const App: React.FC = () => {
 
       if (liveUserByUsername && liveUserByUsername.id !== currentUser.id) {
         setCurrentUser(liveUserByUsername);
-        localStorage.setItem('k_host_user', JSON.stringify(liveUserByUsername));
+        safeStorageSet('k_host_user', JSON.stringify(liveUserByUsername));
         return;
       }
 
@@ -362,11 +430,12 @@ const App: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     
-    const foundUser = await DataService.login(loginUsername, loginPassword);
+    const loginResult = await DataService.login(loginUsername, loginPassword);
+    const foundUser = loginResult?.user || null;
 
     if (foundUser) {
       setCurrentUser(foundUser);
-      localStorage.setItem('k_host_user', JSON.stringify(foundUser));
+      safeStorageSet('k_host_user', JSON.stringify(foundUser));
       setCurrentPropertyId('');
       try {
         DataService.recordLogin(foundUser);
@@ -380,7 +449,7 @@ const App: React.FC = () => {
           setCurrentPage('dashboard');
       } else {
           initDataService(foundUser.tenantId);
-          localStorage.setItem('k_host_tenant', foundUser.tenantId);
+          safeStorageSet('k_host_tenant', foundUser.tenantId);
           
           if (foundUser.role === UserRole.HOUSEKEEPING) {
               setCurrentPage('housekeeping');
@@ -392,7 +461,11 @@ const App: React.FC = () => {
       }
 
     } else {
-      alert('Tên đăng nhập hoặc mật khẩu không đúng!');
+      if (loginResult?.reason === 'INVALID_CREDENTIALS') {
+        alert('Tên đăng nhập hoặc mật khẩu không đúng!');
+      } else {
+        alert('Không thể kết nối dữ liệu. Vui lòng kiểm tra Internet và thử lại.');
+      }
       setIsLoading(false);
     }
   };
@@ -405,14 +478,14 @@ const App: React.FC = () => {
 
   const handleAccessTenant = (tenantId: string) => {
       setIsSuperAdminView(false);
-      localStorage.setItem('k_host_tenant', tenantId);
+      safeStorageSet('k_host_tenant', tenantId);
       initDataService(tenantId);
       setCurrentPage('dashboard');
   };
 
   const handleExitTenant = () => {
       setIsSuperAdminView(true);
-      localStorage.removeItem('k_host_tenant');
+      safeStorageRemove('k_host_tenant');
       initDataService('SYSTEM');
   };
 
@@ -440,7 +513,7 @@ const App: React.FC = () => {
 
   if (isLoading) {
       return (
-          <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-4">
+          <div className="min-h-screen flex flex-col items-center justify-center katka-system-bg text-gray-500 gap-4">
               <Loader2 className="animate-spin text-blue-600" size={48} />
               <p className="font-medium">Đang kết nối dữ liệu...</p>
           </div>
@@ -449,10 +522,10 @@ const App: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white w-full max-w-md p-8 rounded-2xl shadow-2xl animate-fade-in">
+      <div className="min-h-screen katka-system-bg flex items-center justify-center p-4">
+        <div className="katka-panel w-full max-w-md p-8 animate-fade-in">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white mb-4">
+            <div className="w-12 h-12 katka-primary-btn rounded-xl flex items-center justify-center mb-4 shadow-soft">
               <Lock size={24} />
             </div>
             <h1 className="text-2xl font-bold text-gray-800">Đăng nhập hệ thống</h1>
@@ -466,7 +539,7 @@ const App: React.FC = () => {
                 value={loginUsername}
                 onChange={(e) => setLoginUsername(e.target.value)}
                 placeholder="Nhập tên đăng nhập"
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full px-4 py-3 katka-input"
               />
             </div>
             <div>
@@ -476,10 +549,10 @@ const App: React.FC = () => {
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 placeholder="Nhập mật khẩu"
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full px-4 py-3 katka-input"
               />
             </div>
-            <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
+            <button type="submit" data-haptic="medium" className="w-full katka-primary-btn py-3 rounded-lg">
               Đăng nhập
             </button>
           </form>
@@ -499,12 +572,12 @@ const App: React.FC = () => {
         : (properties.find(p => p.id === currentPropertyId) || properties[0] || {id:'err', name:'Lỗi tải', address:''} as Property);
 
   return (
-    <div className="min-h-screen bg-gray-50 relative">
+    <div className="min-h-screen katka-app relative">
       
       {/* KHU VỰC HIỂN THỊ THÔNG BÁO NỔI (TOAST) - Tự ẩn sau 3 giây */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
           {notifications.filter(n => n.isVisible).map(alert => (
-              <div key={alert.id} className={`p-4 rounded-xl shadow-2xl flex items-start gap-3 pointer-events-auto animate-fade-in transform transition-all hover:scale-105 ${alert.type === 'DEBT' ? 'bg-red-50 border-l-4 border-red-600' : 'bg-white border-l-4 border-blue-600'}`}>
+              <div key={alert.id} className={`p-4 rounded-xl katka-card flex items-start gap-3 pointer-events-auto animate-fade-in transform transition-all hover:scale-[1.01] ${alert.type === 'DEBT' ? 'bg-red-50 border-l-4 border-red-600' : 'border-l-4 border-blue-600'}`}>
                   <div className={`p-2 rounded-full ${alert.type === 'DEBT' ? 'bg-red-100 text-red-600 animate-pulse' : alert.type === 'CHECK_IN' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
                       {alert.type === 'DEBT' ? <Wallet size={20} /> : alert.type === 'CHECK_IN' ? <CheckCircle size={20} /> : <Clock size={20} />}
                   </div>
@@ -529,16 +602,17 @@ const App: React.FC = () => {
         currentUser={effectiveUser} 
         isOpen={isMobileMenuOpen}
         onClose={() => setIsMobileMenuOpen(false)}
+        isDesktopHidden={isDesktopSidebarHidden}
       />
       
-      <div className="md:ml-64 min-h-screen flex flex-col transition-all duration-300">
+      <div className={`${isDesktopSidebarHidden ? 'md:ml-0' : 'md:ml-64'} min-h-screen flex flex-col transition-all duration-300`}>
         {currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView && (
-            <div className="bg-purple-600 text-white px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 shadow-md">
+            <div className="katka-glass text-gray-800 px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 border-b border-white/50">
                 <span className="flex items-center gap-2">
                     <Users size={16} className="text-purple-200" />
                     Bạn đang xem dữ liệu của: <strong>{tenantList.find(t=>t.id===activeTenantId)?.name || activeTenantId}</strong>
                 </span>
-                <button onClick={handleExitTenant} className="bg-white text-purple-700 px-3 py-1 rounded font-bold text-xs hover:bg-gray-100 shadow-sm border border-purple-200">
+                <button onClick={handleExitTenant} className="katka-secondary-btn px-3 py-1 rounded text-xs">
                     Thoát ra Platform
                 </button>
             </div>
@@ -554,16 +628,44 @@ const App: React.FC = () => {
               notifications={notifications}
               onMarkAllRead={handleMarkAllRead}
               onMarkRead={handleMarkRead}
+              themeMode={themeMode}
+              onToggleTheme={toggleTheme}
+              isSidebarHidden={isDesktopSidebarHidden}
+              onToggleSidebar={() => setIsDesktopSidebarHidden((prev) => !prev)}
             />
         )}
         
         {isSuperAdminView && (
-             <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 shadow-sm">
-                 <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+             <header className="h-16 katka-glass border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6">
+                 <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 katka-secondary-btn rounded-lg">
                     <Users size={24} />
                  </button>
-                 <div className="font-bold text-lg text-purple-700">Platform Owner Console</div>
-                 <div className="text-sm font-medium text-gray-600">{currentUser.fullName}</div>
+                 <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsDesktopSidebarHidden((prev) => !prev)}
+                      className="hidden md:inline-flex p-2 katka-secondary-btn rounded-lg"
+                      title={isDesktopSidebarHidden ? 'Hiện thanh công cụ' : 'Ẩn thanh công cụ'}
+                      aria-label={isDesktopSidebarHidden ? 'Hiện thanh công cụ' : 'Ẩn thanh công cụ'}
+                      data-haptic="light"
+                    >
+                      {isDesktopSidebarHidden ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+                    </button>
+                    <div className="font-bold text-lg text-purple-700">Platform Owner Console</div>
+                 </div>
+                 <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleTheme}
+                      className="katka-icon-btn"
+                      title={themeMode === 'dark' ? 'Chuyển sang Light mode' : 'Chuyển sang Dark mode'}
+                      aria-label={themeMode === 'dark' ? 'Chuyển sang Light mode' : 'Chuyển sang Dark mode'}
+                      data-haptic="light"
+                    >
+                      {themeMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                    </button>
+                    <div className="text-sm font-medium text-gray-600">{currentUser.fullName}</div>
+                 </div>
              </header>
         )}
 

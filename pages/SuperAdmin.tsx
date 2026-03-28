@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Tenant, SubscriptionPlan, UserRole, User, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
+import { digestPassword, encodePasswordForView } from '../utils/security';
 import { 
   Building2, Users, LayoutDashboard, CreditCard, 
   MoreHorizontal, Plus, Search, Shield, Lock, Unlock, 
@@ -49,19 +50,34 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
           // Edit
           const idx = updatedTenants.findIndex(t => t.id === editingTenant.id);
           if (idx !== -1) {
-              updatedTenants[idx] = { ...updatedTenants[idx], ...editingTenant } as Tenant;
+              const nextTenant = { ...updatedTenants[idx], ...editingTenant } as Tenant;
+              if (editingTenant.adminPassword && editingTenant.adminPassword.trim()) {
+                  nextTenant.adminPasswordHash = digestPassword(editingTenant.adminPassword.trim());
+                  nextTenant.adminPasswordView = encodePasswordForView(editingTenant.adminPassword.trim());
+              }
+              delete nextTenant.adminPassword;
+              updatedTenants[idx] = nextTenant;
           }
       } else {
           // Create New Tenant
           
           // 1. CHECK USERNAME DUPLICATE GLOBALLY
-          const requestedUsername = editingTenant.adminUsername || 'admin';
+          const requestedUsername = (editingTenant.adminUsername || 'admin').trim();
+          if (!requestedUsername) {
+              alert('Vui lòng nhập tên đăng nhập cho tài khoản Admin mặc định.');
+              return;
+          }
           const existingUser = await DataService.findUserByUsername(requestedUsername);
           if (existingUser) {
               alert(`Tên đăng nhập "${requestedUsername}" đã tồn tại trên hệ thống. Vui lòng chọn tên khác cho tài khoản Admin.`);
               return;
           }
 
+          const adminPasswordPlain = (editingTenant.adminPassword || '').trim();
+          if (!adminPasswordPlain) {
+              alert('Vui lòng nhập mật khẩu cho tài khoản Admin mặc định.');
+              return;
+          }
           const newId = `tenant_${Date.now()}`;
           const newTenant: Tenant = {
               id: newId,
@@ -72,7 +88,8 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), 
               createdAt: new Date().toISOString(),
               adminUsername: requestedUsername,
-              adminPassword: editingTenant.adminPassword || '123'
+              adminPasswordHash: digestPassword(adminPasswordPlain),
+              adminPasswordView: encodePasswordForView(adminPasswordPlain)
           };
           updatedTenants.push(newTenant);
           
@@ -80,7 +97,8 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
               id: `u_${newId}_admin`,
               tenantId: newId,
               username: newTenant.adminUsername!,
-              password: newTenant.adminPassword!,
+              passwordHash: digestPassword(adminPasswordPlain),
+              passwordView: encodePasswordForView(adminPasswordPlain),
               fullName: newTenant.adminUsername!, // Use Username as Full Name
               role: UserRole.ADMIN,
               permissions: Object.values(PERMISSIONS),
@@ -228,7 +246,10 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                 <div className="p-4 border-b flex justify-between items-center bg-gray-50">
                     <h3 className="font-bold text-gray-700">Danh sách khách hàng</h3>
                     <button 
-                        onClick={() => { setEditingTenant({}); setShowTenantModal(true); }}
+                        onClick={() => {
+                            setEditingTenant({ adminUsername: 'admin', adminPassword: '' });
+                            setShowTenantModal(true);
+                        }}
                         className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
                     >
                         <Plus size={16}/> Thêm mới
@@ -284,7 +305,11 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                                                     <LogIn size={12}/> Login
                                                 </button>
                                                 <button 
-                                                    onClick={(e) => { e.stopPropagation(); setEditingTenant(tenant); setShowTenantModal(true); }} 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setEditingTenant({ ...tenant, adminPassword: '' });
+                                                        setShowTenantModal(true);
+                                                    }} 
                                                     className="p-2 bg-gray-100 hover:bg-blue-50 text-blue-600 rounded transition-colors"
                                                 >
                                                     <Edit3 size={16}/>
@@ -416,11 +441,20 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                                 <div className="col-span-2 text-xs font-bold text-yellow-700 uppercase">Tài khoản Admin mặc định</div>
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-600">Username</label>
-                                    <input className="w-full border p-1 rounded text-sm" value={editingTenant?.adminUsername || 'admin'} onChange={e => setEditingTenant({...editingTenant, adminUsername: e.target.value})} />
+                                    <input
+                                        className="w-full border p-1 rounded text-sm"
+                                        value={editingTenant?.adminUsername || ''}
+                                        onChange={e => setEditingTenant({...editingTenant, adminUsername: e.target.value})}
+                                    />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-600">Password</label>
-                                    <input className="w-full border p-1 rounded text-sm" value={editingTenant?.adminPassword || '123'} onChange={e => setEditingTenant({...editingTenant, adminPassword: e.target.value})} />
+                                    <input
+                                        type="password"
+                                        className="w-full border p-1 rounded text-sm"
+                                        value={editingTenant?.adminPassword || ''}
+                                        onChange={e => setEditingTenant({...editingTenant, adminPassword: e.target.value})}
+                                    />
                                 </div>
                             </div>
                         )}

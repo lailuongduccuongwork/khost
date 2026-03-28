@@ -1,5 +1,6 @@
 
 import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag, Tenant, SubscriptionPlan, TransactionCategory } from '../types';
+import { encodePasswordForView } from '../utils/security';
 
 // SaaS: Subscription Plans
 export const INITIAL_PLANS: SubscriptionPlan[] = [
@@ -19,7 +20,8 @@ export const INITIAL_TENANTS: Tenant[] = [
         subscriptionEndDate: new Date(Date.now() + 86400000 * 30).toISOString(), 
         createdAt: new Date().toISOString(),
         adminUsername: 'admin',
-        adminPassword: '000'
+        adminPasswordHash: 'v1$956c16d4ff45068b',
+        adminPasswordView: encodePasswordForView('000')
     }
 ];
 
@@ -80,7 +82,7 @@ export const INITIAL_USERS: User[] = [
     username: 'K@superadmin',
     fullName: 'Platform Owner',
     role: UserRole.SUPER_ADMIN,
-    password: 'K@superadminx0204',
+    passwordHash: 'v1$2691110dd982a9a9',
     permissions: []
   },
   {
@@ -89,7 +91,8 @@ export const INITIAL_USERS: User[] = [
     username: 'admin',
     fullName: 'Chủ khách sạn (Tenant Admin)',
     role: UserRole.ADMIN,
-    password: '000',
+    passwordHash: 'v1$956c16d4ff45068b',
+    passwordView: encodePasswordForView('000'),
     allowedPropertyIds: [], // Empty means access all
     permissions: Object.values(PERMISSIONS),
   },
@@ -99,7 +102,8 @@ export const INITIAL_USERS: User[] = [
     username: 'manager_hn',
     fullName: 'Quản lý Hà Nội',
     role: UserRole.MANAGER,
-    password: '123',
+    passwordHash: 'v1$04fee8342e36c837',
+    passwordView: encodePasswordForView('123'),
     allowedPropertyIds: ['p1'],
     permissions: [
         PERMISSIONS.MANAGE_ROOMS,     // Sơ đồ phòng
@@ -115,7 +119,8 @@ export const INITIAL_USERS: User[] = [
     username: 'le_tan',
     fullName: 'Lễ tân',
     role: UserRole.RECEPTIONIST,
-    password: '123',
+    passwordHash: 'v1$04fee8342e36c837',
+    passwordView: encodePasswordForView('123'),
     allowedPropertyIds: ['p1', 'p2'], 
     permissions: [
         PERMISSIONS.MANAGE_ROOMS, 

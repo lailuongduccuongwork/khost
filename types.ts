@@ -47,6 +47,8 @@ export interface Tenant {
   // Admin Credentials (for quick view/reset by Super Admin)
   adminUsername?: string;
   adminPassword?: string; // In real app, never store plain text!
+  adminPasswordHash?: string;
+  adminPasswordView?: string;
 }
 
 export interface Tag {
@@ -172,6 +174,8 @@ export interface User {
   role: UserRole;
   allowedPropertyIds?: string[]; // List of property IDs user can access. If empty/undefined for Admin, means ALL.
   password?: string; 
+  passwordHash?: string;
+  passwordView?: string;
   permissions: string[];
 }
 

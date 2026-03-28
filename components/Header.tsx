@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Building2, Bell, UserCircle, Menu, CheckCircle, Clock, Wallet, Check } from 'lucide-react';
+import { Building2, Bell, UserCircle, Menu, CheckCircle, Clock, Wallet, Check, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { User, Property } from '../types';
 import { AppNotification } from '../hooks/useBookingAlert';
 
@@ -12,9 +12,26 @@ interface HeaderProps {
   notifications?: AppNotification[];
   onMarkAllRead?: () => void;
   onMarkRead?: (id: string) => void;
+  themeMode: 'light' | 'dark';
+  onToggleTheme: () => void;
+  isSidebarHidden?: boolean;
+  onToggleSidebar?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, onPropertyChange, onMenuClick, notifications = [], onMarkAllRead, onMarkRead }) => {
+const Header: React.FC<HeaderProps> = ({
+  user,
+  properties,
+  currentPropertyId,
+  onPropertyChange,
+  onMenuClick,
+  notifications = [],
+  onMarkAllRead,
+  onMarkRead,
+  themeMode,
+  onToggleTheme,
+  isSidebarHidden = false,
+  onToggleSidebar,
+}) => {
   const [showNotif, setShowNotif] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -46,14 +63,24 @@ const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, on
   }, []);
 
   return (
-    <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 shadow-sm transition-all duration-300">
+    <header className="h-16 katka-glass border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
       <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
-        <button onClick={onMenuClick} className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg shrink-0">
+        <button onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
           <Menu size={24} />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="hidden md:inline-flex p-2 katka-secondary-btn rounded-lg shrink-0"
+          title={isSidebarHidden ? 'Hiện thanh công cụ' : 'Ẩn thanh công cụ'}
+          aria-label={isSidebarHidden ? 'Hiện thanh công cụ' : 'Ẩn thanh công cụ'}
+          data-haptic="light"
+        >
+          {isSidebarHidden ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
         </button>
 
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
-          <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+          <div className="w-8 h-8 md:w-10 md:h-10 katka-primary-btn rounded-xl flex items-center justify-center shadow-soft">
             <Building2 size={20} />
           </div>
           <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight hidden sm:block">K-Host</h1>
@@ -84,6 +111,16 @@ const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, on
       </div>
 
       <div className="flex items-center gap-2 md:gap-6">
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          className="katka-icon-btn"
+          title={themeMode === 'dark' ? 'Chuyển sang Light mode' : 'Chuyển sang Dark mode'}
+          aria-label={themeMode === 'dark' ? 'Chuyển sang Light mode' : 'Chuyển sang Dark mode'}
+          data-haptic="light"
+        >
+          {themeMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
         
         {/* TRUNG TÂM THÔNG BÁO (NOTIFICATION BELL) */}
         <div className="relative" ref={notifRef}>
@@ -93,7 +130,7 @@ const Header: React.FC<HeaderProps> = ({ user, properties, currentPropertyId, on
             </button>
             
             {showNotif && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden animate-fade-in">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 katka-panel z-50 overflow-hidden animate-fade-in">
                     <div className="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2"><Bell size={16} className="text-blue-600"/> Thông báo</h3>
                         {unreadCount > 0 && (

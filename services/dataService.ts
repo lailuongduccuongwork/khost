@@ -30,6 +30,7 @@ import {
     INITIAL_TRANSACTION_CATEGORIES,
     INITIAL_USERS,
 } from './mockData';
+import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, get, onValue, ref, remove, runTransaction, set, update } from 'firebase/database';
 
@@ -70,6 +71,9 @@ const CACHE = {
 };
 
 let _dataChangeCallback: () => void = () => {};
+let realtimeConnectionState: 'UNKNOWN' | 'CONNECTED' | 'DISCONNECTED' = 'UNKNOWN';
+let disconnectRealtimeConnectionWatcher: (() => void) | null = null;
+const CONNECTION_PREFLIGHT_TIMEOUT_MS = 2000;
 
 type AuditSource = 'WEB' | 'SYSTEM' | 'IMPORT';
 type AuditedNode =
@@ -144,6 +148,30 @@ let currentAuditActor: AuditActor | null = null;
 const recentAuditEntries = new Map<string, { id: string; timestamp: number }>();
 const HOLD_CLEANUP_THROTTLE_MS = 10000;
 let lastHoldCleanupAttemptMs = 0;
+
+const normalizeUserCredentialsForStorage = (user: User, existingUser?: User | null): User => {
+    const hasNewPassword = typeof user.password === 'string' && user.password.trim().length > 0;
+    const fallbackHash = existingUser?.passwordHash;
+    const fallbackPlain = existingUser?.password;
+    const passwordHash = hasNewPassword
+        ? digestPassword(user.password!.trim())
+        : user.passwordHash || fallbackHash || (fallbackPlain ? digestPassword(fallbackPlain) : undefined);
+    const passwordView = hasNewPassword
+        ? encodePasswordForView(user.password!.trim())
+        : user.passwordView ||
+          existingUser?.passwordView ||
+          (fallbackPlain ? encodePasswordForView(fallbackPlain) : undefined);
+
+    const normalizedUser: User = { ...user };
+    if (passwordHash) {
+        normalizedUser.passwordHash = passwordHash;
+    }
+    if (passwordView) {
+        normalizedUser.passwordView = passwordView;
+    }
+    delete normalizedUser.password;
+    return normalizedUser;
+};
 
 const COLLECTION_CONFIGS: Record<AuditedNode, CollectionConfig<any>> = {
     properties: {
@@ -278,11 +306,65 @@ const _ensureFirebase = () => {
             const app = initializeApp(firebaseConfig);
             db = getDatabase(app);
             isFirebaseReady = true;
+            if (!disconnectRealtimeConnectionWatcher) {
+                const connectedRef = ref(db, '.info/connected');
+                disconnectRealtimeConnectionWatcher = onValue(
+                    connectedRef,
+                    (snap) => {
+                        realtimeConnectionState = snap.val() === true ? 'CONNECTED' : 'DISCONNECTED';
+                    },
+                    () => {
+                        realtimeConnectionState = 'DISCONNECTED';
+                    }
+                );
+            }
         } catch (error) {
             console.error('Firebase connection failed', error);
         }
     }
     return isFirebaseReady;
+};
+
+const _resolveRealtimeConnectionState = async (): Promise<'UNKNOWN' | 'CONNECTED' | 'DISCONNECTED'> => {
+    if (!db) return 'UNKNOWN';
+
+    try {
+        const stateSnap = await Promise.race([
+            get(ref(db, '.info/connected')),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS)),
+        ]);
+
+        if (!stateSnap) return realtimeConnectionState;
+        const connected = stateSnap.val() === true;
+        realtimeConnectionState = connected ? 'CONNECTED' : 'DISCONNECTED';
+        return realtimeConnectionState;
+    } catch (error) {
+        return realtimeConnectionState;
+    }
+};
+
+const _assertOnlineForMutation = async (actionLabel: string) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error(`Mất kết nối Internet. Không thể ${actionLabel} khi đang offline.`);
+    }
+
+    const connectionState = await _resolveRealtimeConnectionState();
+    if (connectionState === 'DISCONNECTED') {
+        throw new Error(`Mất kết nối tới máy chủ dữ liệu. Không thể ${actionLabel} lúc này.`);
+    }
+};
+
+const _findUserByCredential = (users: User[], usernameInput: string, passwordInput: string): User | null => {
+    const normalizedUsername = usernameInput.trim();
+    const candidatePasswords = Array.from(new Set([passwordInput, passwordInput.trim()]));
+
+    const matched = users.find((user) => {
+        const userName = (user.username || '').trim();
+        if (userName !== normalizedUsername) return false;
+        return candidatePasswords.some((candidate) => verifyPassword(candidate, user));
+    });
+
+    return matched || null;
 };
 
 const sanitizeForLog = (value: any): any => {
@@ -333,6 +415,19 @@ const normalizeForNode = (node: string, item: any, tenantId: string | null) => {
     if (!item) return item;
     if (node === 'history') {
         return { ...item, tenantId: item.tenantId || tenantId || undefined };
+    }
+    if (node === 'users') {
+        const withTenant = tenantId ? { ...item, tenantId: item.tenantId || tenantId } : { ...item };
+        return normalizeUserCredentialsForStorage(withTenant as User, item as User);
+    }
+    if (node === 'tenants') {
+        const normalizedTenant = { ...item } as Tenant;
+        if (normalizedTenant.adminPassword && normalizedTenant.adminPassword.trim()) {
+            normalizedTenant.adminPasswordHash = digestPassword(normalizedTenant.adminPassword.trim());
+            normalizedTenant.adminPasswordView = encodePasswordForView(normalizedTenant.adminPassword.trim());
+        }
+        delete normalizedTenant.adminPassword;
+        return normalizedTenant;
     }
 
     const config = COLLECTION_CONFIGS[node as AuditedNode];
@@ -679,8 +774,16 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         ) => {
             const nodeRef = ref(db, `${basePath}/${node}`);
             onValue(nodeRef, (snap) => {
-                // @ts-ignore
-                CACHE[cacheKey] = snapshotToArray<T>(snap);
+                const rows = snapshotToArray<T>(snap);
+                if (cacheKey === 'users' || cacheKey === 'systemUsers') {
+                    // @ts-ignore
+                    CACHE[cacheKey] = (rows as unknown as User[]).map((user) =>
+                        normalizeUserCredentialsForStorage(user, user)
+                    );
+                } else {
+                    // @ts-ignore
+                    CACHE[cacheKey] = rows;
+                }
                 _dataChangeCallback();
             });
         };
@@ -708,7 +811,9 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         _bindHistory(basePath);
 
         onValue(ref(db, `${basePath}/users`), async (snap) => {
-            const users = snapshotToArray<User>(snap);
+            const users = snapshotToArray<User>(snap).map((user) =>
+                normalizeUserCredentialsForStorage(user, user)
+            );
             CACHE.users = users;
 
             if (users.length === 0) {
@@ -719,10 +824,10 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                         const recovered = allSystemUsers.filter((user) => user.tenantId === tenantId);
 
                         if (recovered.length > 0) {
-                            CACHE.users = recovered;
+                            CACHE.users = recovered.map((user) => normalizeUserCredentialsForStorage(user, user));
                             const updates: Record<string, any> = {};
                             recovered.forEach((user) => {
-                                updates[`${basePath}/users/${user.id}`] = user;
+                                updates[`${basePath}/users/${user.id}`] = normalizeUserCredentialsForStorage(user, user);
                             });
                             update(ref(db), updates);
                         }
@@ -769,7 +874,7 @@ const _seedSystemData = () => {
 
     const usersMap: Record<string, User> = {};
     INITIAL_USERS.forEach((user) => {
-        usersMap[user.id] = user;
+        usersMap[user.id] = normalizeUserCredentialsForStorage(user);
     });
 
     INITIAL_TENANTS.forEach((tenant) => {
@@ -777,11 +882,20 @@ const _seedSystemData = () => {
 
         const id = `u_${tenant.id}_admin`;
         if (!usersMap[id]) {
+            const adminPasswordHash =
+                tenant.adminPasswordHash || (tenant.adminPassword ? digestPassword(tenant.adminPassword) : undefined);
+            if (!adminPasswordHash) {
+                console.warn(`Skip seeding admin user for tenant ${tenant.id}: missing admin credential hash.`);
+                return;
+            }
+            const adminPasswordView =
+                tenant.adminPasswordView || (tenant.adminPassword ? encodePasswordForView(tenant.adminPassword) : undefined);
             usersMap[id] = {
                 id,
                 tenantId: tenant.id,
                 username: tenant.adminUsername,
-                password: tenant.adminPassword || '123',
+                passwordHash: adminPasswordHash,
+                passwordView: adminPasswordView,
                 fullName: 'Admin',
                 role: UserRole.ADMIN,
                 permissions: Object.values(PERMISSIONS),
@@ -1152,6 +1266,7 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
 
     let hasSpecificLogs = false;
     const statusChanged = oldBooking.status !== booking.status;
+    const roomChanged = oldBooking.roomId !== booking.roomId;
 
     if (statusChanged) {
         if (booking.status === BookingStatus.CHECKED_IN) {
@@ -1202,6 +1317,15 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
             bookingSnapshot: booking,
         });
         hasSpecificLogs = true;
+    }
+
+    if (roomChanged) {
+        if (oldBooking.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(oldBooking.roomId, RoomStatus.VACANT_CLEAN, { source: options.source, suppressLog: true });
+        }
+        if (booking.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, { source: options.source, suppressLog: true });
+        }
     }
 
     if (oldBooking.totalPrice !== booking.totalPrice) {
@@ -1317,7 +1441,7 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
         hasSpecificLogs = true;
     }
 
-    if (oldBooking.roomId !== booking.roomId) {
+    if (roomChanged) {
         const action = resolveValueAction(oldBooking.roomId, booking.roomId) || 'UPDATE';
         const operationNameMap: Record<HistoryAction, string> = {
             CREATE: 'Tạo phòng',
@@ -1728,6 +1852,14 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         }
 
         updatedIds.push(booking.id);
+        const roomChanged = before.roomId !== booking.roomId;
+        if (roomChanged && before.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(before.roomId, RoomStatus.VACANT_CLEAN, {
+                source,
+                staffId: options.staffId,
+                suppressLog: true,
+            });
+        }
         if (before.status !== booking.status) {
             if (booking.status === BookingStatus.CHECKED_IN) {
                 _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
@@ -1748,6 +1880,12 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
                     suppressLog: true,
                 });
             }
+        } else if (roomChanged && booking.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
+                source,
+                staffId: options.staffId,
+                suppressLog: true,
+            });
         }
 
         _recordHistory({
@@ -1850,18 +1988,20 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
     }
 };
 
-const _resetAllBookings = () => {
-    if (!activeTenantId || !db) return;
+const _resetAllBookings = async () => {
+    if (!activeTenantId || !db) {
+        throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    }
+
+    await _assertOnlineForMutation('reset dữ liệu');
 
     const basePath = getBaseRef();
-    if (!basePath) return;
+    if (!basePath) {
+        throw new Error('Không xác định được tenant hiện tại.');
+    }
 
     const deletedIds = CACHE.bookings.map((booking) => booking.id);
     const deletedCount = deletedIds.length;
-
-    remove(ref(db, `${basePath}/bookings`)).then(() => {
-        console.log('All bookings deleted');
-    });
 
     const updates: Record<string, any> = {};
     const newRooms = CACHE.rooms.map((room) => {
@@ -1869,7 +2009,9 @@ const _resetAllBookings = () => {
         return { ...room, status: RoomStatus.VACANT_CLEAN };
     });
 
-    update(ref(db), updates);
+    await remove(ref(db, `${basePath}/bookings`));
+    await update(ref(db), updates);
+
     CACHE.bookings = [];
     CACHE.rooms = newRooms;
     _dataChangeCallback();
@@ -1883,6 +2025,8 @@ const _resetAllBookings = () => {
             bookingIds: deletedIds,
         },
     });
+
+    return deletedCount;
 };
 
 const _logAction = (action: HistoryAction | string, booking: Booking, description: string, staffId?: string) => {
@@ -1915,6 +2059,7 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
 
     const basePath = getBaseRef();
     if (!basePath) return false;
+    await _assertOnlineForMutation('xóa đơn');
 
     const bookingRef = ref(db, `${basePath}/bookings`);
     let deletedBooking: Booking | null = null;
@@ -1975,15 +2120,104 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
 const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: BookingActionOptions = {}) => {
     const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
     if (uniqueIds.length === 0) return [] as string[];
+    const source = options.source || 'WEB';
 
-    const deletedIds: string[] = [];
-    for (const id of uniqueIds) {
-        if (await _deleteBooking(id, staffId, options)) {
-            deletedIds.push(id);
+    if (!activeTenantId || !db) {
+        const existingIds = uniqueIds.filter((id) => CACHE.bookings.some((booking) => booking.id === id));
+        if (existingIds.length > 0) {
+            _hardDeleteBookings(existingIds, staffId, options);
         }
+        return existingIds;
     }
 
-    return deletedIds;
+    await _assertOnlineForMutation('xóa hàng loạt');
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as string[];
+
+    const bookingRef = ref(db, `${basePath}/bookings`);
+    const deletedBookings: Booking[] = [];
+    let rejectReason = '';
+
+    const result = await runTransaction(
+        bookingRef,
+        (currentValue) => {
+            rejectReason = '';
+            deletedBookings.length = 0;
+            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
+
+            for (const id of uniqueIds) {
+                const existing = currentMap[id] as Booking | undefined;
+                if (!existing || existing.status === BookingStatus.DELETED) {
+                    rejectReason = `Đơn ${id} đã bị xóa hoặc không còn tồn tại.`;
+                    return;
+                }
+                deletedBookings.push({
+                    ...existing,
+                    id: existing.id || id,
+                });
+            }
+
+            deletedBookings.forEach((booking) => {
+                delete currentMap[booking.id];
+            });
+
+            return currentMap;
+        },
+        { applyLocally: false }
+    );
+
+    if (!result.committed) {
+        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    }
+
+    if (deletedBookings.length === 0) return [] as string[];
+
+    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    _dataChangeCallback();
+
+    deletedBookings.forEach((booking) => {
+        if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
+                source,
+                staffId,
+                suppressLog: true,
+            });
+        }
+
+        _recordHistory({
+            action: 'DELETE',
+            entityType: 'BOOKING',
+            entityId: booking.id,
+            entityLabel: booking.id,
+            description: `Xóa đơn ${booking.id}`,
+            before: booking,
+            metadata: {
+                ...buildNodeMetadata('bookings', booking),
+                operationName: 'Xóa booking',
+            },
+            source,
+            staffId,
+            bookingSnapshot: booking,
+        });
+    });
+
+    if (deletedBookings.length > 1) {
+        _recordHistory({
+            action: 'BULK_DELETE',
+            entityType: 'BOOKING',
+            description: `Xóa hàng loạt ${deletedBookings.length} đơn đặt phòng`,
+            metadata: {
+                count: deletedBookings.length,
+                bookingIds: deletedBookings.map((booking) => booking.id),
+                operationName: 'Xóa hàng loạt booking',
+            },
+            source,
+            staffId,
+        });
+    }
+
+    return deletedBookings.map((booking) => booking.id);
 };
 
 const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
@@ -1991,10 +2225,13 @@ const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
 
     const targetTenantId =
         activeTenantId && activeTenantId !== SYSTEM_TENANT_ID ? activeTenantId : user.tenantId;
-    const userWithTenant = { ...user, tenantId: targetTenantId };
+    const existingUser = resolveUserById(user.id);
+    const userWithTenant = normalizeUserCredentialsForStorage(
+        { ...user, tenantId: targetTenantId } as User,
+        existingUser
+    );
     const tenantPath = getBaseRefForTenant(targetTenantId);
     if (!tenantPath) return;
-    const existingUser = resolveUserById(user.id);
 
     _saveItem('users', userWithTenant);
 
@@ -2080,22 +2317,23 @@ const _deleteTenant = (id: string) => {
 
 const _seedTenantAdminUser = (user: User) => {
     if (!db) return;
+    const normalizedUser = normalizeUserCredentialsForStorage(user);
 
     const updates: Record<string, any> = {
-        [`system/users/${user.id}`]: user,
-        [`tenants/${user.tenantId}/users/${user.id}`]: user,
+        [`system/users/${normalizedUser.id}`]: normalizedUser,
+        [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
     };
     update(ref(db), updates);
 
     _recordHistory({
-        tenantId: user.tenantId,
+        tenantId: normalizedUser.tenantId,
         action: 'CREATE',
         entityType: 'USER',
-        entityId: user.id,
-        entityLabel: user.fullName || user.username || user.id,
-        description: `Khởi tạo tài khoản admin ${user.username}`,
-        after: user,
-        metadata: buildNodeMetadata('users', user),
+        entityId: normalizedUser.id,
+        entityLabel: normalizedUser.fullName || normalizedUser.username || normalizedUser.id,
+        description: `Khởi tạo tài khoản admin ${normalizedUser.username}`,
+        after: normalizedUser,
+        metadata: buildNodeMetadata('users', normalizedUser),
         source: 'SYSTEM',
     });
 };
@@ -2582,20 +2820,98 @@ export const DataService = {
     login: async (username: string, password: string) => {
         _ensureFirebase();
 
-        if (db) {
-            try {
-                const snap = await get(ref(db, 'system/users'));
-                if (snap.exists()) {
-                    const users = snapshotToArray<User>(snap);
-                    const found = users.find((user) => user.username === username && user.password === password);
-                    if (found) return found;
-                }
-            } catch (error) {
-                console.error('Login error', error);
-            }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
         }
 
-        return INITIAL_USERS.find((user) => user.username === username && user.password === password) || null;
+        if (!db) {
+            return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
+        }
+
+        try {
+            const connectionState = await _resolveRealtimeConnectionState();
+            if (connectionState === 'DISCONNECTED') {
+                return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
+            }
+
+            const snap = await Promise.race([
+                get(ref(db, 'system/users')),
+                new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS + 1000)
+                ),
+            ]);
+            if (!snap) {
+                return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
+            }
+            if (snap.exists()) {
+                const users = snapshotToArray<User>(snap);
+                const found = _findUserByCredential(users, username, password);
+                if (found) {
+                    if (!found.passwordHash && found.password) {
+                        const migratedUser = normalizeUserCredentialsForStorage(found, found);
+                        const updates: Record<string, any> = {
+                            [`system/users/${migratedUser.id}`]: migratedUser,
+                        };
+                        if (migratedUser.tenantId && migratedUser.tenantId !== SYSTEM_TENANT_ID) {
+                            updates[`tenants/${migratedUser.tenantId}/users/${migratedUser.id}`] = migratedUser;
+                        }
+                        update(ref(db), updates).catch((error: any) => {
+                            console.error('Migrate user credential failed', error);
+                        });
+                        return { user: migratedUser, reason: null as null };
+                    }
+                    return { user: found, reason: null as null };
+                }
+            }
+
+            // Fallback self-heal: trong trường hợp system/users bị lệch, thử tra ngược tenant users.
+            const tenantSnap = await Promise.race([
+                get(ref(db, 'tenants')),
+                new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS + 1000)
+                ),
+            ]);
+            if (tenantSnap && tenantSnap.exists()) {
+                const tenantsRaw = tenantSnap.val() || {};
+                const tenantEntries = Object.entries(tenantsRaw) as Array<[string, any]>;
+
+                for (const [tenantId, tenantNode] of tenantEntries) {
+                    if (!tenantNode || typeof tenantNode !== 'object') continue;
+                    const tenantUsersNode = tenantNode.users;
+                    if (!tenantUsersNode || typeof tenantUsersNode !== 'object') continue;
+
+                    const tenantUsers = Object.entries(tenantUsersNode).reduce<User[]>((acc, [userId, userRaw]) => {
+                        if (!userRaw || typeof userRaw !== 'object') return acc;
+                        const nextUser = {
+                            ...(userRaw as User),
+                            id: (userRaw as User).id || userId,
+                            tenantId: (userRaw as User).tenantId || tenantId,
+                        };
+                        acc.push(nextUser);
+                        return acc;
+                    }, []);
+
+                    const matchedTenantUser = _findUserByCredential(tenantUsers, username, password);
+                    if (!matchedTenantUser) continue;
+
+                    const normalizedUser = normalizeUserCredentialsForStorage(matchedTenantUser, matchedTenantUser);
+                    const updates: Record<string, any> = {
+                        [`system/users/${normalizedUser.id}`]: normalizedUser,
+                        [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
+                    };
+                    update(ref(db), updates).catch((error: any) => {
+                        console.error('Self-heal user index failed', error);
+                    });
+
+                    return { user: normalizedUser, reason: null as null };
+                }
+            }
+        } catch (error) {
+            console.error('Login error', error);
+            return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
+        }
+
+        return { user: null as User | null, reason: 'INVALID_CREDENTIALS' as const };
     },
 
     findUserByUsername: async (username: string) => {

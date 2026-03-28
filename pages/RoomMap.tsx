@@ -155,58 +155,10 @@ const setTimeOnDate = (date: Date, hours: number, minutes: number = 0) => {
     return next;
 };
 
-const parseQuickRangeText = (rawText: string, now: Date) => {
-    const text = rawText.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!text) return null;
-
-    const parseDayMonth = (day: number, month: number, year?: number) => {
-        const y = year || now.getFullYear();
-        const parsed = new Date(y, month - 1, day);
-        if (isNaN(parsed.getTime())) return null;
-        return parsed;
-    };
-
-    // Ví dụ: "14h30 hôm nay đến 16h"
-    const sameDayTimeRange = text.match(
-        /(\d{1,2})\s*h(?:\s*(\d{1,2}))?(?:\s*hôm nay)?\s*đến\s*(\d{1,2})\s*h(?:\s*(\d{1,2}))?/i
-    );
-    if (sameDayTimeRange) {
-        const startHour = Number(sameDayTimeRange[1] || 0);
-        const startMinute = Number(sameDayTimeRange[2] || 0);
-        const endHour = Number(sameDayTimeRange[3] || 0);
-        const endMinute = Number(sameDayTimeRange[4] || 0);
-
-        const start = setTimeOnDate(now, startHour, startMinute);
-        let end = setTimeOnDate(now, endHour, endMinute);
-        if (end.getTime() <= start.getTime()) end = addDays(end, 1);
-        return { start, end };
-    }
-
-    // Ví dụ: "4/6 đến 6/6"
-    const dateRange = text.match(
-        /(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s*đến\s*(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/i
-    );
-    if (dateRange) {
-        const startDate = parseDayMonth(Number(dateRange[1]), Number(dateRange[2]), dateRange[3] ? Number(dateRange[3]) : undefined);
-        const endDate = parseDayMonth(Number(dateRange[4]), Number(dateRange[5]), dateRange[6] ? Number(dateRange[6]) : undefined);
-        if (!startDate || !endDate) return null;
-        const start = setTimeOnDate(startDate, 14, 0);
-        const end = setTimeOnDate(endDate, 12, 0);
-        if (end.getTime() <= start.getTime()) return null;
-        return { start, end };
-    }
-
-    // Ví dụ: "ngày 30/3"
-    const singleDate = text.match(/(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/i);
-    if (singleDate) {
-        const date = parseDayMonth(Number(singleDate[1]), Number(singleDate[2]), singleDate[3] ? Number(singleDate[3]) : undefined);
-        if (!date) return null;
-        const start = setTimeOnDate(date, 14, 0);
-        const end = setTimeOnDate(addDays(date, 1), 12, 0);
-        return { start, end };
-    }
-
-    return null;
+const getWeekdayShortVi = (date: Date) => {
+    const day = date.getDay();
+    if (day === 0) return 'CN';
+    return `T${day + 1}`;
 };
 
 // --- Custom Components ---
@@ -363,7 +315,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [showModal, setShowModal] = useState(false);
   const [showTicketModal, setShowTicketModal] = useState(false); 
   const [isEditMode, setIsEditMode] = useState(false);
-  const [showBookingHistory, setShowBookingHistory] = useState(true);
+  const [showBookingHistory, setShowBookingHistory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); 
   
@@ -399,7 +351,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [bookingRows, setBookingRows] = useState<BookingRow[]>([]);
   const [originalBookingIds, setOriginalBookingIds] = useState<string[]>([]);
   const [showQuickFinder, setShowQuickFinder] = useState(false);
-  const [quickQueryText, setQuickQueryText] = useState('');
   const [quickPropertyFilter, setQuickPropertyFilter] = useState<string>(
       currentProperty.id === 'ALL' ? 'ALL' : currentProperty.id
   );
@@ -664,6 +615,16 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       }
   }, [viewStart, viewEnd, timelineMode]);
 
+  const dateRangeLabelCompact = useMemo(() => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      const fmt = (d: Date) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+      if (timelineMode === 'DAY') return fmt(viewStart);
+      if (timelineMode === 'MONTH') return `T${viewStart.getMonth() + 1}/${viewStart.getFullYear()}`;
+      const endDisplay = new Date(viewEnd);
+      endDisplay.setDate(endDisplay.getDate() - 1);
+      return `${fmt(viewStart)} - ${fmt(endDisplay)}`;
+  }, [viewStart, viewEnd, timelineMode]);
+
   const sortedBookings = useMemo(() => {
       if (!sortConfig) return filteredBookings;
       return [...filteredBookings].sort((a, b) => {
@@ -766,7 +727,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
       setIsEditMode(editMode); setShowDeleteConfirm(false); refreshCategories(); 
-      setShowBookingHistory(editMode);
+      setShowBookingHistory(false);
       setPendingFee({ categoryId: '', amount: 0 }); setIsSubmitting(false); 
       
       if (editMode && booking) {
@@ -853,6 +814,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
      else alert("Bạn không có quyền thêm đặt phòng mới.");
   };
 
+  const closeQuickFinder = () => {
+      if (isSavingHold) return;
+      setShowQuickFinder(false);
+      setHoldTargetRoomId(null);
+  };
+
   const applyQuickPreset = (preset: 'OVERNIGHT' | 'FULL_DAY') => {
       const base = new Date();
       let start = new Date(base);
@@ -868,17 +835,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
       setQuickStartInput(toDateTimeLocalValue(start));
       setQuickEndInput(toDateTimeLocalValue(end));
-      setQuickQueryText('');
-  };
-
-  const handleApplyQuickQuery = () => {
-      const parsed = parseQuickRangeText(quickQueryText, new Date());
-      if (!parsed) {
-          alert('Không phân tích được câu tìm nhanh. Vui lòng nhập tay thời gian Từ/Đến.');
-          return;
-      }
-      setQuickStartInput(toDateTimeLocalValue(parsed.start));
-      setQuickEndInput(toDateTimeLocalValue(parsed.end));
   };
 
   const handleOpenHoldModal = (roomId: string) => {
@@ -1298,12 +1254,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const getBookingStyle = (booking: Booking) => {
      if (booking.isHold) {
-         return "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border bg-amber-500/90 text-white border-amber-600 shadow-amber-200";
+         return "room-booking-chip room-booking-chip-hold absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border bg-amber-500/90 text-white border-amber-600 shadow-amber-200";
      }
      const isPaid = booking.paidAmount >= booking.totalPrice;
-     let classes = "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border ";
-     if (isPaid) classes += "bg-green-500 text-white border-green-600 shadow-green-200"; 
-     else classes += "bg-red-500 text-white border-red-600 shadow-red-200";
+     let classes = "room-booking-chip absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border ";
+     if (isPaid) classes += "room-booking-chip-paid bg-green-500 text-white border-green-600 shadow-green-200";
+     else classes += "room-booking-chip-unpaid bg-red-500 text-white border-red-600 shadow-red-200";
      return classes;
   };
 
@@ -1340,15 +1296,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   return (
     <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
-       <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between transition-all relative z-20">
-          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+       <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-2 justify-between transition-all relative z-20 overflow-x-auto no-scrollbar whitespace-nowrap">
+          <div className="flex items-center gap-2 shrink-0">
               
-              <div className="flex gap-2 w-full md:w-auto">
-                  <div className="relative flex-1 md:flex-none">
+              <div className="flex gap-2 w-auto shrink-0">
+                  <div className="relative w-[102px] md:w-[112px] shrink-0">
                       <select 
                         value={filters.status}
                         onChange={e => setFilters({...filters, status: e.target.value})}
-                        className="w-full appearance-none pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                        className="w-full h-10 appearance-none pl-3 pr-8 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
                       >
                           <option value="STAYING">Lưu trú</option>
                           <option value="ARRIVING">Đến</option>
@@ -1357,11 +1313,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 rotate-90 text-gray-400 pointer-events-none" size={14} />
                   </div>
 
-                  <div className="relative flex-1 md:flex-none">
+                  <div className="relative w-[102px] md:w-[112px] shrink-0">
                       <select 
                         value={timelineMode}
                         onChange={e => setTimelineMode(e.target.value as ViewMode)}
-                        className="w-full appearance-none pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
+                        className="w-full h-10 appearance-none pl-3 pr-8 bg-white border border-gray-200 rounded-xl text-xs md:text-sm font-semibold text-gray-700 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer hover:border-gray-300 transition-colors"
                       >
                           <option value="DAY">Ngày</option>
                           <option value="WEEK">Tuần</option>
@@ -1371,18 +1327,19 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                   </div>
               </div>
 
-              <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="flex items-center gap-2 w-auto shrink-0">
                    <button 
                       onClick={() => handleNavigate('PREV')}
-                      className="p-2.5 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
+                      className="w-10 h-10 shrink-0 flex items-center justify-center bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronLeft size={18}/>
                    </button>
                    
-                   <div className="flex-1 md:flex-none group">
-                       <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 group-hover:border-blue-400 rounded-xl shadow-sm group-hover:bg-blue-50 transition-all min-w-[180px] md:min-w-[220px]">
+                   <div className="flex-none group min-w-0">
+                       <div className="h-10 flex items-center justify-center gap-1.5 px-2.5 bg-white border border-gray-200 group-hover:border-blue-400 rounded-xl shadow-sm group-hover:bg-blue-50 transition-all min-w-[162px] md:min-w-[172px]">
                            <span className="text-xs md:text-sm font-bold text-gray-700 group-hover:text-blue-700 transition-colors capitalize truncate cursor-default">
-                              {dateRangeLabel}
+                              <span className="hidden xl:inline">{dateRangeLabel}</span>
+                              <span className="xl:hidden">{dateRangeLabelCompact}</span>
                            </span>
                            <div className="relative cursor-pointer p-1 -m-1 rounded-full hover:bg-blue-100 transition-colors">
                                <Calendar size={18} className="text-gray-500 group-hover:text-blue-500 transition-colors" />
@@ -1400,18 +1357,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
                    <button 
                       onClick={() => handleNavigate('NEXT')}
-                      className="p-2.5 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
+                      className="w-10 h-10 shrink-0 flex items-center justify-center bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronRight size={18}/>
                    </button>
               </div>
           </div>
 
-          <div className="flex gap-2 md:gap-3 items-center md:ml-auto">
-                 <div className="relative flex-1 md:flex-none">
+          <div className="flex items-center gap-2 md:gap-2.5 justify-end ml-auto min-w-0 shrink-0">
+                 <div className="relative flex-none w-[132px] md:w-[146px]">
                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16}/>
                      <input 
-                        className="pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-xs md:text-sm transition-all text-gray-900 placeholder:text-gray-400 w-full md:w-48"
+                        className="h-10 pl-9 pr-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-xs md:text-sm transition-all text-gray-900 placeholder:text-gray-400 w-full"
                         placeholder="Tìm kiếm..."
                         value={filters.search}
                         onChange={e => setFilters({...filters, search: e.target.value})}
@@ -1420,23 +1377,27 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
                  <button
                     type="button"
-                    onClick={() => setShowQuickFinder(true)}
-                    className="px-3 py-2.5 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-xl text-xs md:text-sm font-bold shadow-sm transition-colors whitespace-nowrap flex items-center gap-1.5"
+                    onClick={() => {
+                        setHoldTargetRoomId(null);
+                        setShowQuickFinder(true);
+                    }}
+                    className="h-10 px-2.5 md:px-3 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-xl text-xs md:text-sm font-bold shadow-sm transition-colors whitespace-nowrap inline-flex items-center justify-center gap-1.5"
                     title="Tra phòng nhanh theo khung giờ khách chọn"
                  >
                     <Clock size={16} />
-                    <span className="hidden sm:inline">Tra phòng nhanh</span>
-                    <span className="sm:hidden">Tra phòng</span>
+                    <span className="hidden xl:inline">Tra phòng nhanh</span>
+                    <span className="xl:hidden">Tra nhanh</span>
                  </button>
                  
-                 <div className="flex bg-gray-100 p-1 rounded-lg hidden sm:flex">
-                      <button onClick={() => setViewType('GRID')} className={`p-2 rounded-md transition-all ${viewType==='GRID'?'bg-white shadow text-blue-600':'text-gray-500'}`}><LayoutGrid size={20}/></button>
-                      <button onClick={() => setViewType('LIST')} className={`p-2 rounded-md transition-all ${viewType==='LIST'?'bg-white shadow text-blue-600':'text-gray-500'}`}><ListIcon size={20}/></button>
+                 <div className="h-10 flex items-center bg-gray-100 p-1 rounded-lg">
+                      <button onClick={() => setViewType('GRID')} className={`w-9 h-8 flex items-center justify-center rounded-md transition-all ${viewType==='GRID'?'bg-white shadow text-blue-600':'text-gray-500'}`}><LayoutGrid size={18}/></button>
+                      <button onClick={() => setViewType('LIST')} className={`w-9 h-8 flex items-center justify-center rounded-md transition-all ${viewType==='LIST'?'bg-white shadow text-blue-600':'text-gray-500'}`}><ListIcon size={18}/></button>
                  </div>
 
                  {canAdd && (
-                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
-                        <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
+                    <button onClick={handleManualCreate} className="h-10 bg-green-600 hover:bg-green-700 text-white px-2.5 rounded-xl inline-flex items-center justify-center gap-1.5 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                        <Plus size={18} /> <span className="hidden xl:inline">Đặt phòng</span>
+                        <span className="xl:hidden">Đặt</span>
                     </button>
                  )}
           </div>
@@ -1454,8 +1415,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                              {timeSlots.map((slot, i) => {
                                  const isCurrent = isCurrentTimeSlot(slot);
                                  return (
-                                     <div key={i} className={`border-r px-1 text-center text-xs flex flex-col justify-center font-medium ${isCurrent ? 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200' : (slot.toDateString() === new Date().toDateString() ? 'bg-blue-50 text-blue-700' : 'text-gray-600')}`}>
-                                         {timelineMode === 'DAY' ? `${slot.getHours()}:00` : <><span className={slot.getDate() === new Date().getDate() ? 'font-bold text-base' : 'text-sm'}>{slot.getDate()}/{slot.getMonth()+1}</span></>}
+                                     <div key={i} className={`border-r px-1 text-center text-xs flex flex-col items-center justify-center leading-tight font-medium ${isCurrent ? 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200' : (slot.toDateString() === new Date().toDateString() ? 'bg-blue-50 text-blue-700' : 'text-gray-600')}`}>
+                                         {timelineMode === 'DAY' ? (
+                                             `${slot.getHours()}:00`
+                                         ) : timelineMode === 'WEEK' ? (
+                                             <span className="inline-flex items-center gap-1.5">
+                                                 <span className={isCurrent ? 'font-bold text-base' : 'text-sm font-semibold'}>
+                                                     {getWeekdayShortVi(slot)}
+                                                 </span>
+                                                 <span className={isCurrent ? 'font-bold text-base' : 'text-sm'}>
+                                                     {slot.getDate()}/{slot.getMonth()+1}
+                                                 </span>
+                                             </span>
+                                         ) : (
+                                             <span className={isCurrent ? 'font-bold text-base' : 'text-sm'}>
+                                                 {slot.getDate()}/{slot.getMonth()+1}
+                                             </span>
+                                         )}
                                      </div>
                                  )
                              })}
@@ -1466,42 +1442,42 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                          const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
                          const propName = properties.find(p => p.id === room.propertyId)?.name;
 
-                         let statusBg = 'bg-white';
+                         let statusBg = 'bg-white room-status-default';
                          let statusIcon = null;
                          let statusBorder = '';
                          let tooltip = '';
 
                          if (room.status === RoomStatus.VACANT_DIRTY) {
-                            statusBg = 'bg-yellow-50'; statusBorder = 'border-l-4 border-l-yellow-400'; statusIcon = <AlertTriangle size={14} className="text-yellow-600" />; tooltip = 'Phòng chưa dọn';
+                            statusBg = 'bg-yellow-50 room-status-dirty'; statusBorder = 'border-l-4 border-l-yellow-400'; statusIcon = <AlertTriangle size={14} className="text-yellow-600" />; tooltip = 'Phòng chưa dọn';
                          } else if (room.status === RoomStatus.VACANT_CLEAN) {
-                             statusBorder = 'border-l-4 border-l-green-500'; statusIcon = <CheckCircle size={14} className="text-green-600" />; tooltip = 'Sẵn sàng';
+                             statusBg = 'bg-white room-status-clean'; statusBorder = 'border-l-4 border-l-green-500'; statusIcon = <CheckCircle size={14} className="text-green-600" />; tooltip = 'Sẵn sàng';
                          } else if (room.status === RoomStatus.OCCUPIED) {
-                             statusBg = 'bg-red-50'; statusBorder = 'border-l-4 border-l-red-500'; statusIcon = <UserIcon size={14} className="text-red-600" />; tooltip = 'Đang có khách';
+                             statusBg = 'bg-red-50 room-status-occupied'; statusBorder = 'border-l-4 border-l-red-500'; statusIcon = <UserIcon size={14} className="text-red-600" />; tooltip = 'Đang có khách';
                          } else if (room.status === RoomStatus.MAINTENANCE) {
-                             statusBg = 'bg-gray-100'; statusBorder = 'border-l-4 border-l-gray-500'; statusIcon = <Wrench size={14} className="text-gray-600" />; tooltip = 'Bảo trì';
+                             statusBg = 'bg-gray-100 room-status-maintenance'; statusBorder = 'border-l-4 border-l-gray-500'; statusIcon = <Wrench size={14} className="text-gray-600" />; tooltip = 'Bảo trì';
                          }
 
                          return (
                              <React.Fragment key={room.id}>
                                  {isNewBranch && (
-                                     <div className="sticky left-0 z-[20] w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
+                                     <div className="room-branch-header sticky left-0 z-[20] w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
                                          <Building2 size={14} className="text-gray-500"/> {propName}
                                      </div>
                                  )}
 
                                  <div className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
                                      <div 
-                                        className={`w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
+                                        className={`room-status-panel w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
                                         title={tooltip}
                                         onClick={() => handleStatusIconClick(room)}
                                         style={{cursor: canManageRooms ? 'pointer' : 'default'}}
                                      >
                                          <div className="flex items-center gap-1.5">
-                                            <div className="font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
+                                            <div className="room-number font-bold text-base md:text-lg text-gray-800 leading-none">{room.number}</div>
                                             {statusIcon}
                                          </div>
-                                         <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
-                                         {room.status === RoomStatus.VACANT_DIRTY && <span className="text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
+                                         <div className="room-type text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
+                                         {room.status === RoomStatus.VACANT_DIRTY && <span className="room-dirty-badge text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
                                      </div>
                                     
                                      <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
@@ -1599,6 +1575,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                 const width = (duration / totalDuration) * 100;
                                                 const bookingTags = tags.filter(t => b.tags?.includes(t.id));
                                                 const isGroup = !!b.groupId;
+                                                const isCompactCard = width < (timelineMode === 'DAY' ? 8 : 5);
+                                                const showGroupBadge = isGroup;
+                                                const showNoteBadge = !!b.notes && (!isCompactCard || !isGroup);
 
                                                 return (
                                                     <div 
@@ -1615,9 +1594,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                         }} 
                                                         onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}
                                                     >
-                                                        <div className="absolute top-0 right-0 flex gap-0.5 z-[12]">
-                                                            {isGroup && <div className="bg-blue-500 text-white w-3 h-3 flex items-center justify-center text-[7px] border border-white rounded-bl-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>}
-                                                            {b.notes && <div className="bg-orange-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-[7px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>}
+                                                        <div className="absolute top-0.5 right-0.5 flex items-center gap-1 z-[12]">
+                                                            {showGroupBadge && <div className="bg-blue-500 text-white w-3.5 h-3.5 flex items-center justify-center text-[8px] border border-white rounded-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>}
+                                                            {showNoteBadge && <div className="bg-orange-500 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[8px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>}
                                                         </div>
                                                         <div className="font-bold truncate text-[10px] md:text-xs relative z-[11]">{b.guestName}</div>
                                                         <div className="flex gap-0.5 mt-1 relative z-[11]">
@@ -1717,48 +1696,31 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       </div>
 
       {showQuickFinder && createPortal(
-          <div className="fixed inset-0 z-[115] flex items-center justify-center p-3 md:p-4">
-              <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setShowQuickFinder(false)}></div>
-              <div className="relative bg-white w-full max-w-6xl max-h-[calc(100dvh-24px)] rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-fade-in">
-                  <div className="px-4 md:px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+          <div className="katka-app katka-modal-scope fixed inset-0 z-[115] flex items-center justify-center p-2 md:p-3">
+              <div className="absolute inset-0 katka-modal-backdrop" onClick={closeQuickFinder}></div>
+              <div className="katka-focus-modal relative bg-white w-full max-w-[1024px] h-[calc(100dvh-20px)] md:h-[calc(100dvh-24px)] rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-fade-in">
+                  <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
                       <div>
-                          <h3 className="text-base md:text-lg font-bold text-gray-900">Tra phòng nhanh</h3>
-                          <p className="text-xs text-gray-500">Kiểm tra phòng trống theo thời gian khách chọn và điều phối theo đơn gần nhất trước/sau.</p>
+                          <h3 className="text-sm md:text-[15px] font-bold text-gray-900">Tra phòng nhanh</h3>
+                          <p className="hidden md:block text-[11px] text-gray-500">Kiểm tra phòng trống theo thời gian khách chọn và điều phối theo đơn gần nhất trước/sau.</p>
                       </div>
                       <button
                           type="button"
-                          onClick={() => setShowQuickFinder(false)}
-                          className="w-8 h-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                          onClick={closeQuickFinder}
+                          className="w-6 h-6 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
                       >
-                          <X size={16} />
+                          <X size={13} />
                       </button>
                   </div>
 
-                  <div className="p-4 md:p-5 border-b border-gray-100 bg-gray-50/60 space-y-3">
-                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                          <input
-                              type="text"
-                              value={quickQueryText}
-                              onChange={(e) => setQuickQueryText(e.target.value)}
-                              placeholder='Ví dụ: "14h30 hôm nay đến 16h" hoặc "4/6 đến 6/6"'
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
-                          />
-                          <button
-                              type="button"
-                              onClick={handleApplyQuickQuery}
-                              className="px-4 py-2.5 rounded-lg bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700"
-                          >
-                              Phân tích nhanh
-                          </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-2">
+                  <div className="p-2.5 md:p-3 border-b border-gray-100 bg-white space-y-2">
+                      <div className="grid grid-cols-1 md:grid-cols-[190px_1fr] gap-2">
                           <div>
-                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Lọc theo chi nhánh</label>
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Lọc theo chi nhánh</label>
                               <select
                                   value={quickPropertyFilter}
                                   onChange={(e) => setQuickPropertyFilter(e.target.value)}
-                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                  className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
                               >
                                   <option value="ALL">Tất cả chi nhánh</option>
                                   {quickPropertyOptions.map((property) => (
@@ -1774,201 +1736,202 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           <button
                               type="button"
                               onClick={() => applyQuickPreset('OVERNIGHT')}
-                              className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                              className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold hover:bg-gray-50"
                           >
                               Qua đêm 21:00 - 09:00
                           </button>
                           <button
                               type="button"
                               onClick={() => applyQuickPreset('FULL_DAY')}
-                              className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                              className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold hover:bg-gray-50"
                           >
                               Cả ngày 14:00 - 12:00
                           </button>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           <div>
-                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Từ thời điểm</label>
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Từ thời điểm</label>
                               <input
                                   type="datetime-local"
                                   value={quickStartInput}
                                   onChange={(e) => setQuickStartInput(e.target.value)}
-                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                  className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
                               />
                           </div>
                           <div>
-                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Đến thời điểm</label>
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Đến thời điểm</label>
                               <input
                                   type="datetime-local"
                                   value={quickEndInput}
                                   onChange={(e) => setQuickEndInput(e.target.value)}
-                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                  className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
                               />
                           </div>
                       </div>
                   </div>
 
-                  <div className="flex-1 overflow-auto p-4 md:p-5 bg-white">
-                      {!quickRange.valid && (
-                          <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium">
-                              {quickRange.message}
-                          </div>
-                      )}
+                  <div className="relative flex-1 min-h-0 overflow-hidden">
+                      <div className={`h-full min-h-0 overflow-y-auto overscroll-contain p-2.5 md:p-3 bg-white transition-[padding] duration-200 [touch-action:pan-y] ${holdTargetRoom && holdQuickRange ? 'md:pr-[360px]' : ''}`}>
+                          {!quickRange.valid && (
+                              <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium">
+                                  {quickRange.message}
+                              </div>
+                          )}
 
-                      {quickRange.valid && quickAvailabilityByProperty.length === 0 && (
-                          <div className="p-5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600">
-                              Không có phòng trống phù hợp trong khung giờ này.
-                          </div>
-                      )}
+                          {quickRange.valid && quickAvailabilityByProperty.length === 0 && (
+                              <div className="p-5 rounded-xl border border-gray-200 bg-white text-sm text-gray-600">
+                                  Không có phòng trống phù hợp trong khung giờ này.
+                              </div>
+                          )}
 
-                      {quickRange.valid && quickAvailabilityByProperty.length > 0 && (
-                          <div className="space-y-4">
-                              {quickAvailabilityByProperty.map((group) => (
-                                  <div key={group.propertyId} className="border border-gray-200 rounded-xl overflow-hidden">
-                                      <div className="px-3 py-2.5 bg-gray-50 border-b border-gray-200 text-sm font-bold text-gray-800">
-                                          {group.propertyName} ({group.rooms.length} phòng trống)
-                                      </div>
-                                      <div className="overflow-x-auto">
-                                          <table className="w-full text-sm">
-                                              <thead className="bg-gray-50 text-gray-500 uppercase text-[11px]">
-                                                  <tr>
-                                                      <th className="px-3 py-2 text-left">Phòng</th>
-                                                      <th className="px-3 py-2 text-left">Hạng phòng</th>
-                                                      <th className="px-3 py-2 text-left">Đơn trước đó trả</th>
-                                                      <th className="px-3 py-2 text-left">Đơn sau đó nhận</th>
-                                                      <th className="px-3 py-2 text-right">Thao tác</th>
-                                                  </tr>
-                                              </thead>
-                                              <tbody className="divide-y divide-gray-100">
-                                                  {group.rooms.map((item) => (
-                                                      <tr key={item.room.id} className="hover:bg-gray-50">
-                                                          <td className="px-3 py-2.5 font-bold text-gray-900">{item.room.number}</td>
-                                                          <td className="px-3 py-2.5 text-gray-600">{item.roomTypeName}</td>
-                                                          <td className="px-3 py-2.5 text-gray-700">
-                                                              {item.previousBooking ? formatStandardDateTime(item.previousBooking.checkOutDate) : '--'}
-                                                          </td>
-                                                          <td className="px-3 py-2.5 text-gray-700">
-                                                              {item.nextBooking ? formatStandardDateTime(item.nextBooking.checkInDate) : '--'}
-                                                          </td>
-                                                          <td className="px-3 py-2.5">
-                                                              <div className="flex justify-end gap-2">
-                                                                  {canAdd && (
-                                                                      <button
-                                                                          type="button"
-                                                                          onClick={() => handleOpenHoldModal(item.room.id)}
-                                                                          className="px-2.5 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100"
-                                                                      >
-                                                                          Giữ cọc
-                                                                      </button>
-                                                                  )}
-                                                                  {canAdd && (
-                                                                      <button
-                                                                          type="button"
-                                                                          onClick={() => {
-                                                                              openModal(
-                                                                                  null,
-                                                                                  false,
-                                                                                  item.room.id,
-                                                                                  { start: `${quickStartInput}:00.000`, end: `${quickEndInput}:00.000` }
-                                                                              );
-                                                                              setShowQuickFinder(false);
-                                                                          }}
-                                                                          className="px-2.5 py-1.5 rounded-md border border-blue-200 bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100"
-                                                                      >
-                                                                          Tạo đơn
-                                                                      </button>
-                                                                  )}
-                                                              </div>
-                                                          </td>
+                          {quickRange.valid && quickAvailabilityByProperty.length > 0 && (
+                              <div className="space-y-3">
+                                  {quickAvailabilityByProperty.map((group) => (
+                                      <div key={group.propertyId} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                                          <div className="px-2.5 py-2 bg-white border-b border-gray-200 text-xs font-bold text-gray-800">
+                                              {group.propertyName} ({group.rooms.length} phòng trống)
+                                          </div>
+                                          <div className="overflow-x-auto">
+                                              <table className="w-full text-xs">
+                                                  <thead className="bg-white text-gray-500 uppercase text-[11px]">
+                                                      <tr>
+                                                          <th className="px-2.5 py-1.5 text-left">Phòng</th>
+                                                          <th className="px-2.5 py-1.5 text-left">Hạng phòng</th>
+                                                          <th className="px-2.5 py-1.5 text-left">Trả trước</th>
+                                                          <th className="px-2.5 py-1.5 text-left">Nhận sau</th>
+                                                          <th className="px-2.5 py-1.5 text-right">Thao tác</th>
                                                       </tr>
-                                                  ))}
-                                              </tbody>
-                                          </table>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-gray-100">
+                                                      {group.rooms.map((item) => (
+                                                          <tr key={item.room.id} className="hover:bg-gray-50">
+                                                              <td className="px-2.5 py-2 font-bold text-gray-900">{item.room.number}</td>
+                                                              <td className="px-2.5 py-2 text-gray-600">{item.roomTypeName}</td>
+                                                              <td className="px-2.5 py-2 text-gray-700">
+                                                                  {item.previousBooking ? formatStandardDateTime(item.previousBooking.checkOutDate) : 'n/a'}
+                                                              </td>
+                                                              <td className="px-2.5 py-2 text-gray-700">
+                                                                  {item.nextBooking ? formatStandardDateTime(item.nextBooking.checkInDate) : 'n/a'}
+                                                              </td>
+                                                              <td className="px-2.5 py-2">
+                                                                  <div className="flex justify-end gap-2.5">
+                                                                      {canAdd && (
+                                                                          <button
+                                                                              type="button"
+                                                                              onClick={() => handleOpenHoldModal(item.room.id)}
+                                                                              className="px-2.5 py-1 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-[11px] font-bold hover:bg-amber-100"
+                                                                          >
+                                                                              Giữ cọc
+                                                                          </button>
+                                                                      )}
+                                                                      {canAdd && (
+                                                                          <button
+                                                                              type="button"
+                                                                              onClick={() => {
+                                                                                  openModal(
+                                                                                      null,
+                                                                                      false,
+                                                                                      item.room.id,
+                                                                                      { start: `${quickStartInput}:00.000`, end: `${quickEndInput}:00.000` }
+                                                                                  );
+                                                                                  closeQuickFinder();
+                                                                              }}
+                                                                              className="px-2.5 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 text-[11px] font-bold hover:bg-blue-100"
+                                                                          >
+                                                                              Tạo đơn
+                                                                          </button>
+                                                                      )}
+                                                                  </div>
+                                                              </td>
+                                                          </tr>
+                                                      ))}
+                                                  </tbody>
+                                              </table>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+
+                      {holdTargetRoom && holdQuickRange && (
+                          <>
+                              <div className="absolute inset-0 bg-black/10 md:bg-transparent z-[2]" onClick={handleCloseHoldModal}></div>
+                              <aside className="absolute inset-y-0 right-0 z-[3] w-full md:w-[350px] bg-white border-l border-gray-200 shadow-2xl p-3 md:p-3.5 overflow-y-auto animate-fade-in">
+                                  <div className="flex items-center justify-between mb-3">
+                                      <h4 className="text-sm font-bold text-gray-900">Giữ cọc phòng {holdTargetRoom.number}</h4>
+                                      <button
+                                          type="button"
+                                          onClick={handleCloseHoldModal}
+                                          className="w-6 h-6 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                                      >
+                                          <X size={13} />
+                                      </button>
+                                  </div>
+
+                                  <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded-lg p-2.5 mb-3">
+                                      Khung giữ: <b>{formatStandardDateTime(holdQuickRange.startIso)}</b> → <b>{formatStandardDateTime(holdQuickRange.endIso)}</b>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                      <div>
+                                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Thời gian giữ cọc (phút)</label>
+                                          <input
+                                              type="number"
+                                              min={1}
+                                              max={30}
+                                              value={holdMinutes}
+                                              onChange={(e) => setHoldMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
+                                              className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                          />
+                                          <p className="text-[11px] text-gray-500 mt-1">Tối thiểu 1 phút, tối đa 30 phút. Hết hạn sẽ tự xoá giữ cọc.</p>
+                                      </div>
+
+                                      <div>
+                                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Tên khách (tuỳ chọn)</label>
+                                          <input
+                                              type="text"
+                                              value={holdGuestName}
+                                              onChange={(e) => setHoldGuestName(e.target.value)}
+                                              placeholder="Ví dụ: Anh Nam"
+                                              className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                          />
+                                      </div>
+
+                                      <div>
+                                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Số điện thoại (tuỳ chọn)</label>
+                                          <input
+                                              type="text"
+                                              value={holdGuestPhone}
+                                              onChange={(e) => setHoldGuestPhone(e.target.value)}
+                                              placeholder="Ví dụ: 09xxxxxxxx"
+                                              className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                                          />
                                       </div>
                                   </div>
-                              ))}
-                          </div>
+
+                                  <div className="grid grid-cols-2 gap-2 mt-4">
+                                      <button
+                                          type="button"
+                                          onClick={handleCloseHoldModal}
+                                          disabled={isSavingHold}
+                                          className="py-2 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 disabled:opacity-70"
+                                      >
+                                          Hủy
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={handleConfirmHoldBooking}
+                                          disabled={isSavingHold}
+                                          className="py-2 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-70"
+                                      >
+                                          {isSavingHold ? 'Đang giữ...' : 'Xác nhận'}
+                                      </button>
+                                  </div>
+                              </aside>
+                          </>
                       )}
-                  </div>
-              </div>
-          </div>,
-          document.body
-      )}
-
-      {holdTargetRoom && holdQuickRange && createPortal(
-          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
-              <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px]" onClick={handleCloseHoldModal}></div>
-              <div className="relative bg-white w-full max-w-md rounded-xl border border-gray-200 shadow-2xl p-5 animate-fade-in">
-                  <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-base font-bold text-gray-900">Giữ cọc phòng {holdTargetRoom.number}</h4>
-                      <button
-                          type="button"
-                          onClick={handleCloseHoldModal}
-                          className="w-7 h-7 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
-                      >
-                          <X size={14} />
-                      </button>
-                  </div>
-
-                  <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2.5 mb-3">
-                      Khung giữ: <b>{formatStandardDateTime(holdQuickRange.startIso)}</b> → <b>{formatStandardDateTime(holdQuickRange.endIso)}</b>
-                  </div>
-
-                  <div className="space-y-3">
-                      <div>
-                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Thời gian giữ cọc (phút)</label>
-                          <input
-                              type="number"
-                              min={1}
-                              max={30}
-                              value={holdMinutes}
-                              onChange={(e) => setHoldMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
-                          />
-                          <p className="text-[11px] text-gray-500 mt-1">Tối thiểu 1 phút, tối đa 30 phút. Hết hạn sẽ tự xoá giữ cọc.</p>
-                      </div>
-
-                      <div>
-                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Tên khách (tuỳ chọn)</label>
-                          <input
-                              type="text"
-                              value={holdGuestName}
-                              onChange={(e) => setHoldGuestName(e.target.value)}
-                              placeholder="Ví dụ: Anh Nam"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
-                          />
-                      </div>
-
-                      <div>
-                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Số điện thoại (tuỳ chọn)</label>
-                          <input
-                              type="text"
-                              value={holdGuestPhone}
-                              onChange={(e) => setHoldGuestPhone(e.target.value)}
-                              placeholder="Ví dụ: 09xxxxxxxx"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
-                          />
-                      </div>
-                  </div>
-
-                  <div className="flex gap-2 mt-5">
-                      <button
-                          type="button"
-                          onClick={handleCloseHoldModal}
-                          disabled={isSavingHold}
-                          className="flex-1 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-70"
-                      >
-                          Hủy
-                      </button>
-                      <button
-                          type="button"
-                          onClick={handleConfirmHoldBooking}
-                          disabled={isSavingHold}
-                          className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-70"
-                      >
-                          {isSavingHold ? 'Đang giữ...' : 'Xác nhận giữ cọc'}
-                      </button>
                   </div>
               </div>
           </div>,
@@ -2053,15 +2016,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       )}
 
       {showModal && createPortal(
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 md:p-4">
-              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowModal(false)}></div>
+          <div className="katka-app katka-modal-scope fixed inset-0 z-[120] flex items-center justify-center p-1 md:p-2">
+              <div className="absolute inset-0 katka-modal-backdrop" onClick={() => setShowModal(false)}></div>
               
-              <div className="relative bg-white w-full max-w-[920px] max-h-[calc(100dvh-16px)] md:max-h-[calc(100dvh-32px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
+              <div className="katka-focus-modal relative bg-white w-full max-w-[810px] max-h-[calc(100dvh-8px)] md:max-h-[calc(100dvh-16px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
                   
-                  <div className="flex-shrink-0 p-4 md:p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-2xl">
+                  <div className="flex-shrink-0 p-2.5 md:p-3 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-2xl">
                       <div>
                           <div className="flex items-center gap-2">
-                              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                              <h3 className="text-[15px] md:text-base font-bold text-gray-900 flex items-center gap-2">
                                   {isEditMode ? 'Chi tiết' : 'Tạo mới'}
                                   {bookingMeta.groupId && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap"><Users size={12}/> Đoàn</span>}
                               </h3>
@@ -2078,18 +2041,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           </div>
                           {bookingMeta.id && <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{bookingMeta.id}</p>}
                       </div>
-                      <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors bg-gray-50 rounded-full p-2 hover:bg-gray-100"><X size={20} /></button>
+                      <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-700 transition-colors bg-gray-100 border border-gray-300 rounded-full p-1.5 hover:bg-gray-200"><X size={18} /></button>
                   </div>
                   
-                  <div className="flex-1 min-h-0 overflow-y-auto p-3 md:p-5 bg-gray-50/30">
+                  <div className="flex-1 min-h-0 overflow-y-auto p-2 md:p-2.5 bg-white">
                       {isEditMode && showBookingHistory && (
-                          <div className="bg-white border border-gray-200 rounded-xl mb-4 shadow-sm overflow-hidden">
-                              <div className="px-3 py-2.5 flex items-center justify-between bg-gray-50 border-b border-gray-200">
+                          <div className="bg-white border border-gray-200 rounded-xl mb-2.5 shadow-sm overflow-hidden">
+                              <div className="px-2.5 py-1.5 flex items-center justify-between bg-gray-50 border-b border-gray-200">
                                   <span className="text-[11px] font-bold uppercase text-gray-700">Lịch sử thao tác đơn</span>
                                   <span className="text-xs font-semibold text-gray-500">{selectedBookingHistory.length} mục</span>
                               </div>
 
-                              <div className="max-h-56 overflow-auto">
+                              <div className="max-h-44 overflow-auto">
                                   {selectedBookingHistory.length === 0 ? (
                                       <p className="text-xs text-gray-400 italic text-center py-4">Chưa có lịch sử thao tác cho đơn này.</p>
                                   ) : (
@@ -2116,20 +2079,26 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           </div>
                       )}
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-                          <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+                      <div className="px-0.5 mb-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Thông tin cơ bản</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2.5">
+                          <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
                               <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} />
                           </div>
-                          <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
+                          <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Số điện thoại</label>
                               <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập SĐT..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} />
                           </div>
                       </div>
 
-                      <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
+                      <div className="px-0.5 mb-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Chi tiết phòng</p>
+                      </div>
+                      <div className="bg-white border border-gray-200 rounded-xl mb-2.5 shadow-sm overflow-hidden">
                           <div
-                            className="bg-gray-50 text-[10px] font-bold text-gray-500 px-3 py-2 uppercase tracking-wider hidden md:grid md:gap-3 items-center border-b border-gray-200"
+                            className="bg-white text-[10px] font-bold text-gray-500 px-3 py-2 uppercase tracking-wider hidden md:grid md:gap-3 items-center border-b border-gray-200"
                             style={{ gridTemplateColumns: bookingDetailGridTemplate }}
                           >
                             <div>Chi nhánh</div>
@@ -2143,7 +2112,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                             {bookingRows.map((row, idx) => (
                                 <div
                                   key={row.tempId}
-                                  className="p-3 md:px-3 md:py-2.5 hover:bg-gray-50 transition-colors flex flex-col md:grid md:gap-3 relative group items-center md:items-center"
+                                  className="p-2 md:px-2.5 md:py-1.5 hover:bg-gray-50 transition-colors flex flex-col md:grid md:gap-2 relative group items-center md:items-center"
                                   style={{ gridTemplateColumns: bookingDetailGridTemplate }}
                                 >
                                     <div className="flex justify-between items-center md:hidden pb-2 border-b border-dashed border-gray-100 w-full mb-1">
@@ -2155,7 +2124,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Chi nhánh</span>
                                         <select 
                                             disabled={isReadOnly} 
-                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
+                                            className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
                                             value={row.tempPropId} 
                                             onChange={e => updateRow(idx, 'tempPropId', e.target.value)}
                                         >
@@ -2167,7 +2136,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Hạng phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
-                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
+                                            className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400 truncate" 
                                             value={row.tempTypeId} 
                                             onChange={e => updateRow(idx, 'tempTypeId', e.target.value)}
                                         >
@@ -2184,7 +2153,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Phòng</span>
                                         <select 
                                             disabled={isReadOnly} 
-                                            className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" 
+                                            className="w-full bg-white border border-gray-200 rounded-lg p-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400" 
                                             value={row.roomId} 
                                             onChange={e => updateRow(idx, 'roomId', e.target.value)}
                                         >
@@ -2209,7 +2178,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                         <span className="md:hidden text-[10px] text-gray-400 font-medium uppercase block">Trả phòng</span>
                                         <DateTimeControl disabled={isReadOnly} dateValue={row.checkOut} onChange={(val) => updateRow(idx, 'checkOut', val)} />
                                     </div>
-                                    <div className="w-full text-center text-xs font-medium text-gray-600 bg-gray-50 rounded md:bg-transparent py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0 gap-1">
+                                    <div className="w-full text-center text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded md:bg-transparent md:border-0 py-1.5 md:py-0 mt-1 md:mt-0 flex justify-between md:justify-center items-center px-2 md:px-0 gap-1">
                                         <span className="md:hidden text-[10px] text-gray-400">TG:</span>
                                         {getDurationText(row.checkIn, row.checkOut)}
                                         <div className="md:hidden">
@@ -2221,68 +2190,21 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                             ))}
                           </div>
                           {!isReadOnly && (
-                            <button onClick={handleAddRow} className="w-full py-2.5 text-center text-xs font-bold text-green-600 bg-green-50/50 hover:bg-green-100 transition-colors border-t border-green-100 flex items-center justify-center gap-1.5">
-                                <PlusCircle size={14} /> Thêm phòng vào đoàn
+                            <button onClick={handleAddRow} className="w-full py-2 text-center text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors border-t border-blue-200 flex items-center justify-center gap-1.5">
+                                <PlusCircle size={15} /> Thêm phòng vào đoàn
                             </button>
                           )}
                       </div>
 
-                      <div className="bg-white border border-gray-200 rounded-xl mb-5 shadow-sm overflow-hidden">
-                          <div className="bg-gray-50 p-2.5 border-b border-gray-200 flex justify-between items-center">
-                              <h4 className="text-[11px] font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={12}/> Dịch vụ & Phụ thu</h4>
-                          </div>
-                          {!isReadOnly && (
-                              <div className="p-2.5 bg-gray-50/50 flex flex-col md:flex-row gap-2 border-b border-dashed border-gray-200">
-                                  <select 
-                                      className="flex-[2] border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none bg-white focus:border-blue-400"
-                                      value={pendingFee.categoryId}
-                                      onChange={e => setPendingFee({...pendingFee, categoryId: e.target.value})}
-                                  >
-                                      <option value="">-- Chọn loại phí / dịch vụ --</option>
-                                      <optgroup label="Khoản Thu (Cộng thêm)">
-                                          {financeCategories.filter(c => c.type === 'REVENUE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                      </optgroup>
-                                      <optgroup label="Khoản Chi (Giảm trừ)">
-                                          {financeCategories.filter(c => c.type === 'EXPENSE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                      </optgroup>
-                                  </select>
-                                  <MoneyInput 
-                                      className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none bg-white font-bold text-right focus:border-blue-400"
-                                      placeholder="0"
-                                      value={pendingFee.amount}
-                                      onChange={v => setPendingFee({...pendingFee, amount: v})}
-                                  />
-                                  <button onClick={handleAddFee} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors whitespace-nowrap shadow-sm">Thêm</button>
-                              </div>
-                          )}
-                          <div className="divide-y divide-gray-100">
-                              {bookingMeta.extraFees.length === 0 && <p className="text-center text-gray-400 text-[11px] italic p-3">Chưa có dịch vụ thêm.</p>}
-                              {bookingMeta.extraFees.map(fee => (
-                                  <div key={fee.id} className="p-2.5 flex justify-between items-center hover:bg-gray-50 text-sm">
-                                      <div className="flex items-center gap-2">
-                                          {fee.type === 'REVENUE' ? <ArrowUpCircle size={14} className="text-green-500"/> : <ArrowDownCircle size={14} className="text-red-500"/>}
-                                          <span className="text-xs font-medium text-gray-700">{fee.name}</span>
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                          <span className={`font-bold text-xs ${fee.type === 'REVENUE' ? 'text-green-600' : 'text-red-600'}`}>
-                                              {fee.type === 'REVENUE' ? '+' : '-'}{formatNumber(fee.amount)}
-                                          </span>
-                                          {!isReadOnly && <button onClick={() => handleRemoveFee(fee.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14}/></button>}
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-2">
-                          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pb-1">
+                          <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm space-y-2">
                               <h4 className="font-bold text-gray-800 text-[11px] flex items-center gap-1.5 uppercase tracking-wide border-b border-gray-100 pb-2"><Info size={12}/> Thanh toán</h4>
                               <div className="space-y-2">
                                   <div className="flex justify-between items-center">
                                       <label className="text-[10px] font-bold text-gray-500 uppercase">Tổng tiền phòng</label>
                                       <div className="w-28">
                                         <MoneyInput 
-                                            className="w-full bg-gray-50 border border-gray-200 text-gray-800 p-1.5 rounded-md font-bold text-xs text-right outline-none focus:ring-1 focus:ring-blue-200"
+                                            className="w-full bg-white border border-gray-200 katka-money-primary p-1.5 rounded-md font-bold text-xs text-right outline-none focus:ring-1 focus:ring-blue-200"
                                             value={bookingMeta.totalPrice} 
                                             onChange={(val) => setBookingMeta(prev => ({ ...prev, totalPrice: val, isManualPrice: true }))}
                                             disabled={isReadOnly}
@@ -2307,36 +2229,86 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                   <div className="border-t border-dashed border-gray-200 my-2"></div>
 
                                   <div className="flex justify-between items-center">
-                                      <label className="text-xs font-extrabold text-blue-800 uppercase">TỔNG CỘNG</label>
-                                      <span className="text-lg font-extrabold text-blue-800 tracking-tight">{formatNumber(grandTotal)} đ</span>
+                                      <label className="text-xs font-extrabold text-gray-700 uppercase">TỔNG CỘNG</label>
+                                      <span className="text-lg font-extrabold katka-money-primary tracking-tight">{formatNumber(grandTotal)} đ</span>
                                   </div>
 
                                   <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 mt-2">
-                                      <label className="block text-[9px] font-bold uppercase text-blue-700 mb-1">Khách đã trả</label>
+                                      <label className="block text-[9px] font-bold uppercase text-gray-700 mb-1">Khách đã trả</label>
                                       <MoneyInput 
-                                            className="w-full bg-white border border-blue-200 text-blue-800 p-2 rounded-md font-bold text-base outline-none focus:ring-2 focus:ring-blue-200"
+                                            className="w-full bg-white border border-blue-200 katka-money-primary p-2 rounded-md font-bold text-base outline-none focus:ring-2 focus:ring-blue-200"
                                             value={bookingMeta.paidAmount || 0}
                                             onChange={(val) => setBookingMeta(prev => ({ ...prev, paidAmount: val }))}
                                             disabled={isReadOnly}
                                         />
                                   </div>
 
-                                  <div className="flex justify-between items-center pt-1">
-                                      <span className="text-[10px] text-gray-500 font-medium">Còn lại cần thu:</span>
-                                      <span className={`text-sm font-bold ${(bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0) > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                          {formatNumber((bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0))}
-                                      </span>
+                                  <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-2.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                          <span className="text-[11px] font-extrabold uppercase tracking-wide text-red-600">Còn lại cần thu:</span>
+                                          <span className="text-xl md:text-2xl font-black katka-money-danger leading-none whitespace-nowrap">
+                                              {formatNumber((bookingMeta.totalPrice + extraRevenue) - (bookingMeta.paidAmount||0))}
+                                              <span className="ml-1 text-base md:text-lg font-extrabold">đ</span>
+                                          </span>
+                                      </div>
                                   </div>
                               </div>
                           </div>
                           
-                          <div className="space-y-4">
-                              <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                          <div className="space-y-2.5">
+                              <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                                  <div className="bg-white p-2.5 border-b border-gray-200 flex justify-between items-center">
+                                      <h4 className="text-[11px] font-bold text-gray-700 uppercase flex items-center gap-2"><Wallet size={12}/> Dịch vụ & Phụ thu</h4>
+                                  </div>
+                                  {!isReadOnly && (
+                                      <div className="p-2.5 bg-white grid grid-cols-1 md:grid-cols-[minmax(0,1.45fr)_minmax(88px,0.75fr)_auto] gap-1.5 items-center border-b border-dashed border-gray-200">
+                                          <select 
+                                              className="w-full min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] outline-none bg-white focus:border-blue-400"
+                                              value={pendingFee.categoryId}
+                                              onChange={e => setPendingFee({...pendingFee, categoryId: e.target.value})}
+                                          >
+                                              <option value="">-- Chọn loại phí / dịch vụ --</option>
+                                              <optgroup label="Khoản Thu (Cộng thêm)">
+                                                  {financeCategories.filter(c => c.type === 'REVENUE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                              </optgroup>
+                                              <optgroup label="Khoản Chi (Giảm trừ)">
+                                                  {financeCategories.filter(c => c.type === 'EXPENSE').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                              </optgroup>
+                                          </select>
+                                          <MoneyInput 
+                                              className="w-full min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] outline-none bg-white font-bold text-right focus:border-blue-400"
+                                              placeholder="0"
+                                              value={pendingFee.amount}
+                                              onChange={v => setPendingFee({...pendingFee, amount: v})}
+                                          />
+                                          <button onClick={handleAddFee} className="shrink-0 px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[11px] font-bold hover:bg-blue-700 transition-colors whitespace-nowrap shadow-sm">Thêm</button>
+                                      </div>
+                                  )}
+                                  <div className="divide-y divide-gray-100">
+                                      {bookingMeta.extraFees.length === 0 && <p className="text-center text-gray-400 text-[11px] italic p-3">Chưa có dịch vụ thêm.</p>}
+                                      {bookingMeta.extraFees.map(fee => (
+                                          <div key={fee.id} className="p-2.5 flex justify-between items-center hover:bg-gray-50 text-sm">
+                                              <div className="flex items-center gap-2">
+                                                  {fee.type === 'REVENUE' ? <ArrowUpCircle size={14} className="text-green-500"/> : <ArrowDownCircle size={14} className="text-red-500"/>}
+                                                  <span className="text-xs font-medium text-gray-700">{fee.name}</span>
+                                              </div>
+                                              <div className="flex items-center gap-3">
+                                                  <span className={`font-bold text-xs ${fee.type === 'REVENUE' ? 'text-green-600' : 'text-red-600'}`}>
+                                                      {fee.type === 'REVENUE' ? '+' : '-'}{formatNumber(fee.amount)}
+                                                  </span>
+                                                  {!isReadOnly && <button onClick={() => handleRemoveFee(fee.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14}/></button>}
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+
+                              <div className="bg-white p-2.5 rounded-xl border border-gray-200 shadow-sm">
                                   <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1.5">Ghi chú</label>
-                                  <textarea disabled={isReadOnly} className="w-full bg-gray-50 border-0 rounded-lg p-2.5 text-xs h-[72px] outline-none focus:ring-2 focus:ring-gray-200 resize-none" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
+                                  <textarea disabled={isReadOnly} className="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs h-[64px] outline-none focus:ring-2 focus:ring-gray-200 resize-none" placeholder="Yêu cầu đặc biệt..." value={bookingMeta.notes} onChange={e => setBookingMeta({...bookingMeta, notes: e.target.value})}></textarea>
                               </div>
                               
-                              <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                              <div className="bg-white p-2.5 rounded-xl border border-gray-200 shadow-sm">
                                   <label className="block text-[10px] font-bold uppercase text-gray-500 mb-2">Thẻ (Tags)</label>
                                   <div className="flex flex-wrap gap-1.5">
                                       {tags.map(t => {
@@ -2359,8 +2331,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       </div>
                   </div>
 
-                  <div className="flex-shrink-0 p-3 md:p-4 border-t border-gray-100 bg-gray-50 z-10 md:rounded-b-2xl">
-                      <div className="flex flex-col md:flex-row justify-between items-center gap-3">
+                  <div className="flex-shrink-0 p-2 md:p-2.5 border-t border-gray-100 bg-white z-10 md:rounded-b-2xl">
+                      <div className="flex flex-col md:flex-row justify-between items-center gap-2">
                           <div className="flex items-center gap-2 w-full md:w-auto">
                              {isEditMode && canEdit && (
                                 <>
@@ -2399,7 +2371,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           </div>
                           
                           <div className="flex gap-2 w-full md:w-auto">
-                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-4 py-2.5 text-gray-600 bg-white border border-gray-200 shadow-sm hover:bg-gray-100 rounded-lg font-bold text-xs transition-colors">Đóng</button>
+                              <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-4 py-2.5 text-gray-700 bg-gray-100 border border-gray-300 shadow-sm hover:bg-gray-200 rounded-lg font-bold text-xs transition-colors">Đóng</button>
                               {!isReadOnly && (
                                 <button 
                                     onClick={handleSaveBooking} 

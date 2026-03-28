@@ -608,11 +608,16 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       }
   };
 
-  const handleResetAll = () => {
+  const handleResetAll = async () => {
       if(confirm("CẢNH BÁO CỰC KỲ QUAN TRỌNG!\n\nBạn sắp XOÁ SẠCH TOÀN BỘ dữ liệu đặt phòng trên hệ thống.\nHành động này không thể khôi phục được.\n\nBạn có chắc chắn muốn làm mới (Reset) toàn bộ không?")) {
-          DataService.resetAllBookings();
-          if(onRefresh) onRefresh();
-          alert("Đã xoá sạch dữ liệu đặt phòng!");
+          try {
+              const deletedCount = await DataService.resetAllBookings();
+              if(onRefresh) onRefresh();
+              alert(`Đã xoá sạch dữ liệu đặt phòng (${deletedCount} đơn).`);
+          } catch (error) {
+              const message = error instanceof Error ? error.message : 'Lỗi không xác định';
+              alert(`Reset dữ liệu thất bại: ${message}`);
+          }
       }
   }
 

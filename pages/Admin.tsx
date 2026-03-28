@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { User, UserRole, Property, PERMISSIONS } from '../types';
 import { Trash2, UserPlus, Shield, Pencil, CheckSquare, Square, AlertTriangle } from 'lucide-react';
 import { DataService } from '../services/dataService';
+import { decodePasswordForView } from '../utils/security';
 
 interface AdminProps {
   users: User[];
@@ -56,6 +57,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       setEditingUserId(user.id);
       setUserData({ 
           ...user, 
+          password: '',
           allowedPropertyIds: user.allowedPropertyIds || [],
           permissions: user.permissions || [] 
       });
@@ -85,8 +87,13 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   };
 
   const handleSaveUser = async () => {
-    if (!userData.username || !userData.fullName || !userData.password) {
-        alert("Thiếu thông tin bắt buộc (Họ tên, Username, Mật khẩu)");
+    const creatingNew = !editingUserId;
+    if (!userData.username || !userData.fullName) {
+        alert("Thiếu thông tin bắt buộc (Họ tên, Username)");
+        return;
+    }
+    if (creatingNew && !userData.password) {
+        alert("Thiếu thông tin bắt buộc (Mật khẩu)");
         return;
     }
 
@@ -118,6 +125,9 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
             id: editingUserId,
             permissions: finalPermissions
         } as User;
+        if (!updatedUser.password) {
+            delete updatedUser.password;
+        }
         
         if(!updatedUser.role) updatedUser.role = UserRole.RECEPTIONIST;
 
@@ -141,6 +151,11 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
     onRefresh();
   };
 
+  const resolveReadablePassword = (user: User) => {
+      const raw = decodePasswordForView(user.passwordView || '');
+      return raw || '--';
+  };
+
   const permissionOptions = [
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
@@ -153,40 +168,40 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
+    <div className="space-y-6 px-5 py-5 md:px-6 md:py-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-1">
             <h2 className="text-2xl font-bold text-gray-800">Quản trị hệ thống</h2>
             <p className="text-gray-500">Quản lý người dùng, phân quyền và tài khoản</p>
         </div>
         <button 
             onClick={openAddModal}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm"
+            className="self-start bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-sm font-semibold"
         >
             <UserPlus size={18} /> Thêm nhân viên
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b border-gray-200 text-gray-700 font-semibold text-xs uppercase">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200/90 overflow-x-auto">
+        <table className="w-full min-w-[980px] text-left">
+          <thead className="bg-gray-50/80 border-b border-gray-200 text-gray-700 font-semibold text-xs uppercase tracking-wide">
             <tr>
-              <th className="px-6 py-3">Họ và tên</th>
-              <th className="px-6 py-3">Tên đăng nhập</th>
-              <th className="px-6 py-3">Mật khẩu</th>
-              <th className="px-6 py-3">Vai trò</th>
-              <th className="px-6 py-3">Quyền hạn đặc biệt</th>
-              <th className="px-6 py-3">Chi nhánh</th>
-              <th className="px-6 py-3 text-right">Hành động</th>
+              <th className="px-5 py-3.5">Họ và tên</th>
+              <th className="px-5 py-3.5">Tên đăng nhập</th>
+              <th className="px-5 py-3.5">Mật khẩu</th>
+              <th className="px-5 py-3.5">Vai trò</th>
+              <th className="px-5 py-3.5">Quyền hạn đặc biệt</th>
+              <th className="px-5 py-3.5">Chi nhánh</th>
+              <th className="px-5 py-3.5 text-right">Hành động</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {users.map(user => (
-              <tr key={user.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 font-medium text-gray-900">{user.fullName}</td>
-                <td className="px-6 py-4 text-gray-500">{user.username}</td>
-                <td className="px-6 py-4 font-mono text-gray-600">{user.password}</td>
-                <td className="px-6 py-4">
+              <tr key={user.id} className="hover:bg-gray-50/80">
+                <td className="px-5 py-4 font-medium text-gray-900">{user.fullName}</td>
+                <td className="px-5 py-4 text-gray-500">{user.username}</td>
+                <td className="px-5 py-4 font-mono text-gray-700">{resolveReadablePassword(user)}</td>
+                <td className="px-5 py-4">
                   <span className={`px-2 py-1 rounded-full text-xs font-bold ${
                     user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700' :
                     user.role === UserRole.MANAGER ? 'bg-blue-100 text-blue-700' :
@@ -195,7 +210,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                     {user.role}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-xs">
+                <td className="px-5 py-4 text-xs">
                     <div className="flex flex-col gap-1">
                         {!user.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && <span className="text-gray-400 italic">No Dashboard</span>}
                         {user.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING) && <span className="text-green-600 flex items-center gap-1"><CheckSquare size={10}/> Thêm</span>}
@@ -204,7 +219,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                         {user.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT) && <span className="text-orange-600 flex items-center gap-1"><CheckSquare size={10}/> Tải báo cáo</span>}
                     </div>
                 </td>
-                <td className="px-6 py-4 text-sm">
+                <td className="px-5 py-4 text-sm">
                   {user.allowedPropertyIds && user.allowedPropertyIds.length > 0 
                     ? <div className="flex flex-wrap gap-1">
                         {user.allowedPropertyIds.map(pid => {
@@ -215,11 +230,11 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                     : <span className="text-purple-600 font-semibold flex items-center gap-1"><Shield size={12}/> Tất cả</span>
                   }
                 </td>
-                <td className="px-6 py-4 text-right">
+                <td className="px-5 py-4 text-right">
                   <div className="flex justify-end gap-2">
                       <button 
                           onClick={() => openEditModal(user)}
-                          className="text-blue-500 hover:text-blue-700 p-2 hover:bg-blue-50 rounded"
+                          className="text-blue-500 hover:text-blue-700 p-2 hover:bg-blue-50 rounded-lg"
                           title="Chỉnh sửa thông tin"
                       >
                           <Pencil size={18} />
@@ -227,7 +242,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                       
                       <button 
                           onClick={() => handleDeleteClick(user)}
-                          className={`p-2 rounded ${user.username === 'admin' ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                          className={`p-2 rounded-lg ${user.username === 'admin' ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600 hover:bg-red-50'}`}
                           disabled={user.username === 'admin'}
                           title={user.username === 'admin' ? "Không thể xóa Super Admin" : "Xóa tài khoản"}
                       >
@@ -243,10 +258,10 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
 
       {showModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white p-6 rounded-lg w-full max-w-2xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
+            <div className="bg-white p-6 md:p-7 rounded-2xl w-full max-w-2xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
+                <h3 className="text-xl font-bold mb-5">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7">
                     <div className="space-y-4">
                         <h4 className="font-bold text-gray-700 border-b pb-2">Thông tin cơ bản</h4>
                         <div>
@@ -271,9 +286,9 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Mật khẩu</label>
                             <input 
-                                type="text" 
+                                type="password" 
                                 className="w-full border p-2 rounded mt-1 outline-none focus:border-blue-500"
-                                placeholder="Nhập mật khẩu..."
+                                placeholder={editingUserId ? "Để trống nếu không đổi mật khẩu" : "Nhập mật khẩu..."}
                                 value={userData.password || ''}
                                 onChange={e => setUserData({...userData, password: e.target.value})}
                             />
