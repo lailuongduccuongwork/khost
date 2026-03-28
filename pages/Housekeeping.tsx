@@ -322,7 +322,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             return (
                 <React.Fragment key={room.id}>
                     {isNewBranch && filter === 'ALL' && (
-                        <div className="sticky top-[105px] z-10 bg-gray-200/95 backdrop-blur-sm px-4 py-2 flex items-center gap-2 text-xs font-bold text-gray-700 uppercase tracking-wider border-y border-gray-300 shadow-sm mt-4 mb-2 first:mt-0">
+                        <div className="housekeeping-branch-header sticky top-[105px] z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
                             <Building2 size={14} className="text-blue-600"/>
                             {branchName}
                         </div>

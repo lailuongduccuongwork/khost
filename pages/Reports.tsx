@@ -408,9 +408,9 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                         <th className="p-4 border-b text-right text-gray-700 bg-gray-50">Tổng bill</th>
                         <th className="p-4 border-b text-right text-green-600 bg-gray-50">Thu khác</th>
                         <th className="p-4 border-b text-right text-red-600 bg-gray-50">Chi khác</th>
-                        <th className="p-4 border-b text-right text-purple-700 bg-purple-50 font-extrabold">Doanh thu Net</th>
-                        <th className="p-4 border-b text-right text-blue-700 bg-blue-50">Đã trả</th>
-                        <th className="p-4 border-b text-right text-red-700 bg-red-50">Còn nợ</th>
+                        <th className="p-4 border-b text-right font-extrabold report-col-net">Doanh thu Net</th>
+                        <th className="p-4 border-b text-right report-col-paid">Đã trả</th>
+                        <th className="p-4 border-b text-right report-col-debt">Còn nợ</th>
                         <th className="p-4 border-b">Nhân viên</th>
                     </tr>
                 </thead>
@@ -447,14 +447,14 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
                             <td className="p-4 text-right font-medium text-red-500 bg-gray-50/50">
                                 {row["Chi khác"] > 0 ? `-${row["Chi khác"].toLocaleString()}` : '-'}
                             </td>
-                            <td className="p-4 text-right font-extrabold text-purple-700 bg-purple-50/30 border-l border-r border-purple-100">
+                            <td className="p-4 text-right font-extrabold border-l border-r border-purple-100 report-col-net-cell">
                                 {row["Doanh thu net"] > 0 ? row["Doanh thu net"].toLocaleString() : '-'}
                             </td>
 
-                            <td className="p-4 text-right font-semibold text-blue-600 bg-blue-50/30">
+                            <td className="p-4 text-right font-semibold report-col-paid-cell">
                                 {row["Đã trả"] > 0 ? row["Đã trả"].toLocaleString() : '-'}
                             </td>
-                            <td className={`p-4 text-right font-bold bg-red-50/30 ${row._debtRaw > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                            <td className={`p-4 text-right font-bold report-col-debt-cell ${row._debtRaw > 0 ? 'text-red-500' : 'text-gray-400'}`}>
                                 {row._debtRaw > 0 ? row._debtRaw.toLocaleString() : '-'}
                             </td>
                             

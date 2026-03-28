@@ -48,7 +48,7 @@ const InlineInput = ({
             <button onClick={() => onSave((localVal ?? "").toString())} className="p-1.5 shrink-0 bg-green-500 text-white hover:bg-green-600 rounded-md shadow-sm transition-colors" title="Lưu">
                 <Check size={16} strokeWidth={3} />
             </button>
-            <button onClick={onCancel} className="p-1.5 shrink-0 bg-gray-200 text-gray-600 hover:bg-gray-300 rounded-md shadow-sm transition-colors" title="Hủy">
+            <button onClick={onCancel} className="p-1.5 shrink-0 bg-red-100 text-red-600 hover:bg-red-200 rounded-md shadow-sm transition-colors" title="Hủy">
                 <X size={16} strokeWidth={3} />
             </button>
         </div>
@@ -524,7 +524,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                               <>
                                                                   <div className="flex items-center justify-between">
                                                                       <GripVertical size={16} className="text-gray-300 group-hover:text-blue-500 shrink-0" />
-                                                                      <span className="font-black text-gray-800 text-lg flex-1 text-center truncate px-1">{room.number}</span>
+                                                                      <span className="font-black text-gray-800 text-base leading-tight flex-1 text-center px-1 break-words whitespace-normal">{room.number}</span>
                                                                       <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                                                                           <button onClick={() => setEditingId(room.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Đổi tên"><Edit2 size={15}/></button>
                                                                           <button onClick={() => confirmDelete('rooms', room.id, `Phòng ${room.number}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa"><X size={17}/></button>

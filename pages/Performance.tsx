@@ -77,6 +77,19 @@ const SERIES_COLORS = [
     '#64748b',
 ];
 
+const DARK_SERIES_COLORS = [
+    '#93c5fd',
+    '#67e8f9',
+    '#5eead4',
+    '#86efac',
+    '#fcd34d',
+    '#fdba74',
+    '#fda4af',
+    '#c4b5fd',
+    '#f9a8d4',
+    '#cbd5e1',
+];
+
 const EMPTY_AGG: MetricAgg = {
     orderValue: 0,
     paidAmount: 0,
@@ -244,7 +257,8 @@ const CandlestickPanel: React.FC<{
     metricLabel: string;
     selectedBucketKey: string | null;
     onSelectBucket: (bucketKey: string) => void;
-}> = ({ data, metricLabel, selectedBucketKey, onSelectBucket }) => {
+    isDarkMode: boolean;
+}> = ({ data, metricLabel, selectedBucketKey, onSelectBucket, isDarkMode }) => {
     if (data.length === 0) {
         return (
             <div className="h-[360px] flex items-center justify-center text-gray-400 text-sm">
@@ -272,6 +286,31 @@ const CandlestickPanel: React.FC<{
 
     const xStep = chartWidth / Math.max(data.length, 1);
     const xCenter = (index: number) => margin.left + xStep * index + xStep / 2;
+    const palette = isDarkMode
+        ? {
+              chartBg: '#111827',
+              grid: '#334155',
+              tick: '#cbd5e1',
+              title: '#e2e8f0',
+              selectedFill: '#1d4f7a',
+              selectedOpacity: 0.42,
+              upStroke: '#22c55e',
+              downStroke: '#f87171',
+              upFill: '#34d399',
+              downFill: '#f87171',
+          }
+        : {
+              chartBg: '#ffffff',
+              grid: '#e5e7eb',
+              tick: '#6b7280',
+              title: '#374151',
+              selectedFill: '#dbeafe',
+              selectedOpacity: 0.35,
+              upStroke: '#16a34a',
+              downStroke: '#dc2626',
+              upFill: '#22c55e',
+              downFill: '#ef4444',
+          };
 
     const yTicks = Array.from({ length: 5 }, (_, index) => {
         const ratio = index / 4;
@@ -282,6 +321,7 @@ const CandlestickPanel: React.FC<{
     return (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <svg width={width} height={height} role="img" aria-label={`Candlestick ${metricLabel}`}>
+                <rect x={0} y={0} width={width} height={height} fill={palette.chartBg} />
                 {yTicks.map((tick, index) => (
                     <g key={`ytick-${index}`}>
                         <line
@@ -289,14 +329,15 @@ const CandlestickPanel: React.FC<{
                             x2={width - margin.right}
                             y1={y(tick)}
                             y2={y(tick)}
-                            stroke="#e5e7eb"
+                            stroke={palette.grid}
                             strokeDasharray="4 3"
                         />
                         <text
                             x={margin.left - 10}
                             y={y(tick) + 4}
                             textAnchor="end"
-                            className="fill-gray-500 text-[11px] font-semibold"
+                            className="text-[11px] font-semibold"
+                            fill={palette.tick}
                         >
                             {compactCurrency(tick)}
                         </text>
@@ -312,7 +353,7 @@ const CandlestickPanel: React.FC<{
                     const lowY = y(item.low);
                     const bodyY = Math.min(openY, closeY);
                     const bodyHeight = Math.max(2, Math.abs(closeY - openY));
-                    const bodyColor = item.isUp ? '#16a34a' : '#dc2626';
+                    const bodyColor = item.isUp ? palette.upStroke : palette.downStroke;
                     const isSelected = selectedBucketKey === item.bucketKey;
 
                     return (
@@ -323,8 +364,8 @@ const CandlestickPanel: React.FC<{
                                     y={margin.top}
                                     width={Math.max(xStep - 2, 10)}
                                     height={chartHeight}
-                                    fill="#dbeafe"
-                                    fillOpacity={0.35}
+                                    fill={palette.selectedFill}
+                                    fillOpacity={palette.selectedOpacity}
                                     rx={4}
                                 />
                             )}
@@ -335,7 +376,7 @@ const CandlestickPanel: React.FC<{
                                 width={bodyWidth}
                                 height={bodyHeight}
                                 rx={2}
-                                fill={item.isUp ? '#22c55e' : '#ef4444'}
+                                fill={item.isUp ? palette.upFill : palette.downFill}
                                 stroke={bodyColor}
                                 strokeWidth={1}
                             />
@@ -344,7 +385,8 @@ const CandlestickPanel: React.FC<{
                                     x={center}
                                     y={height - margin.bottom + 20}
                                     textAnchor="middle"
-                                    className="fill-gray-500 text-[11px] font-medium"
+                                    className="text-[11px] font-medium"
+                                    fill={palette.tick}
                                 >
                                     {item.label}
                                 </text>
@@ -353,7 +395,7 @@ const CandlestickPanel: React.FC<{
                     );
                 })}
 
-                <text x={margin.left} y={16} className="fill-gray-700 text-xs font-bold uppercase">
+                <text x={margin.left} y={16} className="text-xs font-bold uppercase" fill={palette.title}>
                     {metricLabel}
                 </text>
             </svg>
@@ -385,6 +427,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
     const [includeCompanyLine, setIncludeCompanyLine] = useState(true);
     const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(null);
     const [drillSearch, setDrillSearch] = useState('');
+    const isDarkMode = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark';
 
     const [historyActorFilter, setHistoryActorFilter] = useState('ALL');
     const [historySourceFilter, setHistorySourceFilter] = useState<HistorySourceFilter>('ALL');
@@ -616,11 +659,12 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
 
     const seriesMeta = useMemo(() => {
         const selectedStaff = staffSummary.filter((staff) => selectedUserIds.includes(staff.id));
+        const palette = isDarkMode ? DARK_SERIES_COLORS : SERIES_COLORS;
         const lines = selectedStaff.map((staff, index) => ({
             id: staff.id,
             key: `staff_${staff.id}`,
             label: `${staff.ticker} (${staff.username})`,
-            color: SERIES_COLORS[index % SERIES_COLORS.length],
+            color: palette[index % palette.length],
         }));
 
         if (includeCompanyLine) {
@@ -628,11 +672,11 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                 id: 'COMPANY',
                 key: 'company',
                 label: 'TOÀN CÔNG TY',
-                color: '#0f172a',
+                color: isDarkMode ? '#f8fafc' : '#0f172a',
             });
         }
         return lines;
-    }, [staffSummary, selectedUserIds, includeCompanyLine]);
+    }, [staffSummary, selectedUserIds, includeCompanyLine, isDarkMode]);
 
     const rawChartRows = useMemo(() => {
         const staffBucketMap = new Map<string, Map<string, MetricAgg>>();
@@ -1278,6 +1322,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                         metricLabel={METRIC_LABELS[metric]}
                         selectedBucketKey={selectedBucketKey}
                         onSelectBucket={setSelectedBucketKey}
+                        isDarkMode={isDarkMode}
                     />
                 ) : (
                     <div className="h-[380px]">
@@ -1289,29 +1334,50 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                                     if (bucketKey) setSelectedBucketKey(bucketKey);
                                 }}
                             >
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? '#334155' : '#d1d5db'} />
+                                <XAxis
+                                    dataKey="label"
+                                    tick={{ fontSize: 12, fill: isDarkMode ? '#cbd5e1' : '#475569' }}
+                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
+                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
+                                />
                                 <YAxis
                                     yAxisId="left"
-                                    tick={{ fontSize: 12 }}
+                                    tick={{ fontSize: 12, fill: isDarkMode ? '#cbd5e1' : '#475569' }}
                                     tickFormatter={yTickFormatter}
                                     domain={chartMode === 'INDEX' ? [0, 'auto'] : [0, 'auto']}
+                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
+                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
                                 />
-                                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} allowDecimals={false} />
+                                <YAxis
+                                    yAxisId="right"
+                                    orientation="right"
+                                    tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }}
+                                    allowDecimals={false}
+                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
+                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
+                                />
                                 <Tooltip
                                     formatter={(value: any, name: string) => {
                                         if (name === 'Khối lượng đơn') return [`${value}`, name];
                                         return [formatMetricValue(Number(value || 0), chartMode === 'INDEX' ? 'ORDER_COUNT' : metric), name];
                                     }}
+                                    contentStyle={{
+                                        backgroundColor: isDarkMode ? '#182233' : '#ffffff',
+                                        borderColor: isDarkMode ? '#334155' : '#d1d5db',
+                                        borderRadius: 12,
+                                        color: isDarkMode ? '#f8fafc' : '#0f172a',
+                                    }}
+                                    labelStyle={{ color: isDarkMode ? '#cbd5e1' : '#334155' }}
                                 />
-                                <Legend />
+                                <Legend wrapperStyle={{ color: isDarkMode ? '#dbeafe' : '#334155' }} />
 
                                 <Bar
                                     yAxisId="right"
                                     dataKey="volume"
                                     name="Khối lượng đơn"
                                     barSize={18}
-                                    fill="#cbd5e1"
+                                    fill={isDarkMode ? '#475569' : '#cbd5e1'}
                                     radius={[4, 4, 0, 0]}
                                 />
 
@@ -1325,7 +1391,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                                         stroke={series.color}
                                         strokeWidth={series.id === 'COMPANY' ? 3 : 2}
                                         dot={false}
-                                        activeDot={{ r: 5 }}
+                                        activeDot={{ r: 5, fill: series.color }}
                                     />
                                 ))}
                             </ComposedChart>
@@ -1484,7 +1550,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b bg-red-50/70">
+                    <div className="performance-anomaly-header px-4 py-3 border-b">
                         <h3 className="font-bold text-sm text-red-800 flex items-center gap-2">
                             <AlertTriangle size={15} />
                             Cảnh báo bất thường (Phase 3)
@@ -1498,16 +1564,16 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                         {anomalies.map((item) => (
                             <div
                                 key={item.id}
-                                className={`rounded-xl border p-3 ${
-                                    item.severity === 'HIGH' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'
+                                className={`performance-anomaly-card rounded-xl border p-3 ${
+                                    item.severity === 'HIGH' ? 'performance-anomaly-card-high' : 'performance-anomaly-card-medium'
                                 }`}
                             >
                                 <div className="flex items-center justify-between gap-2">
                                     <div
                                         className={`text-[10px] font-bold px-2 py-1 rounded-full ${
                                             item.severity === 'HIGH'
-                                                ? 'bg-red-100 text-red-700'
-                                                : 'bg-amber-100 text-amber-700'
+                                                ? 'performance-anomaly-chip-high'
+                                                : 'performance-anomaly-chip-medium'
                                         }`}
                                     >
                                         {item.severity}

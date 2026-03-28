@@ -175,7 +175,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
                           currentPage === historyItem.id
                               ? 'bg-emerald-600 text-white shadow-soft'
-                              : 'text-gray-700 hover:bg-emerald-50'
+                              : 'text-gray-700 katka-history-nav-hover'
                           }`}
                       >
                           <CalendarDays size={20} />

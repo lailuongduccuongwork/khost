@@ -326,7 +326,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
         
         {/* GROUP 1: CHECKED OUT STATS (Rounded-3xl for consistency) */}
         <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="bg-green-50/50 p-4 md:p-6 border-b border-green-100 flex justify-between items-center">
+             <div className="dashboard-stat-header dashboard-stat-header-success p-4 md:p-6 border-b border-green-100 flex justify-between items-center">
                  <div>
                      <h3 className="text-green-800 font-bold flex items-center gap-2 text-sm md:text-base"><CalendarCheck size={18}/> Khách đã trả phòng</h3>
                      <p className="text-[10px] md:text-xs text-green-600 mt-1 font-medium">Dựa trên ngày check-out</p>
@@ -358,7 +358,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
 
         {/* GROUP 2: CREATED BOOKINGS STATS (Rounded-3xl for consistency) */}
         <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="bg-blue-50/50 p-4 md:p-6 border-b border-blue-100 flex justify-between items-center">
+             <div className="dashboard-stat-header dashboard-stat-header-info p-4 md:p-6 border-b border-blue-100 flex justify-between items-center">
                  <div>
                      <h3 className="text-blue-800 font-bold flex items-center gap-2 text-sm md:text-base"><CreditCard size={18}/> Đặt phòng phát sinh</h3>
                      <p className="text-[10px] md:text-xs text-blue-600 mt-1 font-medium">Dựa trên ngày tạo đơn</p>
@@ -399,14 +399,14 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
 
              <div className="p-4 md:p-6 pt-2 grid grid-cols-2 gap-4 md:gap-5 h-full">
                  {/* OCC Widget */}
-                 <div className="bg-[#F5F5F7] rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
-                     <div className="mb-4 p-2 md:p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-purple-600 border border-purple-50/50">
+                 <div className="dashboard-kpi-tile rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all">
+                     <div className="dashboard-kpi-icon-shell mb-4 p-2 md:p-3 rounded-2xl text-purple-600 border border-purple-50/50">
                         <BedDouble size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
                      </div>
 
                      <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Công suất</p>
                      <p className="text-2xl md:text-4xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.occ}%</p>
-                     <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
+                     <div className="dashboard-kpi-pill px-3 py-1 rounded-lg border border-gray-200/50">
                         <p className="text-[10px] md:text-[11px] font-semibold text-gray-500 whitespace-nowrap">
                             {performanceStats.occupiedInventory}/{performanceStats.totalInventory} Đêm phòng
                         </p>
@@ -414,14 +414,14 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
                  </div>
                  
                  {/* ADR Widget */}
-                 <div className="bg-[#F5F5F7] rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all hover:bg-[#F0F0F2]">
-                     <div className="mb-4 p-2 md:p-3 bg-white rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.06)] text-teal-600 border border-teal-50/50">
+                 <div className="dashboard-kpi-tile rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all">
+                     <div className="dashboard-kpi-icon-shell mb-4 p-2 md:p-3 rounded-2xl text-teal-600 border border-teal-50/50">
                         <DollarSign size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
                      </div>
 
                      <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Giá TB (ADR)</p>
                      <p className="text-xl md:text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{formatCompactVND(performanceStats.adr)}</p>
-                     <div className="px-3 py-1 bg-white/60 backdrop-blur-md rounded-lg border border-gray-200/50">
+                     <div className="dashboard-kpi-pill px-3 py-1 rounded-lg border border-gray-200/50">
                         <p className="text-[10px] md:text-[11px] font-semibold text-gray-500">
                             VNĐ / Đêm
                         </p>
