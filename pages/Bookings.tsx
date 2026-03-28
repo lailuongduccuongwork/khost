@@ -72,6 +72,101 @@ const defaultHistoryFilters = (): BookingHistoryFilters => ({
     source: 'ALL',
 });
 
+const BRANCH_STOP_WORDS = new Set(['chi', 'nhanh', 'cn', 'co', 'so', 'khost', 'host', 'branch']);
+
+const normalizeImportText = (value: string) =>
+    String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'd')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+
+const toCompactKey = (value: string) => normalizeImportText(value).replace(/\s+/g, '');
+
+const toReducedBranchText = (value: string) => {
+    const normalized = normalizeImportText(value);
+    if (!normalized) return '';
+    return normalized
+        .split(' ')
+        .filter((token) => token && !BRANCH_STOP_WORDS.has(token))
+        .join(' ');
+};
+
+const buildPropertyImportLookup = (allProperties: Property[]) => {
+    const byKey = new Map<string, Property[]>();
+
+    const attach = (key: string, property: Property) => {
+        if (!key) return;
+        const current = byKey.get(key) || [];
+        if (!current.some((item) => item.id === property.id)) {
+            current.push(property);
+            byKey.set(key, current);
+        }
+    };
+
+    allProperties.forEach((property) => {
+        const propertyName = String(property.name || '').trim();
+        const normalized = normalizeImportText(propertyName);
+        const reduced = toReducedBranchText(propertyName);
+        const rawTokens = propertyName.split(/[^0-9A-Za-zÀ-ỹĐđ]+/).map((token) => token.trim()).filter(Boolean);
+
+        const keys = new Set<string>();
+        keys.add(toCompactKey(normalized));
+        keys.add(toCompactKey(reduced));
+
+        const initials = rawTokens
+            .map((token) => toCompactKey(token).charAt(0))
+            .filter(Boolean)
+            .join('');
+        if (initials) keys.add(initials);
+
+        rawTokens.forEach((token) => {
+            const compactToken = toCompactKey(token);
+            if (!compactToken) return;
+
+            const hasDigit = /\d/.test(token);
+            const isUpperShort = token.length <= 6 && token === token.toUpperCase();
+            if (hasDigit || isUpperShort) {
+                keys.add(compactToken);
+            }
+        });
+
+        keys.forEach((key) => attach(key, property));
+    });
+
+    return byKey;
+};
+
+const resolveImportedProperty = (branchName: string, propertyLookup: Map<string, Property[]>) => {
+    const normalized = normalizeImportText(branchName);
+    if (!normalized) {
+        return { status: 'EMPTY' as const, property: null as Property | null, candidates: [] as Property[] };
+    }
+
+    const reduced = toReducedBranchText(normalized);
+    const keys = Array.from(new Set([toCompactKey(normalized), toCompactKey(reduced)].filter(Boolean)));
+
+    const candidatesById = new Map<string, Property>();
+    keys.forEach((key) => {
+        const candidates = propertyLookup.get(key) || [];
+        candidates.forEach((property) => candidatesById.set(property.id, property));
+    });
+
+    const candidates = Array.from(candidatesById.values());
+    if (candidates.length === 0) {
+        return { status: 'NOT_FOUND' as const, property: null as Property | null, candidates: [] as Property[] };
+    }
+    if (candidates.length > 1) {
+        return { status: 'AMBIGUOUS' as const, property: null as Property | null, candidates };
+    }
+
+    return { status: 'MATCHED' as const, property: candidates[0], candidates };
+};
+
 const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, history, customers, onRefresh, currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporting, setIsImporting] = useState(false);
@@ -106,6 +201,16 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property.name])), [properties]);
   const tagById = useMemo(() => new Map(tags.map(tag => [tag.id, tag.name])), [tags]);
   const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+  const userLookupByImportKey = useMemo(() => {
+      const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+      const map = new Map<string, User>();
+      users.forEach((user) => {
+          map.set(normalize(user.id), user);
+          map.set(normalize(user.username), user);
+          if (user.fullName) map.set(normalize(user.fullName), user);
+      });
+      return map;
+  }, [users]);
 
   const getDisplayName = (booking: Booking) =>
       booking.guestName || customerById.get(booking.customerId)?.name || 'Khách lẻ';
@@ -117,7 +222,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   const getCreatorLabel = (booking: Booking) => {
       const staff = userById.get(booking.createdBy);
       if (!staff) return booking.createdBy || '--';
-      return staff.fullName ? `${staff.username} (${staff.fullName})` : staff.username;
+      return staff.username || booking.createdBy || '--';
   };
   const getBookingTags = (booking: Booking) => (booking.tags || []).map(tagId => tagById.get(tagId) || tagId);
   const getFeeTotals = (booking: Booking) => {
@@ -474,22 +579,33 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   };
 
   // 4. Confirm Action
-  const confirmDeleteAction = () => {
+  const confirmDeleteAction = async () => {
       const { idsToDelete, isBatchUndo } = deleteModal;
+      let deletedCount = 0;
 
-      if (isBatchUndo) {
-          // Special case for Batch Undo
-          const batchId = idsToDelete[0];
-          const deletedCount = DataService.deleteBookingsByBatchId(batchId, currentUser.id);
-          setLastImportBatch(null);
-      } else {
-          // Normal Delete (Single or Bulk)
-          DataService.deleteBookings(idsToDelete, currentUser.id);
-          setSelectedIds(new Set());
+      try {
+          if (isBatchUndo) {
+              // Special case for Batch Undo
+              const batchId = idsToDelete[0];
+              deletedCount = await DataService.deleteBookingsByBatchId(batchId, currentUser.id);
+              if (deletedCount > 0) setLastImportBatch(null);
+          } else {
+              // Normal Delete (Single or Bulk)
+              const deletedIds = await DataService.deleteBookings(idsToDelete, currentUser.id);
+              deletedCount = deletedIds.length;
+              if (deletedCount > 0) setSelectedIds(new Set());
+          }
+
+          if (deletedCount <= 0) {
+              alert('Không có đơn nào được xóa. Dữ liệu có thể đã thay đổi hoặc đã bị xóa trước đó.');
+          }
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Lỗi không xác định';
+          alert(`Xóa đơn thất bại: ${message}`);
+      } finally {
+          setDeleteModal({ isOpen: false, idsToDelete: [] });
+          if (onRefresh) onRefresh();
       }
-
-      setDeleteModal({ isOpen: false, idsToDelete: [] });
-      if (onRefresh) onRefresh();
   };
 
   const handleResetAll = () => {
@@ -517,16 +633,18 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           "Hạng phòng", 
           "Tên phòng",
           "Khách hàng",
+          "Thời gian đặt (dd/mm/yyyy hh:mm:ss)",
           "Thời gian nhận (dd/mm/yyyy hh:mm:ss)", 
           "Thời gian trả (dd/mm/yyyy hh:mm:ss)", 
           "Tổng tiền (###0)", 
           "Khách đã trả (###0)", 
+          "Nhân viên đặt",
           "Ghi chú"
       ];
       
       const sampleRows = [
-          ["HD", "HD", "202", "Đức Anh", "31/12/2025 23:30:00", "01/01/2026 07:30:00", 350000, 350000, "Ghi chú mẫu"],
-          ["K-Host ĐN", "Std", "301", "Nguyễn Văn A", "05/05/2025 14:00:00", "06/05/2025 12:00:00", 500000, 200000, "Khách quen"]
+          ["HD", "HD", "202", "Đức Anh", "30/12/2025 10:15:00", "31/12/2025 23:30:00", "01/01/2026 07:30:00", 350000, 350000, "sale01", "Ghi chú mẫu"],
+          ["K-Host ĐN", "Std", "301", "Nguyễn Văn A", "04/05/2025 21:40:00", "05/05/2025 14:00:00", "06/05/2025 12:00:00", 500000, 200000, "admin", "Khách quen"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
@@ -536,10 +654,12 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           { wch: 15 }, // Hạng phòng
           { wch: 15 }, // Tên phòng
           { wch: 25 }, // Khách hàng
+          { wch: 25 }, // Thời gian đặt
           { wch: 25 }, // Thời gian nhận
           { wch: 25 }, // Thời gian trả
           { wch: 15 }, // Tổng tiền
           { wch: 15 }, // Đã trả
+          { wch: 20 }, // Nhân viên đặt
           { wch: 20 }  // Ghi chú
       ];
 
@@ -607,6 +727,32 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       return localDate.toISOString().slice(0, -1);
   };
 
+  const parseImportAmount = (value: any): number => {
+      if (value === null || value === undefined || value === '') return 0;
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+      const raw = String(value).trim();
+      if (!raw) return 0;
+
+      // Hỗ trợ format VN phổ biến: 490.000 / 1,200,000 / 1 200 000đ
+      const normalizedDigits = raw
+          .replace(/[₫đĐ]/g, '')
+          .replace(/\s+/g, '')
+          .replace(/[^\d-]/g, '');
+
+      const parsed = Number(normalizedDigits);
+      return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const resolveImportStaff = (rawValue: any) => {
+      const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+      const staffText = String(rawValue || '').trim();
+      if (!staffText) return { staffId: currentUser.id, unresolved: '' };
+      const matchedUser = userLookupByImportKey.get(normalize(staffText));
+      if (matchedUser) return { staffId: matchedUser.id, unresolved: '' };
+      return { staffId: currentUser.id, unresolved: staffText };
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -614,10 +760,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       setIsImporting(true);
       const reader = new FileReader();
       
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
           try {
-              const bstr = evt.target?.result;
-              const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+              const raw = evt.target?.result;
+              if (!raw) throw new Error('File reader không trả về dữ liệu');
+
+              const wb =
+                  raw instanceof ArrayBuffer
+                      ? XLSX.read(new Uint8Array(raw), { type: 'array', cellDates: true })
+                      : XLSX.read(raw, { type: 'binary', cellDates: true });
               const wsname = wb.SheetNames[0];
               const ws = wb.Sheets[wsname];
               const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
@@ -626,6 +777,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               // Data[1...] is Rows
               let successCount = 0;
               let errorLog: string[] = [];
+              let warningLog: string[] = [];
 
               if (data.length < 2) {
                   alert("File không có dữ liệu!");
@@ -634,7 +786,34 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               }
 
               const allProperties = DataService.getProperties();
+              const propertyLookup = buildPropertyImportLookup(allProperties);
+              const propertyNamesHint = allProperties.map((property) => property.name).join(', ');
               const batchId = `import_${Date.now()}`;
+              const headerRow = Array.isArray(data[0]) ? (data[0] as any[]) : [];
+              const normalizedHeaders = headerRow.map((cell) => String(cell || '').trim().toLowerCase());
+              const isNewTemplate = normalizedHeaders.length >= 11;
+
+              const findColumnIndex = (candidates: string[], fallback: number) => {
+                  const idx = normalizedHeaders.findIndex((header) =>
+                      candidates.some((candidate) => header.includes(candidate))
+                  );
+                  return idx >= 0 ? idx : fallback;
+              };
+
+              const columns = {
+                  branch: findColumnIndex(['chi nhánh', 'chi nhanh'], 0),
+                  room: findColumnIndex(['tên phòng', 'ten phong'], 2),
+                  guest: findColumnIndex(['khách hàng', 'khach hang'], 3),
+                  createdAt: findColumnIndex(['thời gian đặt', 'thoi gian dat', 'ngày đặt', 'ngay dat'], isNewTemplate ? 4 : -1),
+                  checkIn: findColumnIndex(['thời gian nhận', 'thoi gian nhan', 'nhận phòng', 'nhan phong'], isNewTemplate ? 5 : 4),
+                  checkOut: findColumnIndex(['thời gian trả', 'thoi gian tra', 'trả phòng', 'tra phong'], isNewTemplate ? 6 : 5),
+                  total: findColumnIndex(['tổng tiền', 'tong tien'], isNewTemplate ? 7 : 6),
+                  paid: findColumnIndex(['khách đã trả', 'khach da tra', 'đã trả', 'da tra'], isNewTemplate ? 8 : 7),
+                  staff: findColumnIndex(['nhân viên đặt', 'nhan vien dat', 'sale', 'nhân viên', 'nhan vien'], isNewTemplate ? 9 : -1),
+                  note: findColumnIndex(['ghi chú', 'ghi chu', 'note'], isNewTemplate ? 10 : 8),
+              };
+
+              const readCell = (row: any[], index: number) => (index >= 0 ? row[index] : undefined);
 
               // Loop through rows
               for (let i = 1; i < data.length; i++) {
@@ -642,56 +821,73 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                   if (!row || row.length === 0) continue;
 
                   // --- EXTRACT DATA ---
-                  const branchName = String(row[0] || '').trim();
-                  const roomNum = String(row[2] || '').trim(); // Tên phòng
-                  const guestName = String(row[3] || 'Khách Import');
-                  const checkInRaw = row[4];
-                  const checkOutRaw = row[5];
-                  const total = Number(row[6]) || 0;
-                  const paid = Number(row[7]) || 0;
-                  const note = String(row[8] || '');
+                  const branchName = String(readCell(row, columns.branch) || '').trim();
+                  const roomNum = String(readCell(row, columns.room) || '').trim(); // Tên phòng
+                  const guestName = String(readCell(row, columns.guest) || 'Khách Import');
+                  const createdAtRaw = readCell(row, columns.createdAt);
+                  const checkInRaw = readCell(row, columns.checkIn);
+                  const checkOutRaw = readCell(row, columns.checkOut);
+                  const total = parseImportAmount(readCell(row, columns.total));
+                  const paid = parseImportAmount(readCell(row, columns.paid));
+                  const staffRaw = readCell(row, columns.staff);
+                  const note = String(readCell(row, columns.note) || '');
 
                   if (!roomNum) continue; // Skip empty rows
 
-                  // --- 1. SMART PROPERTY MATCHING ---
+                  // --- 1. STRICT PROPERTY MATCHING ---
                   let targetPropId: string | undefined;
                   
                   if (branchName) {
-                      // Attempt 1: Exact or Partial match
-                      // Safeguard: Ensure p.name is string
-                      const prop = allProperties.find(p => 
-                          (p.name || '').toLowerCase().includes(branchName.toLowerCase()) || 
-                          branchName.toLowerCase().includes((p.name || '').toLowerCase())
-                      );
-                      if (prop) targetPropId = prop.id;
+                      const resolvedProperty = resolveImportedProperty(branchName, propertyLookup);
+                      if (resolvedProperty.status === 'NOT_FOUND') {
+                          errorLog.push(
+                              `Dòng ${i + 1}: Chi nhánh "${branchName}" không khớp chính xác trong hệ thống. Vui lòng nhập đúng tên/viết tắt duy nhất (VD: ${propertyNamesHint}).`
+                          );
+                          continue;
+                      }
+                      if (resolvedProperty.status === 'AMBIGUOUS') {
+                          const candidateNames = resolvedProperty.candidates.map((property) => property.name).join(', ');
+                          errorLog.push(
+                              `Dòng ${i + 1}: Chi nhánh "${branchName}" bị mơ hồ (${candidateNames}). Vui lòng ghi rõ hơn để tránh vào sai cơ sở.`
+                          );
+                          continue;
+                      }
+                      if (resolvedProperty.status === 'MATCHED' && resolvedProperty.property) {
+                          targetPropId = resolvedProperty.property.id;
+                      }
                   }
 
                   // --- 2. ROOM FINDING LOGIC ---
                   let targetRoom: Room | undefined;
 
-                  // Find all rooms with this number
-                  // Safeguard: Ensure r.number is string
-                  const matches = rooms.filter(r => (r.number || '').toLowerCase() === roomNum.toLowerCase());
+                  // Find all rooms with this number (normalize cả trường hợp có/không có khoảng trắng)
+                  const normalizeRoomNumber = (value: string) => value.toLowerCase().replace(/\s+/g, '');
+                  const targetRoomNumber = normalizeRoomNumber(roomNum);
+                  const matches = rooms.filter(r => normalizeRoomNumber(r.number || '') === targetRoomNumber);
 
                   if (matches.length === 0) {
                       errorLog.push(`Dòng ${i+1}: Không tìm thấy phòng số "${roomNum}" trong hệ thống.`);
                       continue;
-                  } else if (matches.length === 1) {
-                      // Perfect! Only one room exists with this number (even if branch name is wrong/missing)
-                      targetRoom = matches[0];
-                  } else {
-                      // Multiple rooms with same number. Need to filter by Property.
-                      if (targetPropId) {
-                          targetRoom = matches.find(r => r.propertyId === targetPropId);
-                      }
-                      
-                      // If still no match (e.g. Branch "HD" didn't match "K-Host Hà Nội"), fail strictly to avoid wrong assignment
+                  } else if (targetPropId) {
+                      targetRoom = matches.find(r => r.propertyId === targetPropId);
                       if (!targetRoom) {
-                          // Try one last fuzzy fallback: Check if the Branch string provided starts with same letter? 
-                          // No, too risky. Just Error out.
-                          errorLog.push(`Dòng ${i+1}: Có nhiều phòng số "${roomNum}". Vui lòng nhập đúng tên Chi nhánh (VD: ${allProperties.map(p=>p.name).join(', ')}) để phân biệt.`);
+                          const branchesContainingSameRoom = Array.from(
+                              new Set(
+                                  matches
+                                      .map((room) => allProperties.find((property) => property.id === room.propertyId)?.name || room.propertyId)
+                                      .filter(Boolean)
+                              )
+                          );
+                          errorLog.push(
+                              `Dòng ${i + 1}: Phòng "${roomNum}" không thuộc chi nhánh "${branchName}". Phòng này hiện có ở: ${branchesContainingSameRoom.join(', ')}.`
+                          );
                           continue;
                       }
+                  } else if (matches.length === 1) {
+                      targetRoom = matches[0];
+                  } else {
+                      errorLog.push(`Dòng ${i + 1}: Có nhiều phòng số "${roomNum}". Vui lòng nhập đúng tên Chi nhánh (VD: ${propertyNamesHint}) để phân biệt.`);
+                      continue;
                   }
 
                   // --- 3. DATE PARSING ---
@@ -701,6 +897,22 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                   if (!checkInISO || !checkOutISO) {
                       errorLog.push(`Dòng ${i+1}: Định dạng ngày tháng không hợp lệ (Yêu cầu: dd/mm/yyyy hh:mm:ss).`);
                       continue;
+                  }
+
+                  const createdAtParsed = parseImportDate(createdAtRaw);
+                  let createdAtISO = new Date().toISOString();
+                  if (createdAtRaw && !createdAtParsed) {
+                      warningLog.push(`Dòng ${i+1}: Thời gian đặt không hợp lệ, đã gán theo thời gian hiện tại.`);
+                  } else if (createdAtParsed) {
+                      const createdAtDate = new Date(createdAtParsed);
+                      if (!isNaN(createdAtDate.getTime())) {
+                          createdAtISO = createdAtDate.toISOString();
+                      }
+                  }
+
+                  const resolvedStaff = resolveImportStaff(staffRaw);
+                  if (resolvedStaff.unresolved) {
+                      warningLog.push(`Dòng ${i+1}: Không tìm thấy nhân viên "${resolvedStaff.unresolved}", đã gán về tài khoản import hiện tại (${currentUser.username}).`);
                   }
 
                   // --- 4. CREATE BOOKING ---
@@ -719,16 +931,26 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                       status: inferredStatus,
                       totalPrice: total,
                       paidAmount: paid,
-                      createdAt: new Date().toISOString(),
-                      createdBy: currentUser.id,
-                      notes: note + (branchName ? ` [CN: ${branchName}]` : '') + " [Excel]",
+                      createdAt: createdAtISO,
+                      createdBy: resolvedStaff.staffId,
+                      notes:
+                          note +
+                          (branchName ? ` [CN: ${branchName}]` : '') +
+                          (resolvedStaff.unresolved ? ` [NV đặt import: ${resolvedStaff.unresolved}]` : '') +
+                          " [Excel]",
                       tags: [],
                       extraFees: [],
                       importBatchId: batchId
                   };
 
-                  DataService.addBooking(newBooking, { source: 'IMPORT', staffId: currentUser.id });
-                  successCount++;
+                  try {
+                      await DataService.addBooking(newBooking, { source: 'IMPORT', staffId: currentUser.id });
+                      successCount++;
+                  } catch (createError) {
+                      const detail = createError instanceof Error ? createError.message : 'Không rõ nguyên nhân';
+                      errorLog.push(`Dòng ${i + 1}: Không thể tạo đơn cho phòng "${roomNum}" (${detail}).`);
+                      continue;
+                  }
               }
 
               if (successCount > 0) {
@@ -740,7 +962,8 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                           fileName: file.name,
                           batchId,
                           successCount,
-                          errorCount: errorLog.length
+                          errorCount: errorLog.length,
+                          warningCount: warningLog.length
                       },
                       source: 'IMPORT'
                   });
@@ -748,9 +971,14 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                   if (onRefresh) onRefresh();
                   
                   if (errorLog.length > 0) {
-                      alert(`Đã nhập thành công ${successCount} dòng.\n\nTUY NHIÊN CÓ MỘT SỐ LỖI:\n${errorLog.join('\n')}`);
+                      const warningText = warningLog.length > 0 ? `\n\nCẢNH BÁO:\n${warningLog.slice(0, 10).join('\n')}${warningLog.length > 10 ? '\n...' : ''}` : '';
+                      alert(`Đã nhập thành công ${successCount} dòng.\n\nTUY NHIÊN CÓ MỘT SỐ LỖI:\n${errorLog.join('\n')}${warningText}`);
                   } else {
-                      alert(`Đã nhập thành công ${successCount} đơn đặt phòng!`);
+                      if (warningLog.length > 0) {
+                          alert(`Đã nhập thành công ${successCount} đơn đặt phòng.\n\nCẢNH BÁO:\n${warningLog.slice(0, 10).join('\n')}${warningLog.length > 10 ? '\n...' : ''}`);
+                      } else {
+                          alert(`Đã nhập thành công ${successCount} đơn đặt phòng!`);
+                      }
                   }
               } else {
                   if (errorLog.length > 0) alert(`KHÔNG NHẬP ĐƯỢC DÒNG NÀO!\n\nNguyên nhân:\n${errorLog.slice(0, 10).join('\n')}${errorLog.length > 10 ? '\n...' : ''}`);
@@ -759,14 +987,15 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
           } catch (error) {
               console.error(error);
-              alert("Lỗi đọc file Excel. Vui lòng đảm bảo đúng định dạng mẫu.");
+              const errorMessage = error instanceof Error ? error.message : 'Không rõ nguyên nhân';
+              alert(`Lỗi đọc file Excel. Vui lòng đảm bảo đúng định dạng mẫu.\nChi tiết kỹ thuật: ${errorMessage}`);
           } finally {
               setIsImporting(false);
               if (fileInputRef.current) fileInputRef.current.value = ''; // Reset input
           }
       };
       
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
   };
 
   const triggerUpload = () => {

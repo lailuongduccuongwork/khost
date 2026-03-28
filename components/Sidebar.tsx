@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket, List } from 'lucide-react';
+import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket, List, TrendingUp } from 'lucide-react';
 import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
@@ -20,6 +20,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
     // NEW: Housekeeping Menu Item
     { id: 'housekeeping', label: 'Buồng phòng', icon: PaintBucket, permission: PERMISSIONS.MANAGE_ROOMS }, 
+    { id: 'performance', label: 'Hiệu suất chốt đơn', icon: TrendingUp, permission: PERMISSIONS.VIEW_REPORTS },
     { id: 'reports', label: 'Báo cáo', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
   ];
 
@@ -50,6 +51,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
            return currentUser.permissions?.includes(item.permission) || 
                   currentUser.role === UserRole.ADMIN || 
                   currentUser.role === UserRole.MANAGER;
+      }
+
+      if (item.id === 'performance') {
+          return currentUser.permissions?.includes(item.permission) ||
+                 currentUser.role === UserRole.ADMIN ||
+                 currentUser.role === UserRole.MANAGER;
       }
 
       return currentUser.permissions?.includes(item.permission);

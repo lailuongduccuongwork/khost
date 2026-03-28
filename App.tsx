@@ -4,17 +4,27 @@ import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import RoomMap from './pages/RoomMap';
 import Bookings from './pages/Bookings'; 
-import Admin from './pages/Admin';
 import Management from './pages/Management';
 import Reports from './pages/Reports';
+import Performance from './pages/Performance';
 import Housekeeping from './pages/Housekeeping'; 
 import SuperAdmin from './pages/SuperAdmin'; 
 import HistoryPage from './pages/History';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, HistoryLog } from './types';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, HistoryLog, RoomPolicyRule } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
+
+const normalizeStringList = (list?: string[]) =>
+  Array.from(new Set((list || []).filter(Boolean))).sort();
+
+const isSameStringList = (left?: string[], right?: string[]) => {
+  const a = normalizeStringList(left);
+  const b = normalizeStringList(right);
+  if (a.length !== b.length) return false;
+  return a.every((value, idx) => value === b[idx]);
+};
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -45,6 +55,7 @@ const App: React.FC = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
+  const [roomPolicies, setRoomPolicies] = useState<RoomPolicyRule[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [history, setHistory] = useState<HistoryLog[]>([]);
@@ -52,6 +63,10 @@ const App: React.FC = () => {
   // --- NOTIFICATION ENGINE ---
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const loadingFallbackRef = useRef<number | null>(null);
+  const userDirectoryHydrationRef = useRef<{ tenantId: string | null; ready: boolean }>({
+    tenantId: null,
+    ready: false,
+  });
 
   const clearLoadingFallback = useCallback(() => {
     if (loadingFallbackRef.current !== null) {
@@ -120,6 +135,7 @@ const App: React.FC = () => {
       setIsLoading(true);
       armLoadingFallback();
       setActiveTenantId(tenantId);
+      userDirectoryHydrationRef.current = { tenantId, ready: false };
       
       DataService.init(tenantId, () => {
           setDataTick(prev => prev + 1);
@@ -142,6 +158,31 @@ const App: React.FC = () => {
     };
   }, [clearLoadingFallback]);
 
+  const clearSession = useCallback((reason?: string) => {
+    if (currentUser) {
+      try {
+        DataService.recordLogout(currentUser, activeTenantId || currentUser.tenantId);
+      } catch (e) {
+        console.error('recordLogout error', e);
+      }
+    }
+    clearLoadingFallback();
+    DataService.setAuditActor(null);
+    setCurrentUser(null);
+    setLoginUsername('');
+    setLoginPassword('');
+    setActiveTenantId(null);
+    setIsLoading(false);
+    setCurrentPage('dashboard');
+    setIsSuperAdminView(false);
+    userDirectoryHydrationRef.current = { tenantId: null, ready: false };
+    localStorage.removeItem('k_host_user');
+    localStorage.removeItem('k_host_tenant');
+    if (reason) {
+      alert(reason);
+    }
+  }, [activeTenantId, clearLoadingFallback, currentUser]);
+
   // --- MAIN DATA REFRESH LOGIC ---
   useEffect(() => {
     if (isLoading || !activeTenantId) return;
@@ -151,26 +192,85 @@ const App: React.FC = () => {
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
         setHistory(DataService.getHistory());
+        setRoomPolicies([]);
         return;
     }
 
     const props = DataService.getProperties();
     const allUsers = DataService.getUsers();
+    const tenantUsers = allUsers.filter((user) => {
+      if (user.tenantId === activeTenantId) return true;
+      if (!user.tenantId && currentUser) {
+        return user.id === currentUser.id || user.username === currentUser.username;
+      }
+      return false;
+    });
+    const hydration = userDirectoryHydrationRef.current;
+    if (hydration.tenantId !== activeTenantId) {
+      hydration.tenantId = activeTenantId;
+      hydration.ready = false;
+    }
+    if (tenantUsers.length > 0) {
+      hydration.ready = true;
+    }
+
+    if (currentUser && currentUser.role !== UserRole.SUPER_ADMIN && hydration.ready) {
+      // Có thể xảy ra lệch id session tạm thời giữa các trình duyệt/tab mới.
+      // Ưu tiên id, fallback theo username cùng tenant để đồng bộ lại session thay vì logout oan.
+      const liveUserById = tenantUsers.find((user) => user.id === currentUser.id);
+      const liveUserByUsername =
+        !liveUserById && currentUser.username
+          ? tenantUsers.find(
+              (user) =>
+                user.username === currentUser.username &&
+                user.tenantId === (currentUser.tenantId || activeTenantId)
+            )
+          : null;
+
+      const liveUser = liveUserById || liveUserByUsername;
+      if (!liveUser) {
+        clearSession('Tài khoản của bạn không còn khả dụng. Vui lòng đăng nhập lại.');
+        return;
+      }
+
+      if (liveUserByUsername && liveUserByUsername.id !== currentUser.id) {
+        setCurrentUser(liveUserByUsername);
+        localStorage.setItem('k_host_user', JSON.stringify(liveUserByUsername));
+        return;
+      }
+
+      const roleChanged = liveUser.role !== currentUser.role;
+      const permissionsChanged = !isSameStringList(liveUser.permissions, currentUser.permissions);
+      const allowedPropertyChanged = !isSameStringList(liveUser.allowedPropertyIds, currentUser.allowedPropertyIds);
+
+      if (roleChanged || permissionsChanged || allowedPropertyChanged) {
+        clearSession('Quyền tài khoản của bạn vừa được quản trị viên cập nhật. Vui lòng đăng nhập lại để áp dụng quyền mới.');
+        return;
+      }
+    }
     
-    setProperties(props);
-    setUsers(allUsers);
+    const allowedIds = currentUser?.allowedPropertyIds || [];
+    const hasRestrictions = allowedIds.length > 0;
+    const visibleProperties = hasRestrictions ? props.filter((p) => allowedIds.includes(p.id)) : props;
+
+    setProperties(visibleProperties);
+    setUsers(tenantUsers);
     setCustomers(DataService.getCustomers());
     setRoomTypes(DataService.getRoomTypes());
+    setRoomPolicies(DataService.getRoomPolicies());
     setTags(DataService.getTags());
     setHistory(DataService.getHistory());
 
-    if (props.length === 0) return;
+    if (visibleProperties.length === 0) {
+        setRooms([]);
+        setBookings([]);
+        return;
+    }
 
     let activePropId = currentPropertyId;
-    const allowedIds = currentUser?.allowedPropertyIds || [];
-    const hasRestrictions = allowedIds.length > 0;
 
-    const isValid = activePropId && (activePropId === 'ALL' || props.some(p => p.id === activePropId));
+    const isValid =
+        activePropId && (activePropId === 'ALL' || visibleProperties.some((p) => p.id === activePropId));
     const isAllowed = !hasRestrictions || (activePropId === 'ALL' ? allowedIds.length > 1 : allowedIds.includes(activePropId));
 
     if (!isValid || !isAllowed) {
@@ -201,7 +301,7 @@ const App: React.FC = () => {
        setBookings(allBookings);
     }
 
-  }, [dataTick, currentPropertyId, isLoading, currentUser?.id, activeTenantId]);
+  }, [dataTick, currentPropertyId, isLoading, currentUser, activeTenantId, clearSession]);
 
   // --- SMART AUTOMATION SYSTEM ---
   useEffect(() => {
@@ -209,6 +309,9 @@ const App: React.FC = () => {
 
       const runAutomation = () => {
           const now = new Date();
+          DataService.cleanupExpiredHoldBookings({ source: 'SYSTEM' }).catch((error: any) => {
+              console.error('Automation cleanup expired hold failed', error);
+          });
           const allBookings = DataService.getBookings();
           const allRooms = DataService.getRooms();
           
@@ -242,7 +345,9 @@ const App: React.FC = () => {
 
               if (needsUpdate) {
                   const updatedBooking = { ...b, status: newStatus };
-                  DataService.updateBooking(updatedBooking, { source: 'SYSTEM' });
+                  DataService.updateBooking(updatedBooking, { source: 'SYSTEM' }).catch((error: any) => {
+                      console.error('Automation update booking failed', error);
+                  });
               }
           });
       };
@@ -293,24 +398,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    if (currentUser) {
-      try {
-        DataService.recordLogout(currentUser, activeTenantId || currentUser.tenantId);
-      } catch (e) {
-        console.error('recordLogout error', e);
-      }
-    }
-    clearLoadingFallback();
-    DataService.setAuditActor(null);
-    setCurrentUser(null);
-    setLoginUsername('');
-    setLoginPassword('');
-    setActiveTenantId(null);
-    setIsLoading(false);
-    setCurrentPage('dashboard');
-    setIsSuperAdminView(false);
-    localStorage.removeItem('k_host_user');
-    localStorage.removeItem('k_host_tenant');
+    clearSession();
   };
 
   const manualRefresh = () => setDataTick(t => t + 1);
@@ -517,6 +605,7 @@ const App: React.FC = () => {
                         <RoomMap 
                             rooms={rooms} 
                             roomTypes={roomTypes} 
+                            roomPolicies={roomPolicies}
                             bookings={bookings} 
                             history={history}
                             customers={customers}
@@ -551,6 +640,17 @@ const App: React.FC = () => {
                         />
                     )}
 
+                    {currentPage === 'performance' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
+                        <Performance
+                            bookings={bookings}
+                            rooms={rooms}
+                            properties={properties}
+                            users={users}
+                            history={history}
+                            currentUser={effectiveUser}
+                        />
+                    )}
+
                     {currentPage === 'history' && (effectiveUser.role === UserRole.ADMIN || effectiveUser.permissions?.includes(PERMISSIONS.VIEW_AUDIT_LOGS)) && (
                         <HistoryPage
                             history={history}
@@ -560,19 +660,16 @@ const App: React.FC = () => {
                     )}
                     
                     {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
-                        <div className="space-y-8">
-                            <Management 
-                                users={users} 
-                                rooms={DataService.getRooms()} 
-                                roomTypes={roomTypes} 
-                                properties={properties} 
-                                tags={tags}
-                                onRefresh={manualRefresh}
-                            />
-                            <div className="mt-8">
-                                <Admin users={users} properties={properties} onRefresh={manualRefresh} />
-                            </div>
-                        </div>
+                        <Management 
+                            users={users} 
+                            rooms={DataService.getRooms()} 
+                            roomTypes={roomTypes} 
+                            roomPolicies={roomPolicies}
+                            properties={properties} 
+                            tags={tags}
+                            currentUser={effectiveUser}
+                            onRefresh={manualRefresh}
+                        />
                     )}
                 </>
             )}

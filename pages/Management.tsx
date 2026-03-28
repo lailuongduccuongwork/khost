@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory, RoomPolicyRule } from '../types';
 import { DataService } from '../services/dataService';
 import { 
     Building2, BedDouble, Shield, Settings, Plus, Trash2, Edit2, 
@@ -11,12 +11,14 @@ interface ManagementProps {
   users: User[];
   rooms: Room[];
   roomTypes: RoomType[];
+  roomPolicies: RoomPolicyRule[];
   properties: Property[];
   tags: Tag[];
+  currentUser: User;
   onRefresh: () => void;
 }
 
-type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ADMIN' | 'ADVANCED';
+type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'ADVANCED';
 
 // --- SUB-COMPONENT: INLINE INPUT (Đã được tối ưu UI/UX để không bị khuất chữ) ---
 const InlineInput = ({ 
@@ -53,7 +55,7 @@ const InlineInput = ({
     );
 };
 
-const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, properties, tags, onRefresh }) => {
+const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPolicies, properties, tags, currentUser, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<TabType>('PROPERTIES');
   const [editingId, setEditingId] = useState<string | null>(null);
   
@@ -63,6 +65,105 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
   // --- DRAG & DROP STATE ---
   const [draggedPropIdx, setDraggedPropIdx] = useState<number | null>(null);
   const [draggedRoom, setDraggedRoom] = useState<{ propId: string, idx: number } | null>(null);
+
+  // --- ROOM POLICY STATE (KHÓA PHÒNG / CHỈ NHẬN GIỜ) ---
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const [policyMode, setPolicyMode] = useState<'LOCKED' | 'HOURLY_ONLY'>('LOCKED');
+  const [policyReason, setPolicyReason] = useState('');
+  const [policyRecurrence, setPolicyRecurrence] = useState<'NONE' | 'WEEKLY'>('NONE');
+  const [policyStartDate, setPolicyStartDate] = useState(todayISO);
+  const [policyEndDate, setPolicyEndDate] = useState('');
+  const [policyWeekdays, setPolicyWeekdays] = useState<number[]>([6, 0]); // T7 + CN
+  const [policyPropertyIds, setPolicyPropertyIds] = useState<string[]>([]);
+  const [policyRoomTypeIds, setPolicyRoomTypeIds] = useState<string[]>([]);
+  const [policyRoomIds, setPolicyRoomIds] = useState<string[]>([]);
+  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>([]);
+
+  const toggleArrayValue = (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+      setter(prev => prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]);
+  };
+
+  const toggleWeekday = (day: number) => {
+      setPolicyWeekdays(prev => prev.includes(day) ? prev.filter(item => item !== day) : [...prev, day]);
+  };
+
+  const availablePropertyOptions = useMemo(() => {
+      if (policyRoomTypeIds.length === 0) return properties;
+      const propertyIdSet = new Set(
+          rooms
+              .filter(room => policyRoomTypeIds.includes(room.typeId))
+              .map(room => room.propertyId)
+      );
+      return properties.filter(prop => propertyIdSet.has(prop.id));
+  }, [properties, rooms, policyRoomTypeIds]);
+
+  const availableRoomTypeOptions = useMemo(() => {
+      if (policyPropertyIds.length === 0) {
+          const allTypeIds = new Set(rooms.map(room => room.typeId));
+          return roomTypes.filter(type => allTypeIds.has(type.id));
+      }
+      const typeIdSet = new Set(
+          rooms
+              .filter(room => policyPropertyIds.includes(room.propertyId))
+              .map(room => room.typeId)
+      );
+      return roomTypes.filter(type => typeIdSet.has(type.id));
+  }, [roomTypes, rooms, policyPropertyIds]);
+
+  const policyFilteredRooms = useMemo(() => {
+      return rooms
+          .filter(room => policyPropertyIds.length === 0 || policyPropertyIds.includes(room.propertyId))
+          .filter(room => policyRoomTypeIds.length === 0 || policyRoomTypeIds.includes(room.typeId))
+          .sort((a, b) => (a.number || '').localeCompare((b.number || ''), 'vi', { numeric: true }));
+  }, [rooms, policyPropertyIds, policyRoomTypeIds]);
+
+  useEffect(() => {
+      const allowedPropertyIds = new Set(availablePropertyOptions.map(prop => prop.id));
+      setPolicyPropertyIds(prev => {
+          const next = prev.filter(id => allowedPropertyIds.has(id));
+          return next.length === prev.length ? prev : next;
+      });
+  }, [availablePropertyOptions]);
+
+  useEffect(() => {
+      const allowedTypeIds = new Set(availableRoomTypeOptions.map(type => type.id));
+      setPolicyRoomTypeIds(prev => {
+          const next = prev.filter(id => allowedTypeIds.has(id));
+          return next.length === prev.length ? prev : next;
+      });
+  }, [availableRoomTypeOptions]);
+
+  useEffect(() => {
+      const allowedRoomIds = new Set(policyFilteredRooms.map(room => room.id));
+      setPolicyRoomIds(prev => {
+          const next = prev.filter(id => allowedRoomIds.has(id));
+          return next.length === prev.length ? prev : next;
+      });
+  }, [policyFilteredRooms]);
+
+  const policyTargetSummary = (rule: RoomPolicyRule) => {
+      const targetRooms = (rule.roomIds || [])
+          .map(roomId => rooms.find(room => room.id === roomId)?.number || roomId)
+          .slice(0, 4);
+      const roomText = targetRooms.length > 0 ? `Phòng ${targetRooms.join(', ')}` : 'Nhiều phòng';
+      const branchText = (rule.propertyIds || [])
+          .map(propId => properties.find(prop => prop.id === propId)?.name || propId)
+          .slice(0, 2)
+          .join(', ');
+      return branchText ? `${roomText} • ${branchText}` : roomText;
+  };
+
+  const resetPolicyForm = () => {
+      setPolicyMode('LOCKED');
+      setPolicyReason('');
+      setPolicyRecurrence('NONE');
+      setPolicyStartDate(todayISO);
+      setPolicyEndDate('');
+      setPolicyWeekdays([6, 0]);
+      setPolicyPropertyIds([]);
+      setPolicyRoomTypeIds([]);
+      setPolicyRoomIds([]);
+  };
 
   // --- HÀM HỖ TRỢ LỌC DỮ LIỆU THÔNG MINH ---
   const getTypesInProp = (propId: string) => {
@@ -157,11 +258,61 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
       DataService.saveRooms(rooms.map(r => r.id === roomId ? {...r, typeId: newTypeId} : r));
   };
 
+  const handleCreateRoomPolicy = () => {
+      if (!policyStartDate) return alert('Vui lòng chọn ngày bắt đầu.');
+      if (policyRecurrence === 'WEEKLY' && policyWeekdays.length === 0) return alert('Vui lòng chọn ít nhất 1 ngày trong tuần.');
+      if (policyRoomIds.length === 0 && policyPropertyIds.length === 0 && policyRoomTypeIds.length === 0) {
+          return alert('Vui lòng chọn phòng hoặc chọn theo chi nhánh/hạng phòng để áp dụng hàng loạt.');
+      }
+
+      const newPolicy: RoomPolicyRule = {
+          id: `rp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          mode: policyMode,
+          reason: policyReason.trim(),
+          isActive: true,
+          startDate: policyStartDate,
+          endDate: policyEndDate || undefined,
+          recurrence: policyRecurrence,
+          weekdays: policyRecurrence === 'WEEKLY' ? [...policyWeekdays].sort((a, b) => a - b) : [],
+          checkInHour: 14,
+          checkOutHour: 12,
+          propertyIds: [...policyPropertyIds],
+          roomTypeIds: [...policyRoomTypeIds],
+          roomIds: [...policyRoomIds],
+          createdAt: new Date().toISOString(),
+          createdBy: currentUser.id,
+      };
+
+      DataService.saveRoomPolicies([...roomPolicies, newPolicy]);
+      setActiveTab('ROOM_POLICIES');
+      resetPolicyForm();
+      alert('Đã lưu chính sách phòng thành công.');
+      onRefresh();
+  };
+
+  const applyBulkPolicyState = (active: boolean) => {
+      if (selectedPolicyIds.length === 0) return;
+      const updated = roomPolicies.map(policy =>
+          selectedPolicyIds.includes(policy.id) ? { ...policy, isActive: active } : policy
+      );
+      DataService.saveRoomPolicies(updated);
+      setSelectedPolicyIds([]);
+      onRefresh();
+  };
+
+  const deleteSelectedPolicies = () => {
+      if (selectedPolicyIds.length === 0) return;
+      DataService.deleteItems('roomPolicies', selectedPolicyIds);
+      setSelectedPolicyIds([]);
+      onRefresh();
+  };
+
   // --- COMPONENT: MENU BÊN TRÁI ---
   const renderSidebar = () => {
       const tabs = [
           { id: 'PROPERTIES', label: 'Cơ sở & Chi nhánh', icon: Building2, desc: 'Quản lý các toà nhà' },
           { id: 'ROOM_MANAGEMENT', label: 'Phân bổ Hạng & Phòng', icon: BedDouble, desc: 'Cấu hình phòng theo cấu trúc' },
+          { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
           { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
           { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag' },
       ];
@@ -405,14 +556,357 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, proper
               </div>
           )}
 
-          {/* TAB 3: PHÂN QUYỀN (SỬ DỤNG LẠI COMPONENT ADMIN) */}
+          {/* TAB 3: CHÍNH SÁCH PHÒNG (KHÓA / CHỈ NHẬN GIỜ) */}
+          {activeTab === 'ROOM_POLICIES' && (
+              <div className="space-y-6 animate-fade-in">
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-5 md:p-6 border-b border-gray-100 bg-gray-50/50">
+                          <h2 className="text-xl font-bold text-gray-800">Chính sách phòng theo lịch</h2>
+                          <p className="text-sm text-gray-500 mt-1">
+                              Admin có thể khóa phòng hoặc đặt chế độ chỉ nhận khách giờ theo từng ngày / lặp hàng tuần (T7, CN...).
+                          </p>
+                      </div>
+
+                      <div className="p-5 md:p-6 space-y-5">
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                  Chế độ
+                                  <select
+                                      value={policyMode}
+                                      onChange={(e) => setPolicyMode(e.target.value as 'LOCKED' | 'HOURLY_ONLY')}
+                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                  >
+                                      <option value="LOCKED">Khóa phòng (chặn nhận khách)</option>
+                                      <option value="HOURLY_ONLY">Chỉ nhận khách giờ</option>
+                                  </select>
+                              </label>
+
+                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                  Kiểu lịch
+                                  <select
+                                      value={policyRecurrence}
+                                      onChange={(e) => setPolicyRecurrence(e.target.value as 'NONE' | 'WEEKLY')}
+                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                  >
+                                      <option value="NONE">Theo khoảng ngày</option>
+                                      <option value="WEEKLY">Lặp hàng tuần</option>
+                                  </select>
+                              </label>
+
+                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                  Ngày bắt đầu
+                                  <input
+                                      type="date"
+                                      value={policyStartDate}
+                                      onChange={(e) => setPolicyStartDate(e.target.value)}
+                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                  />
+                              </label>
+
+                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                  Ngày kết thúc
+                                  <input
+                                      type="date"
+                                      value={policyEndDate}
+                                      onChange={(e) => setPolicyEndDate(e.target.value)}
+                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                  />
+                                  <div className="mt-1 text-[11px] font-medium normal-case text-gray-500">
+                                      Để trống = lặp không giới hạn (đến khi bạn tạm dừng/mở khoá).
+                                  </div>
+                              </label>
+                          </div>
+
+                          {policyRecurrence === 'WEEKLY' && (
+                              <div>
+                                  <div className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-2">Ngày áp dụng trong tuần</div>
+                                  <div className="flex flex-wrap gap-2">
+                                      {[
+                                          { day: 1, label: 'T2' },
+                                          { day: 2, label: 'T3' },
+                                          { day: 3, label: 'T4' },
+                                          { day: 4, label: 'T5' },
+                                          { day: 5, label: 'T6' },
+                                          { day: 6, label: 'T7' },
+                                          { day: 0, label: 'CN' },
+                                      ].map(item => (
+                                          <button
+                                              key={item.label}
+                                              onClick={() => toggleWeekday(item.day)}
+                                              className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-colors ${
+                                                  policyWeekdays.includes(item.day)
+                                                      ? 'bg-blue-50 border-blue-200 text-blue-700'
+                                                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                                              }`}
+                                          >
+                                              {item.label}
+                                          </button>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+
+                          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                                  <div className="text-xs font-bold text-gray-600 uppercase mb-2">Lọc theo chi nhánh</div>
+                                  <div className="max-h-36 overflow-auto space-y-1">
+                                      {availablePropertyOptions.map(prop => (
+                                          <label key={prop.id} className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={policyPropertyIds.includes(prop.id)}
+                                                  onChange={() => toggleArrayValue(prop.id, setPolicyPropertyIds)}
+                                                  className="accent-blue-600"
+                                              />
+                                              {prop.name}
+                                          </label>
+                                      ))}
+                                      {availablePropertyOptions.length === 0 && (
+                                          <div className="text-xs text-gray-400">Không có chi nhánh phù hợp với hạng đã lọc.</div>
+                                      )}
+                                  </div>
+                              </div>
+
+                              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                                  <div className="text-xs font-bold text-gray-600 uppercase mb-2">Lọc theo hạng phòng</div>
+                                  <div className="max-h-36 overflow-auto space-y-1">
+                                      {availableRoomTypeOptions.map(type => (
+                                          <label key={type.id} className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={policyRoomTypeIds.includes(type.id)}
+                                                  onChange={() => toggleArrayValue(type.id, setPolicyRoomTypeIds)}
+                                                  className="accent-blue-600"
+                                              />
+                                              {type.name}
+                                          </label>
+                                      ))}
+                                      {availableRoomTypeOptions.length === 0 && (
+                                          <div className="text-xs text-gray-400">Không có hạng phòng phù hợp với chi nhánh đã lọc.</div>
+                                      )}
+                                  </div>
+                              </div>
+
+                              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                      <div className="text-xs font-bold text-gray-600 uppercase">Chọn phòng áp dụng</div>
+                                      <button
+                                          onClick={() => setPolicyRoomIds(policyFilteredRooms.map(room => room.id))}
+                                          className="text-[11px] font-bold text-blue-600 hover:underline"
+                                      >
+                                          Chọn tất cả
+                                      </button>
+                                  </div>
+                                  <div className="max-h-36 overflow-auto space-y-1">
+                                      {policyFilteredRooms.map(room => (
+                                          <label key={room.id} className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={policyRoomIds.includes(room.id)}
+                                                  onChange={() => toggleArrayValue(room.id, setPolicyRoomIds)}
+                                                  className="accent-blue-600"
+                                              />
+                                              {room.number}
+                                          </label>
+                                      ))}
+                                      {policyFilteredRooms.length === 0 && (
+                                          <div className="text-xs text-gray-400">Không có phòng phù hợp với bộ lọc hiện tại.</div>
+                                      )}
+                                  </div>
+                              </div>
+                          </div>
+
+                          <div>
+                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">Lý do / ghi chú</label>
+                              <input
+                                  type="text"
+                                  value={policyReason}
+                                  onChange={(e) => setPolicyReason(e.target.value)}
+                                  placeholder={policyMode === 'LOCKED' ? 'Ví dụ: Bảo trì hệ thống điện' : 'Ví dụ: Chỉ nhận khách theo giờ cuối tuần'}
+                                  className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium outline-none focus:border-blue-500"
+                              />
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                              <button
+                                  onClick={handleCreateRoomPolicy}
+                                  className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 shadow-sm"
+                              >
+                                  Lưu chính sách
+                              </button>
+                              <button
+                                  onClick={() => {
+                                      setPolicyRecurrence('WEEKLY');
+                                      setPolicyWeekdays([6, 0]);
+                                  }}
+                                  className="bg-white border border-gray-200 px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                              >
+                                  Mẫu T7 + CN hằng tuần
+                              </button>
+                              <button
+                                  onClick={resetPolicyForm}
+                                  className="bg-white border border-gray-200 px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                              >
+                                  Reset form
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                          <h3 className="font-bold text-gray-800">Danh sách chính sách đã tạo</h3>
+                          <div className="flex gap-2">
+                              <button
+                                  onClick={() => applyBulkPolicyState(true)}
+                                  disabled={selectedPolicyIds.length === 0}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                                      selectedPolicyIds.length === 0
+                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                          : 'bg-green-100 text-green-700 hover:bg-green-200'
+                                  }`}
+                              >
+                                  Mở khóa/Bật lại ({selectedPolicyIds.length})
+                              </button>
+                              <button
+                                  onClick={() => applyBulkPolicyState(false)}
+                                  disabled={selectedPolicyIds.length === 0}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                                      selectedPolicyIds.length === 0
+                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                          : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                  }`}
+                              >
+                                  Tạm dừng ({selectedPolicyIds.length})
+                              </button>
+                              <button
+                                  onClick={deleteSelectedPolicies}
+                                  disabled={selectedPolicyIds.length === 0}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                                      selectedPolicyIds.length === 0
+                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                          : 'bg-red-100 text-red-700 hover:bg-red-200'
+                                  }`}
+                              >
+                                  Xóa ({selectedPolicyIds.length})
+                              </button>
+                          </div>
+                      </div>
+
+                      <div className="overflow-auto">
+                          <table className="w-full text-left text-sm whitespace-nowrap">
+                              <thead className="bg-gray-50 border-b border-gray-100 text-xs uppercase text-gray-500">
+                                  <tr>
+                                      <th className="px-4 py-3">
+                                          <input
+                                              type="checkbox"
+                                              checked={roomPolicies.length > 0 && selectedPolicyIds.length === roomPolicies.length}
+                                              onChange={(e) => setSelectedPolicyIds(e.target.checked ? roomPolicies.map(policy => policy.id) : [])}
+                                          />
+                                      </th>
+                                      <th className="px-4 py-3">Chế độ</th>
+                                      <th className="px-4 py-3">Lịch áp dụng</th>
+                                      <th className="px-4 py-3">Mục tiêu</th>
+                                      <th className="px-4 py-3">Lý do</th>
+                                      <th className="px-4 py-3">Trạng thái</th>
+                                      <th className="px-4 py-3">Thao tác</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                  {roomPolicies.map(policy => {
+                                      const weekdayLabel = (policy.weekdays || []).map(day => ({
+                                          0: 'CN',
+                                          1: 'T2',
+                                          2: 'T3',
+                                          3: 'T4',
+                                          4: 'T5',
+                                          5: 'T6',
+                                          6: 'T7',
+                                      }[day])).filter(Boolean).join(', ');
+
+                                      return (
+                                          <tr key={policy.id} className="hover:bg-gray-50">
+                                              <td className="px-4 py-3">
+                                                  <input
+                                                      type="checkbox"
+                                                      checked={selectedPolicyIds.includes(policy.id)}
+                                                      onChange={() =>
+                                                          setSelectedPolicyIds(prev =>
+                                                              prev.includes(policy.id)
+                                                                  ? prev.filter(id => id !== policy.id)
+                                                                  : [...prev, policy.id]
+                                                          )
+                                                      }
+                                                  />
+                                              </td>
+                                              <td className="px-4 py-3">
+                                                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                                                      policy.mode === 'LOCKED' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                                  }`}>
+                                                      {policy.mode === 'LOCKED' ? 'Khóa phòng' : 'Chỉ nhận khách giờ'}
+                                                  </span>
+                                              </td>
+                                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">
+                                                  <div>{policy.startDate} → {policy.endDate || 'Không giới hạn'}</div>
+                                                  {policy.recurrence === 'WEEKLY' && <div className="text-blue-600 mt-0.5">Lặp: {weekdayLabel || '--'}</div>}
+                                                  <div className="text-gray-500 mt-0.5">14:00 → 12:00 hôm sau</div>
+                                              </td>
+                                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{policyTargetSummary(policy)}</td>
+                                              <td className="px-4 py-3 text-xs text-gray-600 max-w-[260px] truncate" title={policy.reason || '--'}>
+                                                  {policy.reason || '--'}
+                                              </td>
+                                              <td className="px-4 py-3">
+                                                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                                                      policy.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                                                  }`}>
+                                                      {policy.isActive ? 'Đang áp dụng' : 'Tạm dừng'}
+                                                  </span>
+                                              </td>
+                                              <td className="px-4 py-3">
+                                                  <div className="flex gap-2">
+                                                      <button
+                                                          onClick={() => DataService.saveRoomPolicies(roomPolicies.map(item => item.id === policy.id ? { ...item, isActive: !item.isActive } : item))}
+                                                          className="px-2.5 py-1 rounded-md text-xs font-bold bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                                      >
+                                                          {policy.isActive ? 'Dừng' : 'Bật'}
+                                                      </button>
+                                                      <button
+                                                          onClick={() => {
+                                                              DataService.deleteItems('roomPolicies', [policy.id]);
+                                                              setSelectedPolicyIds(prev => prev.filter(id => id !== policy.id));
+                                                              onRefresh();
+                                                          }}
+                                                          className="px-2.5 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 hover:bg-red-200"
+                                                      >
+                                                          Xóa
+                                                      </button>
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      );
+                                  })}
+                                  {roomPolicies.length === 0 && (
+                                      <tr>
+                                          <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
+                                              Chưa có chính sách nào. Hãy tạo chính sách ở form phía trên.
+                                          </td>
+                                      </tr>
+                                  )}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* TAB 4: PHÂN QUYỀN (SỬ DỤNG LẠI COMPONENT ADMIN) */}
           {activeTab === 'ADMIN' && (
               <div className="bg-white border border-gray-200 rounded-2xl shadow-sm animate-fade-in">
                  <Admin users={users} properties={properties} onRefresh={onRefresh} />
               </div>
           )}
 
-          {/* TAB 4: ADVANCED (TAGS & DANH MỤC THU CHI) */}
+          {/* TAB 5: ADVANCED (TAGS & DANH MỤC THU CHI) */}
           {activeTab === 'ADVANCED' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
                   {/* Quản lý Thẻ (Tags) */}

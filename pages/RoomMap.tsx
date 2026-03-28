@@ -1,17 +1,16 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog } from '../types';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog, RoomPolicyRule } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Download, FileUp, Loader2, RotateCcw } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, Wrench, User as UserIcon, Edit2, Building2, Loader2 } from 'lucide-react';
 
 // Declare html2canvas
 declare const html2canvas: any;
-// Declare XLSX
-declare const XLSX: any;
 
 interface RoomMapProps {
   rooms: Room[];
   roomTypes: RoomType[];
+  roomPolicies: RoomPolicyRule[];
   bookings: Booking[];
   history: HistoryLog[];
   customers: Customer[];
@@ -24,11 +23,94 @@ interface RoomMapProps {
 
 type ViewMode = 'DAY' | 'WEEK' | 'MONTH';
 
+interface RoomPolicyWindow {
+    policyId: string;
+    mode: RoomPolicyRule['mode'];
+    reason?: string;
+    startMs: number;
+    endMs: number;
+}
+
 // --- Helpers ---
 const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
 const addDays = (d: Date, days: number) => { const x = new Date(d); x.setDate(x.getDate() + days); return x; };
 const addHours = (d: Date, hours: number) => { const x = new Date(d); x.setTime(x.getTime() + hours * 3600000); return x; };
 const addMonths = (d: Date, months: number) => { const x = new Date(d); x.setMonth(x.getMonth() + months); return x; };
+
+const parsePolicyDateToDayMs = (dateText?: string) => {
+    if (!dateText) return null;
+    const parsed = new Date(`${dateText}T00:00:00`);
+    if (isNaN(parsed.getTime())) return null;
+    return startOfDay(parsed).getTime();
+};
+
+const isPolicyApplicableOnDate = (policy: RoomPolicyRule, date: Date) => {
+    if (!policy.isActive) return false;
+
+    const dayMs = startOfDay(date).getTime();
+    const startDateMs = parsePolicyDateToDayMs(policy.startDate);
+    const endDateMs = parsePolicyDateToDayMs(policy.endDate);
+
+    if (startDateMs !== null && dayMs < startDateMs) return false;
+    if (endDateMs !== null && dayMs > endDateMs) return false;
+
+    if (policy.recurrence === 'WEEKLY') {
+        const weekdays = policy.weekdays || [];
+        if (weekdays.length === 0) return false;
+        return weekdays.includes(new Date(dayMs).getDay());
+    }
+
+    return true;
+};
+
+const roomMatchesPolicy = (policy: RoomPolicyRule, room: Room) => {
+    const propertyIds = policy.propertyIds || [];
+    const roomTypeIds = policy.roomTypeIds || [];
+    const roomIds = policy.roomIds || [];
+
+    const matchProperty = propertyIds.length === 0 || propertyIds.includes(room.propertyId);
+    const matchType = roomTypeIds.length === 0 || roomTypeIds.includes(room.typeId);
+    const matchRoom = roomIds.length === 0 || roomIds.includes(room.id);
+    return matchProperty && matchType && matchRoom;
+};
+
+const getPolicyWindowsForRange = (policy: RoomPolicyRule, rangeStartMs: number, rangeEndMs: number): RoomPolicyWindow[] => {
+    if (!policy.isActive) return [];
+
+    const windows: RoomPolicyWindow[] = [];
+    const checkInHour = Number.isFinite(policy.checkInHour) ? Number(policy.checkInHour) : 14;
+    const checkOutHour = Number.isFinite(policy.checkOutHour) ? Number(policy.checkOutHour) : 12;
+
+    let cursor = startOfDay(addDays(new Date(rangeStartMs), -2));
+    const cursorEnd = startOfDay(addDays(new Date(rangeEndMs), 2)).getTime();
+    let guard = 0;
+
+    while (cursor.getTime() <= cursorEnd && guard < 2000) {
+        if (isPolicyApplicableOnDate(policy, cursor)) {
+            const windowStart = new Date(cursor);
+            windowStart.setHours(checkInHour, 0, 0, 0);
+            const windowEnd = addDays(new Date(cursor), 1);
+            windowEnd.setHours(checkOutHour, 0, 0, 0);
+
+            const startMs = windowStart.getTime();
+            const endMs = windowEnd.getTime();
+            if (endMs > rangeStartMs && startMs < rangeEndMs) {
+                windows.push({
+                    policyId: policy.id,
+                    mode: policy.mode,
+                    reason: policy.reason,
+                    startMs,
+                    endMs,
+                });
+            }
+        }
+
+        cursor = addDays(cursor, 1);
+        guard += 1;
+    }
+
+    return windows;
+};
 
 // Format helper
 const formatNumber = (num: number) => {
@@ -53,6 +135,78 @@ const formatAuditDateTime = (isoStr?: string) => {
     if (isNaN(d.getTime())) return isoStr;
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
+const toDateTimeLocalValue = (date: Date) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+};
+
+const parseLocalDateTimeToIso = (value: string) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString();
+};
+
+const setTimeOnDate = (date: Date, hours: number, minutes: number = 0) => {
+    const next = new Date(date);
+    next.setHours(hours, minutes, 0, 0);
+    return next;
+};
+
+const parseQuickRangeText = (rawText: string, now: Date) => {
+    const text = rawText.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+
+    const parseDayMonth = (day: number, month: number, year?: number) => {
+        const y = year || now.getFullYear();
+        const parsed = new Date(y, month - 1, day);
+        if (isNaN(parsed.getTime())) return null;
+        return parsed;
+    };
+
+    // Ví dụ: "14h30 hôm nay đến 16h"
+    const sameDayTimeRange = text.match(
+        /(\d{1,2})\s*h(?:\s*(\d{1,2}))?(?:\s*hôm nay)?\s*đến\s*(\d{1,2})\s*h(?:\s*(\d{1,2}))?/i
+    );
+    if (sameDayTimeRange) {
+        const startHour = Number(sameDayTimeRange[1] || 0);
+        const startMinute = Number(sameDayTimeRange[2] || 0);
+        const endHour = Number(sameDayTimeRange[3] || 0);
+        const endMinute = Number(sameDayTimeRange[4] || 0);
+
+        const start = setTimeOnDate(now, startHour, startMinute);
+        let end = setTimeOnDate(now, endHour, endMinute);
+        if (end.getTime() <= start.getTime()) end = addDays(end, 1);
+        return { start, end };
+    }
+
+    // Ví dụ: "4/6 đến 6/6"
+    const dateRange = text.match(
+        /(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s*đến\s*(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/i
+    );
+    if (dateRange) {
+        const startDate = parseDayMonth(Number(dateRange[1]), Number(dateRange[2]), dateRange[3] ? Number(dateRange[3]) : undefined);
+        const endDate = parseDayMonth(Number(dateRange[4]), Number(dateRange[5]), dateRange[6] ? Number(dateRange[6]) : undefined);
+        if (!startDate || !endDate) return null;
+        const start = setTimeOnDate(startDate, 14, 0);
+        const end = setTimeOnDate(endDate, 12, 0);
+        if (end.getTime() <= start.getTime()) return null;
+        return { start, end };
+    }
+
+    // Ví dụ: "ngày 30/3"
+    const singleDate = text.match(/(?:ngày\s*)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/i);
+    if (singleDate) {
+        const date = parseDayMonth(Number(singleDate[1]), Number(singleDate[2]), singleDate[3] ? Number(singleDate[3]) : undefined);
+        if (!date) return null;
+        const start = setTimeOnDate(date, 14, 0);
+        const end = setTimeOnDate(addDays(date, 1), 12, 0);
+        return { start, end };
+    }
+
+    return null;
 };
 
 // --- Custom Components ---
@@ -171,15 +325,13 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings, history, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
   const [now, setNow] = useState(new Date());
 
   const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [financeCategories, setFinanceCategories] = useState<TransactionCategory[]>([]);
 
   useEffect(() => {
@@ -246,6 +398,27 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
   }
   const [bookingRows, setBookingRows] = useState<BookingRow[]>([]);
   const [originalBookingIds, setOriginalBookingIds] = useState<string[]>([]);
+  const [showQuickFinder, setShowQuickFinder] = useState(false);
+  const [quickQueryText, setQuickQueryText] = useState('');
+  const [quickPropertyFilter, setQuickPropertyFilter] = useState<string>(
+      currentProperty.id === 'ALL' ? 'ALL' : currentProperty.id
+  );
+  const [quickStartInput, setQuickStartInput] = useState(() => {
+      const start = new Date();
+      start.setMinutes(0, 0, 0);
+      return toDateTimeLocalValue(start);
+  });
+  const [quickEndInput, setQuickEndInput] = useState(() => {
+      const end = new Date();
+      end.setMinutes(0, 0, 0);
+      end.setHours(end.getHours() + 2);
+      return toDateTimeLocalValue(end);
+  });
+  const [holdTargetRoomId, setHoldTargetRoomId] = useState<string | null>(null);
+  const [holdMinutes, setHoldMinutes] = useState(10);
+  const [holdGuestName, setHoldGuestName] = useState('');
+  const [holdGuestPhone, setHoldGuestPhone] = useState('');
+  const [isSavingHold, setIsSavingHold] = useState(false);
 
   // Drag State (Kéo lưới tạo đơn)
   const [dragStart, setDragStart] = useState<{roomId: string, time: Date} | null>(null);
@@ -303,6 +476,140 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
     });
   }, [rooms, filters, properties, roomTypes]);
 
+  const propertyById = useMemo(() => {
+      const map = new Map<string, Property>();
+      properties.forEach((property) => map.set(property.id, property));
+      return map;
+  }, [properties]);
+
+  const roomTypeNameById = useMemo(() => {
+      const map = new Map<string, string>();
+      roomTypes.forEach((type) => map.set(type.id, type.name));
+      return map;
+  }, [roomTypes]);
+
+  const isExpiredHoldBooking = (booking: Booking) => {
+      if (!booking.isHold || !booking.holdUntil) return false;
+      const holdUntilMs = new Date(booking.holdUntil).getTime();
+      if (!Number.isFinite(holdUntilMs)) return false;
+      return holdUntilMs <= Date.now();
+  };
+
+  const activeBookingsForQuick = useMemo(() => {
+      return bookings.filter((booking) => {
+          if (booking.status === BookingStatus.DELETED || booking.status === BookingStatus.CANCELLED) return false;
+          if (isExpiredHoldBooking(booking)) return false;
+          return true;
+      });
+  }, [bookings]);
+
+  const quickBookingsByRoom = useMemo(() => {
+      const map = new Map<string, Booking[]>();
+      activeBookingsForQuick.forEach((booking) => {
+          if (!map.has(booking.roomId)) map.set(booking.roomId, []);
+          map.get(booking.roomId)!.push(booking);
+      });
+      map.forEach((list) => {
+          list.sort((a, b) => new Date(a.checkInDate).getTime() - new Date(b.checkInDate).getTime());
+      });
+      return map;
+  }, [activeBookingsForQuick]);
+
+  const roomsSortedForQuick = useMemo(() => {
+      return [...rooms].sort((a, b) => {
+          const pOrderA = propertyById.get(a.propertyId)?.sortOrder ?? 9999;
+          const pOrderB = propertyById.get(b.propertyId)?.sortOrder ?? 9999;
+          if (pOrderA !== pOrderB) return pOrderA - pOrderB;
+          const roomOrderA = a.sortOrder ?? 9999;
+          const roomOrderB = b.sortOrder ?? 9999;
+          if (roomOrderA !== roomOrderB) return roomOrderA - roomOrderB;
+          return a.number.localeCompare(b.number, 'vi');
+      });
+  }, [rooms, propertyById]);
+
+  useEffect(() => {
+      if (!showQuickFinder) return;
+      setQuickPropertyFilter(currentProperty.id === 'ALL' ? 'ALL' : currentProperty.id);
+  }, [showQuickFinder, currentProperty.id]);
+
+  const quickPropertyOptions = useMemo(() => {
+      return [...properties].sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
+  }, [properties]);
+
+  const quickRange = useMemo(() => {
+      const startIso = parseLocalDateTimeToIso(quickStartInput);
+      const endIso = parseLocalDateTimeToIso(quickEndInput);
+      if (!startIso || !endIso) {
+          return { valid: false, message: 'Vui lòng chọn đầy đủ thời gian Từ/Đến.' };
+      }
+      const startMs = new Date(startIso).getTime();
+      const endMs = new Date(endIso).getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+          return { valid: false, message: 'Định dạng thời gian không hợp lệ.' };
+      }
+      if (startMs >= endMs) {
+          return { valid: false, message: 'Thời gian kết thúc phải lớn hơn thời gian bắt đầu.' };
+      }
+      return { valid: true, startIso, endIso, startMs, endMs };
+  }, [quickStartInput, quickEndInput]);
+
+  const quickAvailabilityByProperty = useMemo(() => {
+      if (!quickRange.valid) return [] as Array<{ propertyId: string; propertyName: string; rooms: Array<{ room: Room; roomTypeName: string; previousBooking?: Booking; nextBooking?: Booking }> }>;
+
+      const grouped = new Map<string, { propertyId: string; propertyName: string; rooms: Array<{ room: Room; roomTypeName: string; previousBooking?: Booking; nextBooking?: Booking }> }>();
+      const { startIso, endIso, startMs, endMs } = quickRange as {
+          valid: true;
+          startIso: string;
+          endIso: string;
+          startMs: number;
+          endMs: number;
+      };
+
+      roomsSortedForQuick.forEach((room) => {
+          if (quickPropertyFilter !== 'ALL' && room.propertyId !== quickPropertyFilter) return;
+          const availability = DataService.validateRoomAvailability(room.id, startIso, endIso);
+          if (!availability.valid) return;
+
+          const roomBookings = quickBookingsByRoom.get(room.id) || [];
+          let previousBooking: Booking | undefined;
+          let nextBooking: Booking | undefined;
+
+          roomBookings.forEach((booking) => {
+              const bookingStartMs = new Date(booking.checkInDate).getTime();
+              const bookingEndMs = new Date(booking.checkOutDate).getTime();
+
+              if (bookingEndMs <= startMs) {
+                  if (!previousBooking || bookingEndMs > new Date(previousBooking.checkOutDate).getTime()) {
+                      previousBooking = booking;
+                  }
+              }
+
+              if (bookingStartMs >= endMs) {
+                  if (!nextBooking || bookingStartMs < new Date(nextBooking.checkInDate).getTime()) {
+                      nextBooking = booking;
+                  }
+              }
+          });
+
+          const property = propertyById.get(room.propertyId);
+          const group = grouped.get(room.propertyId) || {
+              propertyId: room.propertyId,
+              propertyName: property?.name || room.propertyId,
+              rooms: [],
+          };
+
+          group.rooms.push({
+              room,
+              roomTypeName: roomTypeNameById.get(room.typeId) || room.typeId,
+              previousBooking,
+              nextBooking,
+          });
+          grouped.set(room.propertyId, group);
+      });
+
+      return Array.from(grouped.values());
+  }, [quickRange, roomsSortedForQuick, quickBookingsByRoom, propertyById, roomTypeNameById, quickPropertyFilter]);
+
   const { viewStart, viewEnd } = useMemo(() => {
       let vStart = new Date(startDate);
       vStart.setHours(0,0,0,0);
@@ -335,6 +642,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
     });
     return res;
   }, [bookings, filters, viewStart, viewEnd]);
+
+  const filteredBookingsByRoom = useMemo(() => {
+      const map = new Map<string, Booking[]>();
+      filteredBookings.forEach((booking) => {
+          if (!map.has(booking.roomId)) map.set(booking.roomId, []);
+          map.get(booking.roomId)!.push(booking);
+      });
+      return map;
+  }, [filteredBookings]);
 
   const dateRangeLabel = useMemo(() => {
       const pad = (n: number) => n.toString().padStart(2, '0');
@@ -383,10 +699,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
       }
   };
 
-  const handleDownloadTemplate = () => {}; 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {}; 
-  const triggerUpload = () => { if (fileInputRef.current) fileInputRef.current.click(); };
-
   const gridColumns = useMemo(() => {
       if (timelineMode === 'DAY') return 24;
       if (timelineMode === 'WEEK') return 7;
@@ -401,6 +713,43 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
       }
       return slots;
   }, [gridColumns, timelineMode, viewStart]);
+
+  const viewportStartMs = useMemo(() => {
+      if (timeSlots.length === 0) return viewStart.getTime();
+      return timeSlots[0].getTime();
+  }, [timeSlots, viewStart]);
+
+  const viewportEndMs = useMemo(() => {
+      if (timeSlots.length === 0) return viewEnd.getTime();
+      return timelineMode === 'DAY'
+          ? addHours(timeSlots[0], 24).getTime()
+          : addDays(timeSlots[0], gridColumns).getTime();
+  }, [timeSlots, timelineMode, gridColumns, viewEnd]);
+
+  const roomPolicyWindowsByRoom = useMemo(() => {
+      const map = new Map<string, RoomPolicyWindow[]>();
+      if (roomPolicies.length === 0 || sortedRooms.length === 0) return map;
+
+      sortedRooms.forEach((room) => {
+          const windows: RoomPolicyWindow[] = [];
+          roomPolicies.forEach((policy) => {
+              if (!roomMatchesPolicy(policy, room)) return;
+              windows.push(...getPolicyWindowsForRange(policy, viewportStartMs, viewportEndMs));
+          });
+
+          if (windows.length > 0) {
+              windows.sort((a, b) => a.startMs - b.startMs);
+              map.set(room.id, windows);
+          }
+      });
+
+      return map;
+  }, [roomPolicies, sortedRooms, viewportStartMs, viewportEndMs]);
+
+  const getPolicyWindowAtPoint = (roomId: string, timeMs: number) => {
+      const windows = roomPolicyWindowsByRoom.get(roomId) || [];
+      return windows.find((window) => timeMs >= window.startMs && timeMs < window.endMs) || null;
+  };
 
   const handleNavigate = (direction: 'PREV' | 'NEXT') => {
       const factor = direction === 'NEXT' ? 1 : -1;
@@ -504,9 +853,118 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
      else alert("Bạn không có quyền thêm đặt phòng mới.");
   };
 
+  const applyQuickPreset = (preset: 'OVERNIGHT' | 'FULL_DAY') => {
+      const base = new Date();
+      let start = new Date(base);
+      let end = new Date(base);
+
+      if (preset === 'OVERNIGHT') {
+          start = setTimeOnDate(base, 21, 0);
+          end = setTimeOnDate(addDays(base, 1), 9, 0);
+      } else {
+          start = setTimeOnDate(base, 14, 0);
+          end = setTimeOnDate(addDays(base, 1), 12, 0);
+      }
+
+      setQuickStartInput(toDateTimeLocalValue(start));
+      setQuickEndInput(toDateTimeLocalValue(end));
+      setQuickQueryText('');
+  };
+
+  const handleApplyQuickQuery = () => {
+      const parsed = parseQuickRangeText(quickQueryText, new Date());
+      if (!parsed) {
+          alert('Không phân tích được câu tìm nhanh. Vui lòng nhập tay thời gian Từ/Đến.');
+          return;
+      }
+      setQuickStartInput(toDateTimeLocalValue(parsed.start));
+      setQuickEndInput(toDateTimeLocalValue(parsed.end));
+  };
+
+  const handleOpenHoldModal = (roomId: string) => {
+      if (!quickRange.valid) return;
+      setHoldTargetRoomId(roomId);
+      setHoldMinutes(10);
+      setHoldGuestName('');
+      setHoldGuestPhone('');
+  };
+
+  const handleCloseHoldModal = () => {
+      if (isSavingHold) return;
+      setHoldTargetRoomId(null);
+  };
+
+  const holdTargetRoom = useMemo(() => {
+      if (!holdTargetRoomId) return null;
+      return rooms.find((room) => room.id === holdTargetRoomId) || null;
+  }, [holdTargetRoomId, rooms]);
+
+  const holdQuickRange = quickRange.valid ? quickRange : null;
+
+  const handleConfirmHoldBooking = async () => {
+      if (!holdTargetRoom) return;
+      if (!holdQuickRange) return;
+      if (holdMinutes < 1 || holdMinutes > 30) {
+          alert('Thời gian giữ cọc phải từ 1 đến 30 phút.');
+          return;
+      }
+
+      const { startIso, endIso } = holdQuickRange;
+
+      const validate = DataService.validateRoomAvailability(holdTargetRoom.id, startIso, endIso);
+      if (!validate.valid) {
+          alert(`Không thể giữ cọc:\n${validate.reason}`);
+          return;
+      }
+
+      setIsSavingHold(true);
+      try {
+          const nowIso = new Date().toISOString();
+          const holdUntilIso = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+          const displayName = holdGuestName.trim() ? `Giữ cọc - ${holdGuestName.trim()}` : 'Giữ cọc';
+          const holdBooking: Booking = {
+              id: DataService.generateBookingId(),
+              propertyId: holdTargetRoom.propertyId,
+              roomId: holdTargetRoom.id,
+              customerId: 'c_guest',
+              guestName: displayName,
+              guestPhone: holdGuestPhone.trim(),
+              checkInDate: startIso,
+              checkOutDate: endIso,
+              status: BookingStatus.PENDING,
+              totalPrice: 0,
+              paidAmount: 0,
+              createdAt: nowIso,
+              createdBy: currentUser.id,
+              notes: `Giữ cọc ${holdMinutes} phút`,
+              tags: [],
+              isHold: true,
+              holdUntil: holdUntilIso,
+          };
+
+          await DataService.addBooking(holdBooking, { staffId: currentUser.id });
+          setHoldTargetRoomId(null);
+          onRefresh();
+          alert(`Đã giữ cọc phòng ${holdTargetRoom.number} trong ${holdMinutes} phút (đến ${formatStandardDateTime(holdUntilIso)}).`);
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không thể giữ cọc phòng.';
+          alert(`Giữ cọc thất bại:\n${message}`);
+      } finally {
+          setIsSavingHold(false);
+      }
+  };
+
   // --- MOUSE DRAG TO CREATE NEW BOOKING ---
   const handleMouseDown = (roomId: string, time: Date) => {
-      if (!canAdd) return; 
+      if (!canAdd) return;
+
+      const policyWindow = getPolicyWindowAtPoint(roomId, time.getTime());
+      if (policyWindow?.mode === 'LOCKED') {
+          const reason = policyWindow.reason ? ` Lý do: ${policyWindow.reason}` : '';
+          alert(`🚫 Phòng đang bị khóa trong khung này.${reason}`);
+          return;
+      }
+
       setIsDragging(true); setDragStart({roomId, time}); setDragEnd({roomId, time});
   };
 
@@ -538,6 +996,19 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
           const offset = d.getTimezoneOffset() * 60000;
           return (new Date(d.getTime() - offset)).toISOString().slice(0, -1);
       }
+
+      const validate = DataService.validateRoomAvailability(
+          dragStart.roomId,
+          checkIn.toISOString(),
+          checkOut.toISOString()
+      );
+      if (!validate.valid && validate.policyMode !== 'HOURLY_ONLY') {
+          alert(`🚫 Không thể tạo đơn!\nLý do: ${validate.reason}`);
+          setDragStart(null);
+          setDragEnd(null);
+          return;
+      }
+
       openModal(null, false, dragStart.roomId, {start: toLocalISO(checkIn), end: toLocalISO(checkOut)});
       setDragStart(null); setDragEnd(null);
   };
@@ -637,13 +1108,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
       setMoveConfirmModal({ isOpen: true, booking, newRoom: targetRoom, newCheckIn, newCheckOut });
   };
 
-  const confirmAndSaveMove = () => {
+  const confirmAndSaveMove = async () => {
       if (!moveConfirmModal || !moveConfirmModal.booking || !moveConfirmModal.newRoom) return;
       const { booking, newRoom, newCheckIn, newCheckOut } = moveConfirmModal;
       const updatedBooking = { ...booking, roomId: newRoom.id, propertyId: newRoom.propertyId, checkInDate: newCheckIn!.toISOString(), checkOutDate: newCheckOut!.toISOString() };
-      DataService.updateBooking(updatedBooking);
-      setMoveConfirmModal(null);
-      onRefresh();
+      try {
+          await DataService.updateBooking(updatedBooking);
+          setMoveConfirmModal(null);
+          onRefresh();
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không thể cập nhật đơn khi kéo thả.';
+          alert(`Không thể chuyển phòng:\n${message}`);
+      }
   };
 
   // --- EXTRA FEES HANDLERS ---
@@ -705,7 +1181,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
       return log.actorId || log.staffId || 'không rõ';
   };
 
-  const handleSaveBooking = () => {
+  const handleSaveBooking = async () => {
      if (isSubmitting) return; 
      const validRows = bookingRows.filter(r => r.roomId);
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
@@ -727,14 +1203,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
          if (!groupId && validRows.length > 1) groupId = DataService.generateBookingId() + '_grp'; 
          const roomTotal = bookingMeta.totalPrice;
          const pricePerRoom = Math.floor(roomTotal / validRows.length);
-         
-         if (isEditMode && originalBookingIds.length > 0) {
-             const currentIds = validRows.map(r => r.bookingId).filter(Boolean);
-             const idsToDelete = originalBookingIds.filter(oid => !currentIds.includes(oid));
-             idsToDelete.forEach(id => { DataService.deleteBooking(id, currentUser.id); });
-         }
 
-         validRows.forEach((row, idx) => {
+         const currentIds = validRows.map(r => r.bookingId).filter(Boolean);
+         const idsToDelete = isEditMode && originalBookingIds.length > 0
+             ? originalBookingIds.filter(oid => !currentIds.includes(oid))
+             : [];
+
+         const upserts: Array<{ booking: Booking; mode: 'create' | 'update' }> = [];
+
+         for (const [idx, row] of validRows.entries()) {
              let thisPrice = idx === 0 ? pricePerRoom + (roomTotal % validRows.length) : pricePerRoom;
              if (idx === 0) thisPrice += feeNet; 
              const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; 
@@ -744,19 +1221,37 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                  groupId: groupId || null, propertyId: selectedRoom?.propertyId || currentProperty.id, roomId: row.roomId,
                  customerId: 'c_guest', guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '',
                  checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice, 
-                 paidAmount: thisPaid, createdBy: currentUser.id, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
+                 paidAmount: thisPaid, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
                  extraFees: idx === 0 ? (bookingMeta.extraFees || []) : []
              };
 
              if (row.bookingId) {
                  const existingBooking = bookings.find(b => b.id === row.bookingId);
-                 const updatedB: Booking = { ...commonData, id: row.bookingId, createdAt: existingBooking?.createdAt || new Date().toISOString() };
-                 DataService.updateBooking(updatedB);
+                 const updatedB: Booking = {
+                     ...commonData,
+                     id: row.bookingId,
+                     createdBy: existingBooking?.createdBy || currentUser.id,
+                     createdAt: existingBooking?.createdAt || new Date().toISOString()
+                 };
+                 upserts.push({ booking: updatedB, mode: 'update' });
              } else {
-                 const newB: Booking = { ...commonData, id: DataService.generateBookingId(), createdAt: new Date().toISOString() };
-                 DataService.addBooking(newB);
+                 const newB: Booking = {
+                     ...commonData,
+                     id: DataService.generateBookingId(),
+                     createdBy: currentUser.id,
+                     createdAt: new Date().toISOString()
+                 };
+                 upserts.push({ booking: newB, mode: 'create' });
              }
-         });
+         }
+
+         await DataService.saveBookingGroup(
+             {
+                 upserts,
+                 deleteIds: idsToDelete,
+             },
+             { staffId: currentUser.id }
+         );
 
          const receiptRooms = validRows.map(row => {
              const room = rooms.find(r => r.id === row.roomId);
@@ -776,7 +1271,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
 
          setShowModal(false); setShowTicketModal(true); onRefresh();
      } catch (e) {
-         console.error(e); setIsSubmitting(false); 
+         console.error(e);
+         const message = e instanceof Error ? e.message : 'Không thể lưu đơn đặt phòng.';
+         alert(`Không thể lưu đơn đặt phòng:\n${message}`);
+         setIsSubmitting(false); 
      } finally {
          setTimeout(() => setIsSubmitting(false), 500);
      }
@@ -784,11 +1282,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
 
   const handleDeleteClick = () => { if(!canDelete) return; setShowDeleteConfirm(true); };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
       const idsToDelete = originalBookingIds.length > 0 ? originalBookingIds : (bookingMeta.id ? [bookingMeta.id] : []);
       if (idsToDelete.length === 0) return;
       let successCount = 0;
-      idsToDelete.forEach(id => { if (DataService.deleteBooking(id, currentUser.id)) successCount++; });
+      for (const id of idsToDelete) {
+          if (await DataService.deleteBooking(id, currentUser.id)) successCount++;
+      }
       if (successCount > 0) {
           alert(`Đã xóa ${successCount} đơn thành công!`); setShowDeleteConfirm(false); setShowModal(false); onRefresh();
       } else { alert("Không thể xóa đơn. Vui lòng kiểm tra console log."); setShowDeleteConfirm(false); }
@@ -797,6 +1297,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
   const toggleTag = (tagId: string) => { setBookingMeta(prev => { const exists = prev.tags.includes(tagId); return { ...prev, tags: exists ? prev.tags.filter(t => t !== tagId) : [...prev.tags, tagId] }; }); };
 
   const getBookingStyle = (booking: Booking) => {
+     if (booking.isHold) {
+         return "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border bg-amber-500/90 text-white border-amber-600 shadow-amber-200";
+     }
      const isPaid = booking.paidAmount >= booking.totalPrice;
      let classes = "absolute h-[80%] top-[10%] rounded-md text-[10px] px-1 overflow-hidden cursor-pointer shadow-sm flex flex-col justify-center transition-all hover:scale-[1.02] z-[5] border ";
      if (isPaid) classes += "bg-green-500 text-white border-green-600 shadow-green-200"; 
@@ -914,6 +1417,17 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                         onChange={e => setFilters({...filters, search: e.target.value})}
                      />
                  </div>
+
+                 <button
+                    type="button"
+                    onClick={() => setShowQuickFinder(true)}
+                    className="px-3 py-2.5 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-xl text-xs md:text-sm font-bold shadow-sm transition-colors whitespace-nowrap flex items-center gap-1.5"
+                    title="Tra phòng nhanh theo khung giờ khách chọn"
+                 >
+                    <Clock size={16} />
+                    <span className="hidden sm:inline">Tra phòng nhanh</span>
+                    <span className="sm:hidden">Tra phòng</span>
+                 </button>
                  
                  <div className="flex bg-gray-100 p-1 rounded-lg hidden sm:flex">
                       <button onClick={() => setViewType('GRID')} className={`p-2 rounded-md transition-all ${viewType==='GRID'?'bg-white shadow text-blue-600':'text-gray-500'}`}><LayoutGrid size={20}/></button>
@@ -921,32 +1435,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                  </div>
 
                  {canAdd && (
-                    <>
-                        <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-1">
-                             <button 
-                                onClick={handleDownloadTemplate}
-                                className="p-2.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-                                title="Tải mẫu Excel"
-                             >
-                                 <Download size={20} />
-                             </button>
-                             
-                             <button 
-                                onClick={triggerUpload}
-                                className="p-2.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all relative"
-                                title="Nhập Excel"
-                                disabled={isImporting}
-                             >
-                                 <FileUp size={20} />
-                                 {isImporting && <span className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full animate-ping"></span>}
-                             </button>
-                             <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls" onChange={handleFileUpload} />
-                        </div>
-
-                        <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
-                            <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
-                        </button>
-                    </>
+                    <button onClick={handleManualCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                        <Plus size={20} /> <span className="hidden sm:inline">Đặt phòng</span>
+                    </button>
                  )}
           </div>
        </div>
@@ -1012,9 +1503,45 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                          <div className="text-[10px] md:text-xs text-gray-500 truncate mt-1.5 font-medium">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
                                          {room.status === RoomStatus.VACANT_DIRTY && <span className="text-[9px] font-bold text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded w-fit mt-1">CHƯA DỌN</span>}
                                      </div>
-                                     
+                                    
                                      <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                                          {timeSlots.map((slot) => renderGridCell(room, slot))}
+
+                                         {(roomPolicyWindowsByRoom.get(room.id) || []).map((policyWindow, policyIdx) => {
+                                             const bStart = policyWindow.startMs;
+                                             const bEnd = policyWindow.endMs;
+                                             if (bEnd <= viewportStartMs || bStart >= viewportEndMs) return null;
+
+                                             const totalDuration = viewportEndMs - viewportStartMs;
+                                             const offset = Math.max(0, bStart - viewportStartMs);
+                                             const duration = Math.min(bEnd, viewportEndMs) - Math.max(bStart, viewportStartMs);
+                                             const left = (offset / totalDuration) * 100;
+                                             const width = (duration / totalDuration) * 100;
+                                             if (width <= 0) return null;
+
+                                             const isLockedPolicy = policyWindow.mode === 'LOCKED';
+                                             const label = isLockedPolicy
+                                                 ? `Khoá phòng${policyWindow.reason ? `. Lý do: ${policyWindow.reason}` : ''}`
+                                                 : 'Chỉ nhận khách giờ';
+                                             const tooltipText = isLockedPolicy
+                                                 ? label
+                                                 : 'Chỉ nhận khách giờ. Không nhận đơn 14h - 12h hôm sau.';
+
+                                             return (
+                                                 <div
+                                                     key={`${policyWindow.policyId}-${policyWindow.startMs}-${policyIdx}`}
+                                                     className={`absolute top-[14%] h-[72%] rounded-md border flex items-center px-1.5 z-[7] pointer-events-none ${
+                                                         isLockedPolicy
+                                                             ? 'bg-red-500/20 border-red-600/60 text-red-900'
+                                                             : 'bg-[#0b1f4d]/30 border-[#0b1f4d]/60 text-[#0b1f4d]'
+                                                     }`}
+                                                     style={{ left: `${left}%`, width: `${width}%` }}
+                                                     title={tooltipText}
+                                                 >
+                                                     <span className="text-[10px] font-semibold truncate whitespace-nowrap">{label}</span>
+                                                 </div>
+                                             );
+                                         })}
                                          
                                          {/* 1. Bóng mờ cho KÉO TẠO MỚI (Từ 14h đến 12h) */}
                                          {isDragging && dragStart && dragEnd && dragStart.roomId === room.id && (() => {
@@ -1029,13 +1556,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                                  else cOut = addDays(cOut, 1);
                                                  cOut.setHours(12,0,0,0);
                                              }
-                                             const vStartMs = timeSlots[0].getTime();
-                                             const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
                                              const bStart = cIn.getTime();
                                              const bEnd = cOut.getTime();
-                                             if (bEnd <= vStartMs || bStart >= vEndMs) return null;
-                                             const left = (Math.max(0, bStart - vStartMs) / (vEndMs - vStartMs)) * 100;
-                                             const width = ((Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs)) / (vEndMs - vStartMs)) * 100;
+                                             if (bEnd <= viewportStartMs || bStart >= viewportEndMs) return null;
+                                             const left = (Math.max(0, bStart - viewportStartMs) / (viewportEndMs - viewportStartMs)) * 100;
+                                             const width = ((Math.min(bEnd, viewportEndMs) - Math.max(bStart, viewportStartMs)) / (viewportEndMs - viewportStartMs)) * 100;
                                              
                                              return <div className="absolute top-[10%] h-[80%] bg-blue-400 opacity-50 border-2 border-blue-600 border-dashed rounded-md pointer-events-none z-[15]" style={{left: `${left}%`, width: `${width}%`}}></div>;
                                          })()}
@@ -1053,27 +1578,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                              else newCheckIn.setHours(14, 0, 0, 0);
                                              const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
                                              
-                                             const vStartMs = timeSlots[0].getTime();
-                                             const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
                                              const bStart = newCheckIn.getTime();
                                              const bEnd = newCheckOut.getTime();
-                                             if (bEnd <= vStartMs || bStart >= vEndMs) return null;
-                                             const left = (Math.max(0, bStart - vStartMs) / (vEndMs - vStartMs)) * 100;
-                                             const width = ((Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs)) / (vEndMs - vStartMs)) * 100;
+                                             if (bEnd <= viewportStartMs || bStart >= viewportEndMs) return null;
+                                             const left = (Math.max(0, bStart - viewportStartMs) / (viewportEndMs - viewportStartMs)) * 100;
+                                             const width = ((Math.min(bEnd, viewportEndMs) - Math.max(bStart, viewportStartMs)) / (viewportEndMs - viewportStartMs)) * 100;
                                              
                                              return <div className="absolute top-[10%] h-[80%] bg-amber-400 opacity-60 border-2 border-amber-600 border-dashed rounded-md pointer-events-none z-[15]" style={{left: `${left}%`, width: `${width}%`}}></div>;
                                          })()}
 
-                                         {filteredBookings.filter(b => b.roomId === room.id).map(b => {
+                                         {(filteredBookingsByRoom.get(room.id) || []).map(b => {
                                                 const bStart = new Date(b.checkInDate).getTime();
                                                 const bEnd = new Date(b.checkOutDate).getTime();
-                                                const vStartMs = timeSlots[0].getTime();
-                                                const vEndMs = timelineMode === 'DAY' ? addHours(timeSlots[0], 24).getTime() : addDays(timeSlots[0], gridColumns).getTime();
 
-                                                if (bEnd <= vStartMs || bStart >= vEndMs) return null;
-                                                const totalDuration = vEndMs - vStartMs;
-                                                const offset = Math.max(0, bStart - vStartMs);
-                                                const duration = Math.min(bEnd, vEndMs) - Math.max(bStart, vStartMs);
+                                                if (bEnd <= viewportStartMs || bStart >= viewportEndMs) return null;
+                                                const totalDuration = viewportEndMs - viewportStartMs;
+                                                const offset = Math.max(0, bStart - viewportStartMs);
+                                                const duration = Math.min(bEnd, viewportEndMs) - Math.max(bStart, viewportStartMs);
                                                 const left = (offset / totalDuration) * 100;
                                                 const width = (duration / totalDuration) * 100;
                                                 const bookingTags = tags.filter(t => b.tags?.includes(t.id));
@@ -1084,7 +1605,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                                         key={b.id} 
                                                         draggable
                                                         onMouseDown={(e) => e.stopPropagation()} 
-                                                        onDragStart={(e) => handleBookingDragStart(e, b.id, bStart, bEnd, vStartMs, vEndMs)}
+                                                        onDragStart={(e) => handleBookingDragStart(e, b.id, bStart, bEnd, viewportStartMs, viewportEndMs)}
                                                         onDragEnd={handleBookingDragEnd}
                                                         className={`${getBookingStyle(b)} ${movingBookingId === b.id ? 'opacity-40' : 'opacity-100'}`} 
                                                         style={{
@@ -1180,7 +1701,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
                                         {formatNumber(debt)}
                                     </td>
                                     
-                                    <td className="p-4 text-xs text-gray-600">{creator?.fullName || b.createdBy}</td>
+                                    <td className="p-4 text-xs text-gray-600">{creator?.username || b.createdBy}</td>
                                     <td className="p-4 text-center">
                                         <button onClick={() => openModal(b, true, undefined, undefined)} className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
                                             Chi tiết
@@ -1194,6 +1715,265 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, bookings, history, 
             </div>
           )}
       </div>
+
+      {showQuickFinder && createPortal(
+          <div className="fixed inset-0 z-[115] flex items-center justify-center p-3 md:p-4">
+              <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setShowQuickFinder(false)}></div>
+              <div className="relative bg-white w-full max-w-6xl max-h-[calc(100dvh-24px)] rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-fade-in">
+                  <div className="px-4 md:px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                          <h3 className="text-base md:text-lg font-bold text-gray-900">Tra phòng nhanh</h3>
+                          <p className="text-xs text-gray-500">Kiểm tra phòng trống theo thời gian khách chọn và điều phối theo đơn gần nhất trước/sau.</p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setShowQuickFinder(false)}
+                          className="w-8 h-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                      >
+                          <X size={16} />
+                      </button>
+                  </div>
+
+                  <div className="p-4 md:p-5 border-b border-gray-100 bg-gray-50/60 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                          <input
+                              type="text"
+                              value={quickQueryText}
+                              onChange={(e) => setQuickQueryText(e.target.value)}
+                              placeholder='Ví dụ: "14h30 hôm nay đến 16h" hoặc "4/6 đến 6/6"'
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+                          <button
+                              type="button"
+                              onClick={handleApplyQuickQuery}
+                              className="px-4 py-2.5 rounded-lg bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700"
+                          >
+                              Phân tích nhanh
+                          </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-2">
+                          <div>
+                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Lọc theo chi nhánh</label>
+                              <select
+                                  value={quickPropertyFilter}
+                                  onChange={(e) => setQuickPropertyFilter(e.target.value)}
+                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                              >
+                                  <option value="ALL">Tất cả chi nhánh</option>
+                                  {quickPropertyOptions.map((property) => (
+                                      <option key={property.id} value={property.id}>
+                                          {property.name}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                          <button
+                              type="button"
+                              onClick={() => applyQuickPreset('OVERNIGHT')}
+                              className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                          >
+                              Qua đêm 21:00 - 09:00
+                          </button>
+                          <button
+                              type="button"
+                              onClick={() => applyQuickPreset('FULL_DAY')}
+                              className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:bg-gray-50"
+                          >
+                              Cả ngày 14:00 - 12:00
+                          </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Từ thời điểm</label>
+                              <input
+                                  type="datetime-local"
+                                  value={quickStartInput}
+                                  onChange={(e) => setQuickStartInput(e.target.value)}
+                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Đến thời điểm</label>
+                              <input
+                                  type="datetime-local"
+                                  value={quickEndInput}
+                                  onChange={(e) => setQuickEndInput(e.target.value)}
+                                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                              />
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="flex-1 overflow-auto p-4 md:p-5 bg-white">
+                      {!quickRange.valid && (
+                          <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm font-medium">
+                              {quickRange.message}
+                          </div>
+                      )}
+
+                      {quickRange.valid && quickAvailabilityByProperty.length === 0 && (
+                          <div className="p-5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-600">
+                              Không có phòng trống phù hợp trong khung giờ này.
+                          </div>
+                      )}
+
+                      {quickRange.valid && quickAvailabilityByProperty.length > 0 && (
+                          <div className="space-y-4">
+                              {quickAvailabilityByProperty.map((group) => (
+                                  <div key={group.propertyId} className="border border-gray-200 rounded-xl overflow-hidden">
+                                      <div className="px-3 py-2.5 bg-gray-50 border-b border-gray-200 text-sm font-bold text-gray-800">
+                                          {group.propertyName} ({group.rooms.length} phòng trống)
+                                      </div>
+                                      <div className="overflow-x-auto">
+                                          <table className="w-full text-sm">
+                                              <thead className="bg-gray-50 text-gray-500 uppercase text-[11px]">
+                                                  <tr>
+                                                      <th className="px-3 py-2 text-left">Phòng</th>
+                                                      <th className="px-3 py-2 text-left">Hạng phòng</th>
+                                                      <th className="px-3 py-2 text-left">Đơn trước đó trả</th>
+                                                      <th className="px-3 py-2 text-left">Đơn sau đó nhận</th>
+                                                      <th className="px-3 py-2 text-right">Thao tác</th>
+                                                  </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-100">
+                                                  {group.rooms.map((item) => (
+                                                      <tr key={item.room.id} className="hover:bg-gray-50">
+                                                          <td className="px-3 py-2.5 font-bold text-gray-900">{item.room.number}</td>
+                                                          <td className="px-3 py-2.5 text-gray-600">{item.roomTypeName}</td>
+                                                          <td className="px-3 py-2.5 text-gray-700">
+                                                              {item.previousBooking ? formatStandardDateTime(item.previousBooking.checkOutDate) : '--'}
+                                                          </td>
+                                                          <td className="px-3 py-2.5 text-gray-700">
+                                                              {item.nextBooking ? formatStandardDateTime(item.nextBooking.checkInDate) : '--'}
+                                                          </td>
+                                                          <td className="px-3 py-2.5">
+                                                              <div className="flex justify-end gap-2">
+                                                                  {canAdd && (
+                                                                      <button
+                                                                          type="button"
+                                                                          onClick={() => handleOpenHoldModal(item.room.id)}
+                                                                          className="px-2.5 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100"
+                                                                      >
+                                                                          Giữ cọc
+                                                                      </button>
+                                                                  )}
+                                                                  {canAdd && (
+                                                                      <button
+                                                                          type="button"
+                                                                          onClick={() => {
+                                                                              openModal(
+                                                                                  null,
+                                                                                  false,
+                                                                                  item.room.id,
+                                                                                  { start: `${quickStartInput}:00.000`, end: `${quickEndInput}:00.000` }
+                                                                              );
+                                                                              setShowQuickFinder(false);
+                                                                          }}
+                                                                          className="px-2.5 py-1.5 rounded-md border border-blue-200 bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100"
+                                                                      >
+                                                                          Tạo đơn
+                                                                      </button>
+                                                                  )}
+                                                              </div>
+                                                          </td>
+                                                      </tr>
+                                                  ))}
+                                              </tbody>
+                                          </table>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                  </div>
+              </div>
+          </div>,
+          document.body
+      )}
+
+      {holdTargetRoom && holdQuickRange && createPortal(
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+              <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px]" onClick={handleCloseHoldModal}></div>
+              <div className="relative bg-white w-full max-w-md rounded-xl border border-gray-200 shadow-2xl p-5 animate-fade-in">
+                  <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-base font-bold text-gray-900">Giữ cọc phòng {holdTargetRoom.number}</h4>
+                      <button
+                          type="button"
+                          onClick={handleCloseHoldModal}
+                          className="w-7 h-7 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                      >
+                          <X size={14} />
+                      </button>
+                  </div>
+
+                  <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2.5 mb-3">
+                      Khung giữ: <b>{formatStandardDateTime(holdQuickRange.startIso)}</b> → <b>{formatStandardDateTime(holdQuickRange.endIso)}</b>
+                  </div>
+
+                  <div className="space-y-3">
+                      <div>
+                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Thời gian giữ cọc (phút)</label>
+                          <input
+                              type="number"
+                              min={1}
+                              max={30}
+                              value={holdMinutes}
+                              onChange={(e) => setHoldMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">Tối thiểu 1 phút, tối đa 30 phút. Hết hạn sẽ tự xoá giữ cọc.</p>
+                      </div>
+
+                      <div>
+                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Tên khách (tuỳ chọn)</label>
+                          <input
+                              type="text"
+                              value={holdGuestName}
+                              onChange={(e) => setHoldGuestName(e.target.value)}
+                              placeholder="Ví dụ: Anh Nam"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+                      </div>
+
+                      <div>
+                          <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Số điện thoại (tuỳ chọn)</label>
+                          <input
+                              type="text"
+                              value={holdGuestPhone}
+                              onChange={(e) => setHoldGuestPhone(e.target.value)}
+                              placeholder="Ví dụ: 09xxxxxxxx"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+                          />
+                      </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-5">
+                      <button
+                          type="button"
+                          onClick={handleCloseHoldModal}
+                          disabled={isSavingHold}
+                          className="flex-1 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-70"
+                      >
+                          Hủy
+                      </button>
+                      <button
+                          type="button"
+                          onClick={handleConfirmHoldBooking}
+                          disabled={isSavingHold}
+                          className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-70"
+                      >
+                          {isSavingHold ? 'Đang giữ...' : 'Xác nhận giữ cọc'}
+                      </button>
+                  </div>
+              </div>
+          </div>,
+          document.body
+      )}
 
       {statusModal.isOpen && statusModal.room && (
           <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">

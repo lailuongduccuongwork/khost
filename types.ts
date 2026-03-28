@@ -101,6 +101,28 @@ export interface Room {
   sortOrder?: number; // Order for display
 }
 
+export type RoomPolicyMode = 'LOCKED' | 'HOURLY_ONLY';
+export type RoomPolicyRecurrence = 'NONE' | 'WEEKLY';
+
+export interface RoomPolicyRule {
+  id: string;
+  tenantId?: string;
+  mode: RoomPolicyMode;
+  reason?: string;
+  isActive: boolean;
+  startDate: string; // yyyy-mm-dd
+  endDate?: string; // yyyy-mm-dd (inclusive)
+  recurrence: RoomPolicyRecurrence;
+  weekdays?: number[]; // 0-6 (CN-T7), dùng cho WEEKLY
+  checkInHour?: number; // mặc định 14
+  checkOutHour?: number; // mặc định 12 (ngày hôm sau)
+  propertyIds?: string[];
+  roomTypeIds?: string[];
+  roomIds?: string[];
+  createdAt: string;
+  createdBy: string;
+}
+
 export interface Customer {
   id: string;
   tenantId?: string; // Multi-tenant Foreign Key
@@ -138,6 +160,8 @@ export interface Booking {
   tags?: string[]; // Array of Tag IDs
   
   importBatchId?: string; // For undoing imports
+  isHold?: boolean; // Đơn giữ cọc tạm thời
+  holdUntil?: string; // ISO time, hết hạn thì tự xoá
 }
 
 export interface User {
@@ -175,6 +199,7 @@ export type HistoryEntityType =
   | 'CUSTOMER'
   | 'PROPERTY'
   | 'ROOM_TYPE'
+  | 'ROOM_POLICY'
   | 'TAG'
   | 'TRANSACTION_CATEGORY'
   | 'REPORT'

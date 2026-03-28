@@ -8,6 +8,7 @@ import {
     PERMISSIONS,
     Property,
     Room,
+    RoomPolicyRule,
     RoomStatus,
     RoomType,
     SubscriptionPlan,
@@ -30,7 +31,7 @@ import {
     INITIAL_USERS,
 } from './mockData';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, get, onValue, ref, remove, set, update } from 'firebase/database';
+import { getDatabase, get, onValue, ref, remove, runTransaction, set, update } from 'firebase/database';
 
 declare const XLSX: any;
 
@@ -55,6 +56,7 @@ const AUDIT_COALESCE_WINDOW_MS = 1500;
 const CACHE = {
     properties: [] as Property[],
     rooms: [] as Room[],
+    roomPolicies: [] as RoomPolicyRule[],
     roomTypes: [] as RoomType[],
     bookings: [] as Booking[],
     customers: [] as Customer[],
@@ -73,6 +75,7 @@ type AuditSource = 'WEB' | 'SYSTEM' | 'IMPORT';
 type AuditedNode =
     | 'properties'
     | 'rooms'
+    | 'roomPolicies'
     | 'roomTypes'
     | 'bookings'
     | 'customers'
@@ -127,8 +130,20 @@ interface BookingActionOptions {
     staffId?: string;
 }
 
+interface BookingGroupSaveItem {
+    booking: Booking;
+    mode: 'create' | 'update';
+}
+
+interface BookingGroupSaveParams {
+    upserts: BookingGroupSaveItem[];
+    deleteIds?: string[];
+}
+
 let currentAuditActor: AuditActor | null = null;
 const recentAuditEntries = new Map<string, { id: string; timestamp: number }>();
+const HOLD_CLEANUP_THROTTLE_MS = 10000;
+let lastHoldCleanupAttemptMs = 0;
 
 const COLLECTION_CONFIGS: Record<AuditedNode, CollectionConfig<any>> = {
     properties: {
@@ -144,6 +159,13 @@ const COLLECTION_CONFIGS: Record<AuditedNode, CollectionConfig<any>> = {
         collectionLabel: 'danh sách phòng',
         scopedByTenant: true,
         getLabel: (item: Room) => item.number || item.id,
+    },
+    roomPolicies: {
+        entityType: 'ROOM_POLICY',
+        label: 'chính sách phòng',
+        collectionLabel: 'chính sách phòng',
+        scopedByTenant: true,
+        getLabel: (item: RoomPolicyRule) => item.id,
     },
     roomTypes: {
         entityType: 'ROOM_TYPE',
@@ -275,6 +297,19 @@ const sanitizeForLog = (value: any): any => {
     return sanitized;
 };
 
+const removeUndefinedDeep = (value: any): any => {
+    if (value === undefined) return null;
+    if (value === null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map((item) => removeUndefinedDeep(item));
+
+    const cleaned: Record<string, any> = {};
+    Object.entries(value).forEach(([key, itemValue]) => {
+        if (itemValue === undefined) return;
+        cleaned[key] = removeUndefinedDeep(itemValue);
+    });
+    return cleaned;
+};
+
 const stripTenantId = (value: any) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const cloned = cloneData(value);
@@ -380,6 +415,18 @@ const buildNodeMetadata = (node: AuditedNode, item: any) => {
                 typeId: item.typeId,
                 floor: item.floor,
             };
+        case 'roomPolicies':
+            return {
+                mode: item.mode,
+                isActive: item.isActive,
+                recurrence: item.recurrence,
+                weekdays: item.weekdays || [],
+                startDate: item.startDate,
+                endDate: item.endDate || null,
+                propertyIds: item.propertyIds || [],
+                roomTypeIds: item.roomTypeIds || [],
+                roomIds: item.roomIds || [],
+            };
         case 'roomTypes':
             return {
                 propertyId: item.propertyId || null,
@@ -410,6 +457,8 @@ const buildNodeMetadata = (node: AuditedNode, item: any) => {
                     type: fee.type,
                 })),
                 importBatchId: item.importBatchId || null,
+                isHold: !!item.isHold,
+                holdUntil: item.holdUntil || null,
             };
         case 'customers':
             return {
@@ -540,12 +589,23 @@ const _writeHistoryLog = (entry: HistoryLog, coalesceKey?: string) => {
         recentAuditEntries.set(recentKey, { id: targetId, timestamp: now });
     }
 
-    const finalEntry = { ...entry, id: targetId };
+    const finalEntryRaw = removeUndefinedDeep({ ...entry, id: targetId }) as Record<string, any>;
+    if (Object.prototype.hasOwnProperty.call(finalEntryRaw, 'entityld')) {
+        if (!finalEntryRaw.entityId && finalEntryRaw.entityld) {
+            finalEntryRaw.entityId = finalEntryRaw.entityld;
+        }
+        delete finalEntryRaw.entityld;
+    }
+    const finalEntry = finalEntryRaw as HistoryLog;
     upsertHistoryCache(finalEntry);
 
-    return set(ref(db, `${historyPath}/${targetId}`), finalEntry).catch((error: any) => {
+    try {
+        return set(ref(db, `${historyPath}/${targetId}`), finalEntry).catch((error: any) => {
+            console.error('Write history failed', error);
+        });
+    } catch (error) {
         console.error('Write history failed', error);
-    });
+    }
 };
 
 const _recordHistory = ({
@@ -642,6 +702,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<Tag>('tags', 'tags');
         bind<TransactionCategory>('transactionCategories', 'transactionCategories');
         bind<Room>('rooms', 'rooms');
+        bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
         bind<Booking>('bookings', 'bookings');
         bind<Customer>('customers', 'customers');
         _bindHistory(basePath);
@@ -758,7 +819,8 @@ const _saveItem = (node: string, item: any) => {
     const basePath = getBaseRef();
     if (!basePath) return;
 
-    const normalizedItem = normalizeForNode(node, item, activeTenantId);
+    const normalizedItem = removeUndefinedDeep(normalizeForNode(node, item, activeTenantId));
+    if (!normalizedItem?.id) return;
 
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
@@ -769,9 +831,13 @@ const _saveItem = (node: string, item: any) => {
     }
     _dataChangeCallback();
 
-    return set(ref(db, `${basePath}/${node}/${normalizedItem.id}`), normalizedItem).catch((error: any) => {
+    try {
+        return set(ref(db, `${basePath}/${node}/${normalizedItem.id}`), normalizedItem).catch((error: any) => {
+            console.error(`Save ${node} failed`, error);
+        });
+    } catch (error) {
         console.error(`Save ${node} failed`, error);
-    });
+    }
 };
 
 const _deleteItem = (node: string, id: string) => {
@@ -799,8 +865,26 @@ const _saveListAsMap = (node: string, list: any[]) => {
     const basePath = getBaseRef();
     if (!basePath) return;
 
-    const normalizedList = list.map((item) => normalizeForNode(node, item, activeTenantId));
+    const normalizedList = list
+        .map((item) => removeUndefinedDeep(normalizeForNode(node, item, activeTenantId)))
+        .filter((item) => item?.id);
     const updates: Record<string, any> = {};
+    const nextIds = new Set(normalizedList.map((item) => item.id));
+
+    // Room policies must be hard-deleted when removed from list
+    // to avoid ghost policies reappearing on realtime sync.
+    if (node === 'roomPolicies') {
+        // @ts-ignore
+        const currentList = CACHE[node as keyof typeof CACHE];
+        if (Array.isArray(currentList)) {
+            currentList.forEach((item: any) => {
+                if (!item?.id) return;
+                if (!nextIds.has(item.id)) {
+                    updates[`${basePath}/${node}/${item.id}`] = null;
+                }
+            });
+        }
+    }
 
     // @ts-ignore
     CACHE[node as keyof typeof CACHE] = normalizedList;
@@ -978,11 +1062,11 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus, options: RoomStat
     }
 };
 
-const _addBooking = (booking: Booking, options: BookingActionOptions = {}) => {
-    _saveItem('bookings', booking);
+const _addBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
+    const { savedBooking } = await _saveBookingAtomic(booking, 'create');
 
-    if (booking.status === BookingStatus.CHECKED_IN) {
-        _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
+    if (savedBooking.status === BookingStatus.CHECKED_IN) {
+        _updateRoomStatus(savedBooking.roomId, RoomStatus.OCCUPIED, {
             source: options.source,
             suppressLog: true,
         });
@@ -991,39 +1075,39 @@ const _addBooking = (booking: Booking, options: BookingActionOptions = {}) => {
     _recordHistory({
         action: 'CREATE',
         entityType: 'BOOKING',
-        entityId: booking.id,
-        entityLabel: booking.id,
-        description: `Tạo đơn ${booking.id} cho ${booking.guestName || 'khách lẻ'}`,
-        after: booking,
+        entityId: savedBooking.id,
+        entityLabel: savedBooking.id,
+        description: `Tạo đơn ${savedBooking.id} cho ${savedBooking.guestName || 'khách lẻ'}`,
+        after: savedBooking,
         metadata: {
-            ...buildNodeMetadata('bookings', booking),
+            ...buildNodeMetadata('bookings', savedBooking),
             operationName: 'Tạo booking',
         },
         source: options.source || 'WEB',
         staffId: options.staffId,
-        bookingSnapshot: booking,
+        bookingSnapshot: savedBooking,
     });
 };
 
-const _updateBooking = (booking: Booking, options: BookingActionOptions = {}) => {
-    const oldBooking = CACHE.bookings.find((item) => item.id === booking.id);
-    _saveItem('bookings', booking);
+const _updateBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
+    const { savedBooking, previousBooking } = await _saveBookingAtomic(booking, 'update');
+    const oldBooking = previousBooking || null;
 
     if (!oldBooking) {
         _recordHistory({
             action: 'UPDATE',
             entityType: 'BOOKING',
-            entityId: booking.id,
-            entityLabel: booking.id,
-            description: `Cập nhật thông tin đơn ${booking.id}`,
-            after: booking,
+            entityId: savedBooking.id,
+            entityLabel: savedBooking.id,
+            description: `Cập nhật thông tin đơn ${savedBooking.id}`,
+            after: savedBooking,
             metadata: {
-                ...buildNodeMetadata('bookings', booking),
+                ...buildNodeMetadata('bookings', savedBooking),
                 operationName: 'Sửa booking',
             },
             source: options.source || 'WEB',
             staffId: options.staffId,
-            bookingSnapshot: booking,
+            bookingSnapshot: savedBooking,
         });
         return;
     }
@@ -1458,6 +1542,252 @@ const _updateBooking = (booking: Booking, options: BookingActionOptions = {}) =>
     }
 };
 
+const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: BookingActionOptions = {}) => {
+    const source = options.source || 'WEB';
+    const rawUpserts = params.upserts || [];
+    const rawDeleteIds = params.deleteIds || [];
+
+    if (rawUpserts.length === 0 && rawDeleteIds.length === 0) {
+        return { createdIds: [] as string[], updatedIds: [] as string[], deletedIds: [] as string[] };
+    }
+
+    if (!activeTenantId || !db) {
+        throw new Error('Kết nối dữ liệu chưa sẵn sàng. Vui lòng thử lại.');
+    }
+    const basePath = getBaseRef();
+    if (!basePath) {
+        throw new Error('Không xác định được tenant hiện tại. Vui lòng tải lại trang.');
+    }
+
+    const normalizedUpsertMap = new Map<string, BookingGroupSaveItem>();
+    for (const item of rawUpserts) {
+        const normalizedBooking = removeUndefinedDeep(normalizeForNode('bookings', item.booking, activeTenantId));
+        if (!normalizedBooking?.id) {
+            throw new Error('Có booking không hợp lệ trong thao tác lưu nhóm.');
+        }
+        if (normalizedUpsertMap.has(normalizedBooking.id)) {
+            throw new Error(`Trùng mã đơn ${normalizedBooking.id} trong cùng một lần lưu nhóm.`);
+        }
+        normalizedUpsertMap.set(normalizedBooking.id, {
+            booking: normalizedBooking as Booking,
+            mode: item.mode,
+        });
+    }
+
+    const normalizedUpserts = Array.from(normalizedUpsertMap.values());
+    const deleteIds = Array.from(new Set(rawDeleteIds.filter(Boolean))).filter(
+        (id) => !normalizedUpsertMap.has(id)
+    );
+
+    const bookingRef = ref(db, `${basePath}/bookings`);
+    let rejectReason = '';
+    const beforeById = new Map<string, Booking | null>();
+    let deletedBefore: Booking[] = [];
+
+    const result = await runTransaction(
+        bookingRef,
+        (currentValue) => {
+            rejectReason = '';
+            beforeById.clear();
+            deletedBefore = [];
+
+            const nextMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
+
+            for (const deleteId of deleteIds) {
+                const existing = nextMap[deleteId] as Booking | undefined;
+                if (!existing || existing.status === BookingStatus.DELETED) {
+                    rejectReason = `Đơn ${deleteId} đã bị xóa hoặc không còn tồn tại.`;
+                    return;
+                }
+                deletedBefore.push({
+                    ...existing,
+                    id: existing.id || deleteId,
+                });
+                delete nextMap[deleteId];
+            }
+
+            for (const item of normalizedUpserts) {
+                const nextBooking = item.booking;
+                const existing = nextMap[nextBooking.id] as Booking | undefined;
+
+                if (item.mode === 'create' && existing) {
+                    rejectReason = `Mã đơn ${nextBooking.id} đã tồn tại.`;
+                    return;
+                }
+                if (item.mode === 'update' && (!existing || existing.status === BookingStatus.DELETED)) {
+                    rejectReason = `Đơn ${nextBooking.id} đã bị xóa hoặc không còn tồn tại.`;
+                    return;
+                }
+
+                beforeById.set(
+                    nextBooking.id,
+                    existing
+                        ? {
+                              ...existing,
+                              id: existing.id || nextBooking.id,
+                          }
+                        : null
+                );
+
+                const startMs = new Date(nextBooking.checkInDate).getTime();
+                const endMs = new Date(nextBooking.checkOutDate).getTime();
+                const policyCheck = _validateRoomPolicy(nextBooking.roomId, nextBooking.checkInDate, nextBooking.checkOutDate);
+                if (!policyCheck.valid) {
+                    rejectReason = policyCheck.reason || 'Vi phạm chính sách phòng';
+                    return;
+                }
+
+                const conflict = findBookingConflict(
+                    toBookingListFromMap(nextMap),
+                    nextBooking.roomId,
+                    startMs,
+                    endMs,
+                    item.mode === 'update' ? nextBooking.id : undefined
+                );
+                if (conflict) {
+                    rejectReason = `Trùng đơn ${conflict.id}`;
+                    return;
+                }
+
+                nextMap[nextBooking.id] = nextBooking;
+            }
+
+            return nextMap;
+        },
+        { applyLocally: false }
+    );
+
+    if (!result.committed) {
+        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    }
+
+    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    _dataChangeCallback();
+
+    const createdIds: string[] = [];
+    const updatedIds: string[] = [];
+    const deletedIds: string[] = [];
+
+    deletedBefore.forEach((booking) => {
+        deletedIds.push(booking.id);
+        if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
+                source,
+                staffId: options.staffId,
+                suppressLog: true,
+            });
+        }
+
+        _recordHistory({
+            action: 'DELETE',
+            entityType: 'BOOKING',
+            entityId: booking.id,
+            entityLabel: booking.id,
+            description: `Xóa đơn ${booking.id}`,
+            before: booking,
+            metadata: {
+                ...buildNodeMetadata('bookings', booking),
+                operationName: 'Xóa booking',
+            },
+            source,
+            staffId: options.staffId,
+            bookingSnapshot: booking,
+        });
+    });
+
+    normalizedUpserts.forEach((item) => {
+        const booking = item.booking;
+        const before = beforeById.get(booking.id) || null;
+
+        if (!before) {
+            createdIds.push(booking.id);
+            if (booking.status === BookingStatus.CHECKED_IN) {
+                _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
+                    source,
+                    staffId: options.staffId,
+                    suppressLog: true,
+                });
+            }
+
+            _recordHistory({
+                action: 'CREATE',
+                entityType: 'BOOKING',
+                entityId: booking.id,
+                entityLabel: booking.id,
+                description: `Tạo đơn ${booking.id} cho ${booking.guestName || 'khách lẻ'}`,
+                after: booking,
+                metadata: {
+                    ...buildNodeMetadata('bookings', booking),
+                    operationName: 'Tạo booking',
+                },
+                source,
+                staffId: options.staffId,
+                bookingSnapshot: booking,
+            });
+            return;
+        }
+
+        updatedIds.push(booking.id);
+        if (before.status !== booking.status) {
+            if (booking.status === BookingStatus.CHECKED_IN) {
+                _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
+                    source,
+                    staffId: options.staffId,
+                    suppressLog: true,
+                });
+            } else if (booking.status === BookingStatus.CHECKED_OUT) {
+                _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, {
+                    source,
+                    staffId: options.staffId,
+                    suppressLog: true,
+                });
+            } else if (booking.status === BookingStatus.CANCELLED) {
+                _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
+                    source,
+                    staffId: options.staffId,
+                    suppressLog: true,
+                });
+            }
+        }
+
+        _recordHistory({
+            action: 'UPDATE',
+            entityType: 'BOOKING',
+            entityId: booking.id,
+            entityLabel: booking.id,
+            description: `Cập nhật thông tin đơn ${booking.id}`,
+            before,
+            after: booking,
+            metadata: {
+                ...buildNodeMetadata('bookings', booking),
+                operationName: 'Sửa booking (lưu nhóm)',
+                changedKeys: getChangedKeys(before, booking),
+            },
+            source,
+            staffId: options.staffId,
+            bookingSnapshot: booking,
+        });
+    });
+
+    if (createdIds.length + updatedIds.length + deletedIds.length > 1) {
+        _recordHistory({
+            action: 'UPDATE',
+            entityType: 'BOOKING',
+            description: `Lưu nhóm booking: tạo ${createdIds.length}, sửa ${updatedIds.length}, xóa ${deletedIds.length}`,
+            metadata: {
+                operationName: 'Lưu nhóm booking',
+                createdIds,
+                updatedIds,
+                deletedIds,
+            },
+            source,
+            staffId: options.staffId,
+        });
+    }
+
+    return { createdIds, updatedIds, deletedIds };
+};
+
 const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingActionOptions = {}) => {
     if (!activeTenantId || !db || ids.length === 0) return;
 
@@ -1572,9 +1902,88 @@ const _logAction = (action: HistoryAction | string, booking: Booking, descriptio
     });
 };
 
-const _deleteBooking = (id: string, staffId: string, options: BookingActionOptions = {}) => {
-    _hardDeleteBookings([id], staffId, options);
+const _deleteBooking = async (id: string, staffId: string, options: BookingActionOptions = {}) => {
+    if (!id) return false;
+    const source = options.source || 'WEB';
+
+    if (!activeTenantId || !db) {
+        const existing = CACHE.bookings.find((booking) => booking.id === id);
+        if (!existing) return false;
+        _hardDeleteBookings([id], staffId, options);
+        return true;
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) return false;
+
+    const bookingRef = ref(db, `${basePath}/bookings`);
+    let deletedBooking: Booking | null = null;
+
+    const result = await runTransaction(
+        bookingRef,
+        (currentValue) => {
+            deletedBooking = null;
+            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
+            const existing = currentMap[id] as Booking | undefined;
+            if (!existing || existing.status === BookingStatus.DELETED) {
+                return;
+            }
+            deletedBooking = {
+                ...existing,
+                id: existing.id || id,
+            };
+            delete currentMap[id];
+            return currentMap;
+        },
+        { applyLocally: false }
+    );
+
+    if (!result.committed || !deletedBooking) {
+        return false;
+    }
+
+    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    _dataChangeCallback();
+
+    if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(deletedBooking.status)) {
+        _updateRoomStatus(deletedBooking.roomId, RoomStatus.VACANT_CLEAN, {
+            source,
+            staffId,
+            suppressLog: true,
+        });
+    }
+
+    _recordHistory({
+        action: 'DELETE',
+        entityType: 'BOOKING',
+        entityId: deletedBooking.id,
+        entityLabel: deletedBooking.id,
+        description: `Xóa đơn ${deletedBooking.id}`,
+        before: deletedBooking,
+        metadata: {
+            ...buildNodeMetadata('bookings', deletedBooking),
+            operationName: 'Xóa booking',
+        },
+        source,
+        staffId,
+        bookingSnapshot: deletedBooking,
+    });
+
     return true;
+};
+
+const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: BookingActionOptions = {}) => {
+    const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
+    if (uniqueIds.length === 0) return [] as string[];
+
+    const deletedIds: string[] = [];
+    for (const id of uniqueIds) {
+        if (await _deleteBooking(id, staffId, options)) {
+            deletedIds.push(id);
+        }
+    }
+
+    return deletedIds;
 };
 
 const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
@@ -1689,6 +2098,390 @@ const _seedTenantAdminUser = (user: User) => {
         metadata: buildNodeMetadata('users', user),
         source: 'SYSTEM',
     });
+};
+
+const toDayStart = (date: Date) => {
+    const clone = new Date(date);
+    clone.setHours(0, 0, 0, 0);
+    return clone;
+};
+
+const addDays = (date: Date, days: number) => {
+    const clone = new Date(date);
+    clone.setDate(clone.getDate() + days);
+    return clone;
+};
+
+const isPolicyApplicableOnDate = (policy: RoomPolicyRule, date: Date) => {
+    if (!policy.isActive) return false;
+    const dayMs = toDayStart(date).getTime();
+    const startDateMs = policy.startDate ? toDayStart(new Date(`${policy.startDate}T00:00:00`)).getTime() : null;
+    const endDateMs = policy.endDate ? toDayStart(new Date(`${policy.endDate}T00:00:00`)).getTime() : null;
+
+    if (startDateMs !== null && dayMs < startDateMs) return false;
+    if (endDateMs !== null && dayMs > endDateMs) return false;
+
+    if (policy.recurrence === 'WEEKLY') {
+        const weekdays = policy.weekdays || [];
+        if (weekdays.length === 0) return false;
+        return weekdays.includes(new Date(dayMs).getDay());
+    }
+    return true;
+};
+
+const getPolicyWindowsInRange = (policy: RoomPolicyRule, rangeStartMs: number, rangeEndMs: number) => {
+    if (!policy.isActive) return [];
+    const windows: Array<{ startMs: number; endMs: number }> = [];
+    const checkInHour = Number.isFinite(policy.checkInHour) ? Number(policy.checkInHour) : 14;
+    const checkOutHour = Number.isFinite(policy.checkOutHour) ? Number(policy.checkOutHour) : 12;
+    let cursor = toDayStart(addDays(new Date(rangeStartMs), -2));
+    const cursorEnd = toDayStart(addDays(new Date(rangeEndMs), 2)).getTime();
+    let guard = 0;
+
+    while (cursor.getTime() <= cursorEnd && guard < 2000) {
+        if (isPolicyApplicableOnDate(policy, cursor)) {
+            const windowStart = new Date(cursor);
+            windowStart.setHours(checkInHour, 0, 0, 0);
+            const windowEnd = addDays(new Date(cursor), 1);
+            windowEnd.setHours(checkOutHour, 0, 0, 0);
+
+            const startMs = windowStart.getTime();
+            const endMs = windowEnd.getTime();
+            if (endMs > rangeStartMs && startMs < rangeEndMs) {
+                windows.push({ startMs, endMs });
+            }
+        }
+        cursor = addDays(cursor, 1);
+        guard += 1;
+    }
+
+    return windows;
+};
+
+const roomMatchesPolicy = (policy: RoomPolicyRule, room: Room) => {
+    const propertyIds = policy.propertyIds || [];
+    const roomTypeIds = policy.roomTypeIds || [];
+    const roomIds = policy.roomIds || [];
+
+    const matchProperty = propertyIds.length === 0 || propertyIds.includes(room.propertyId);
+    const matchType = roomTypeIds.length === 0 || roomTypeIds.includes(room.typeId);
+    const matchRoom = roomIds.length === 0 || roomIds.includes(room.id);
+    return matchProperty && matchType && matchRoom;
+};
+
+const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
+    const room = CACHE.rooms.find((item) => item.id === roomId);
+    if (!room) return { valid: true };
+
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return { valid: true };
+
+    const matchedPolicies = CACHE.roomPolicies.filter((policy) => roomMatchesPolicy(policy, room));
+
+    for (const policy of matchedPolicies) {
+        const windows = getPolicyWindowsInRange(policy, startMs, endMs);
+        if (windows.length === 0) continue;
+
+        if (policy.mode === 'LOCKED') {
+            return {
+                valid: false,
+                reason: `Phòng ${room.number} đang bị khóa. ${policy.reason ? `Lý do: ${policy.reason}` : ''}`.trim(),
+                policyMode: policy.mode,
+            };
+        }
+
+        if (policy.mode === 'HOURLY_ONLY') {
+            // Chặn mọi đơn bao trùm full khung 14h -> 12h hôm sau
+            // (bao gồm cả check-in sớm hoặc check-out muộn).
+            const coversDailyWindow = windows.some(
+                (window) => startMs <= window.startMs && endMs >= window.endMs
+            );
+            if (!coversDailyWindow) continue;
+
+            return {
+                valid: false,
+                reason: `Phòng ${room.number} chỉ nhận khách giờ trong khung này, không nhận đơn 14h-12h.`,
+                policyMode: policy.mode,
+            };
+        }
+    }
+
+    return { valid: true };
+};
+
+const isExpiredHoldBooking = (booking: Booking, nowMs: number = Date.now()) => {
+    if (!booking?.isHold || !booking.holdUntil) return false;
+    const holdUntilMs = new Date(booking.holdUntil).getTime();
+    if (!Number.isFinite(holdUntilMs)) return false;
+    return holdUntilMs <= nowMs;
+};
+
+const isBookingActiveForConflict = (booking: Booking, nowMs: number = Date.now()) => {
+    if (booking.status === BookingStatus.DELETED || booking.status === BookingStatus.CANCELLED) return false;
+    if (isExpiredHoldBooking(booking, nowMs)) return false;
+    return true;
+};
+
+const toBookingListFromMap = (rawValue: any): Booking[] => {
+    if (!rawValue || typeof rawValue !== 'object') return [];
+    return Object.entries(rawValue).reduce<Booking[]>((acc, [key, value]) => {
+        if (!value || typeof value !== 'object') return acc;
+        const booking = value as Booking;
+        acc.push({ ...booking, id: booking.id || key });
+        return acc;
+    }, []);
+};
+
+const findBookingConflict = (
+    bookings: Booking[],
+    roomId: string,
+    startMs: number,
+    endMs: number,
+    excludeId?: string
+) => {
+    const buffer = 30 * 60 * 1000;
+    const nowMs = Date.now();
+    return bookings.find((booking) => {
+        if (booking.id === excludeId) return false;
+        if (booking.roomId !== roomId) return false;
+        if (!isBookingActiveForConflict(booking, nowMs)) return false;
+
+        const bookingStart = new Date(booking.checkInDate).getTime();
+        const bookingEnd = new Date(booking.checkOutDate).getTime();
+        return startMs < bookingEnd + buffer && endMs + buffer > bookingStart;
+    });
+};
+
+const _cleanupExpiredHoldBookings = async (options: BookingActionOptions = {}) => {
+    const nowMs = Date.now();
+    const expiredInCache = CACHE.bookings.filter((booking) => isExpiredHoldBooking(booking, nowMs));
+    if (expiredInCache.length === 0) return 0;
+
+    const source = options.source || 'SYSTEM';
+
+    if (!activeTenantId || !db) {
+        const expiredIds = new Set(expiredInCache.map((booking) => booking.id));
+        CACHE.bookings = CACHE.bookings.filter((booking) => !expiredIds.has(booking.id));
+        _dataChangeCallback();
+        expiredInCache.forEach((booking) => {
+            _recordHistory({
+                action: 'DELETE',
+                entityType: 'BOOKING',
+                entityId: booking.id,
+                entityLabel: booking.id,
+                description: `Hết hạn giữ cọc, tự động xoá đơn ${booking.id}`,
+                before: booking,
+                metadata: {
+                    ...buildNodeMetadata('bookings', booking),
+                    operationName: 'Tự động xóa giữ cọc hết hạn',
+                },
+                source,
+                staffId: options.staffId,
+                bookingSnapshot: booking,
+            });
+        });
+        return expiredInCache.length;
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) return 0;
+
+    const bookingRef = ref(db, `${basePath}/bookings`);
+    const deletedBookings: Booking[] = [];
+
+    const result = await runTransaction(
+        bookingRef,
+        (currentValue) => {
+            deletedBookings.length = 0;
+            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
+            let changed = false;
+
+            Object.entries(currentMap).forEach(([bookingId, rawValue]) => {
+                if (!rawValue || typeof rawValue !== 'object') return;
+                const booking = rawValue as Booking;
+                const normalizedBooking: Booking = { ...booking, id: booking.id || bookingId };
+                if (!isExpiredHoldBooking(normalizedBooking, nowMs)) return;
+
+                delete currentMap[bookingId];
+                deletedBookings.push(normalizedBooking);
+                changed = true;
+            });
+
+            if (!changed) return;
+            return currentMap;
+        },
+        { applyLocally: false }
+    );
+
+    if (!result.committed || deletedBookings.length === 0) return 0;
+
+    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    _dataChangeCallback();
+
+    deletedBookings.forEach((booking) => {
+        _recordHistory({
+            action: 'DELETE',
+            entityType: 'BOOKING',
+            entityId: booking.id,
+            entityLabel: booking.id,
+            description: `Hết hạn giữ cọc, tự động xoá đơn ${booking.id}`,
+            before: booking,
+            metadata: {
+                ...buildNodeMetadata('bookings', booking),
+                operationName: 'Tự động xóa giữ cọc hết hạn',
+            },
+            source,
+            staffId: options.staffId,
+            bookingSnapshot: booking,
+        });
+    });
+
+    return deletedBookings.length;
+};
+
+const _saveBookingAtomic = async (
+    booking: Booking,
+    mode: 'create' | 'update'
+) => {
+    if (!booking?.id) throw new Error('Booking không hợp lệ');
+
+    const normalizedBooking = removeUndefinedDeep(normalizeForNode('bookings', booking, activeTenantId));
+    if (!normalizedBooking?.id) throw new Error('Booking không hợp lệ');
+
+    const missingUpdateMessage = `Đơn ${normalizedBooking.id} đã bị xóa hoặc không còn tồn tại. Vui lòng tải lại dữ liệu.`;
+
+    if (!activeTenantId || !db) {
+        const existing = CACHE.bookings.find((item) => item.id === normalizedBooking.id) || null;
+        if (mode === 'update') {
+            if (!existing || existing.status === BookingStatus.DELETED) {
+                throw new Error(missingUpdateMessage);
+            }
+        }
+        _saveItem('bookings', normalizedBooking);
+        return {
+            savedBooking: normalizedBooking as Booking,
+            previousBooking: existing,
+        };
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        const existing = CACHE.bookings.find((item) => item.id === normalizedBooking.id) || null;
+        if (mode === 'update') {
+            if (!existing || existing.status === BookingStatus.DELETED) {
+                throw new Error(missingUpdateMessage);
+            }
+        }
+        _saveItem('bookings', normalizedBooking);
+        return {
+            savedBooking: normalizedBooking as Booking,
+            previousBooking: existing,
+        };
+    }
+
+    const bookingRef = ref(db, `${basePath}/bookings`);
+    const startMs = new Date(normalizedBooking.checkInDate).getTime();
+    const endMs = new Date(normalizedBooking.checkOutDate).getTime();
+    let rejectReason = '';
+    let previousBookingFromCommittedTxn: Booking | null = null;
+
+    const result = await runTransaction(
+        bookingRef,
+        (currentValue) => {
+            rejectReason = '';
+            previousBookingFromCommittedTxn = null;
+            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
+            const currentBookings = toBookingListFromMap(currentMap);
+            const existingSameId = currentMap[normalizedBooking.id] as Booking | undefined;
+            if (existingSameId && typeof existingSameId === 'object') {
+                previousBookingFromCommittedTxn = {
+                    ...(existingSameId as Booking),
+                    id: (existingSameId as Booking).id || normalizedBooking.id,
+                };
+            }
+
+            if (mode === 'create' && existingSameId) {
+                rejectReason = `Mã đơn ${normalizedBooking.id} đã tồn tại`;
+                return;
+            }
+
+            if (mode === 'update' && (!existingSameId || existingSameId.status === BookingStatus.DELETED)) {
+                rejectReason = missingUpdateMessage;
+                return;
+            }
+
+            const scheduleChanged =
+                mode === 'create' ||
+                existingSameId.roomId !== normalizedBooking.roomId ||
+                existingSameId.checkInDate !== normalizedBooking.checkInDate ||
+                existingSameId.checkOutDate !== normalizedBooking.checkOutDate;
+
+            if (scheduleChanged) {
+                const policyCheck = _validateRoomPolicy(
+                    normalizedBooking.roomId,
+                    normalizedBooking.checkInDate,
+                    normalizedBooking.checkOutDate
+                );
+                if (!policyCheck.valid) {
+                    rejectReason = policyCheck.reason || 'Vi phạm chính sách phòng';
+                    return;
+                }
+
+                const conflict = findBookingConflict(
+                    currentBookings,
+                    normalizedBooking.roomId,
+                    startMs,
+                    endMs,
+                    mode === 'update' ? normalizedBooking.id : undefined
+                );
+                if (conflict) {
+                    rejectReason = `Trùng đơn ${conflict.id}`;
+                    return;
+                }
+            }
+
+            currentMap[normalizedBooking.id] = normalizedBooking;
+            return currentMap;
+        },
+        {
+            applyLocally: false,
+        }
+    );
+
+    if (!result.committed) {
+        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    }
+
+    const cacheIndex = CACHE.bookings.findIndex((item) => item.id === normalizedBooking.id);
+    if (cacheIndex > -1) CACHE.bookings[cacheIndex] = normalizedBooking as Booking;
+    else CACHE.bookings.push(normalizedBooking as Booking);
+    _dataChangeCallback();
+
+    return {
+        savedBooking: normalizedBooking as Booking,
+        previousBooking: previousBookingFromCommittedTxn,
+    };
+};
+
+const _validateRoomAvailability = (roomId: string, start: string, end: string, excludeId?: string) => {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+
+    const policyCheck = _validateRoomPolicy(roomId, start, end);
+    if (!policyCheck.valid) {
+        return {
+            valid: false,
+            reason: policyCheck.reason || 'Vi phạm chính sách phòng',
+            policyMode: (policyCheck as any).policyMode,
+        };
+    }
+
+    const activeBookings = CACHE.bookings.filter((booking) => isBookingActiveForConflict(booking));
+
+    const conflict = findBookingConflict(activeBookings, roomId, startMs, endMs, excludeId);
+
+    return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
 };
 
 export const DataService = {
@@ -1823,8 +2616,19 @@ export const DataService = {
         if (propertyId) rooms = rooms.filter((room) => room.propertyId === propertyId);
         return rooms.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
     },
+    getRoomPolicies: () => CACHE.roomPolicies,
     getBookings: (propertyId?: string) => {
-        let bookings = CACHE.bookings.filter((booking) => booking.status !== BookingStatus.DELETED);
+        const nowMs = Date.now();
+        if (nowMs - lastHoldCleanupAttemptMs > HOLD_CLEANUP_THROTTLE_MS) {
+            lastHoldCleanupAttemptMs = nowMs;
+            _cleanupExpiredHoldBookings({ source: 'SYSTEM' }).catch((error: any) => {
+                console.error('Cleanup expired hold bookings failed', error);
+            });
+        }
+
+        let bookings = CACHE.bookings.filter(
+            (booking) => booking.status !== BookingStatus.DELETED && !isExpiredHoldBooking(booking, nowMs)
+        );
         if (propertyId) bookings = bookings.filter((booking) => booking.propertyId === propertyId);
         return bookings;
     },
@@ -1842,6 +2646,7 @@ export const DataService = {
 
     saveProperties: (list: Property[]) => _saveAuditedList('properties', list),
     saveRooms: (list: Room[]) => _saveAuditedList('rooms', list),
+    saveRoomPolicies: (list: RoomPolicyRule[]) => _saveAuditedList('roomPolicies', list),
     saveRoomTypes: (list: RoomType[]) => _saveAuditedList('roomTypes', list),
     saveTags: (list: Tag[]) => _saveAuditedList('tags', list),
     saveTransactionCategories: (list: TransactionCategory[]) => _saveAuditedList('transactionCategories', list),
@@ -1850,7 +2655,8 @@ export const DataService = {
     addBooking: _addBooking,
     updateBooking: _updateBooking,
     deleteBooking: _deleteBooking,
-    deleteBookings: _hardDeleteBookings,
+    saveBookingGroup: _saveBookingGroupAtomic,
+    deleteBookings: _deleteBookingsAtomic,
     saveBookings: (list: Booking[]) => _saveAuditedList('bookings', list),
     resetAllBookings: _resetAllBookings,
 
@@ -1901,24 +2707,26 @@ export const DataService = {
         });
     },
 
-    deleteBookingsByBatchId: (batchId: string, staffId: string) => {
+    deleteBookingsByBatchId: async (batchId: string, staffId: string) => {
         const toDelete = CACHE.bookings.filter((booking) => booking.importBatchId === batchId);
         if (toDelete.length === 0) return 0;
 
         const ids = toDelete.map((booking) => booking.id);
-        _hardDeleteBookings(ids, staffId);
+        const deletedIds = await _deleteBookingsAtomic(ids, staffId, { source: 'IMPORT', staffId });
+        if (deletedIds.length === 0) return 0;
+
         _recordHistory({
             action: 'BULK_DELETE',
             entityType: 'BOOKING',
-            description: `Hoàn tác import batch ${batchId} (${ids.length} đơn)`,
+            description: `Hoàn tác import batch ${batchId} (${deletedIds.length} đơn)`,
             metadata: {
                 batchId,
-                count: ids.length,
-                bookingIds: ids,
+                count: deletedIds.length,
+                bookingIds: deletedIds,
             },
             staffId,
         });
-        return ids.length;
+        return deletedIds.length;
     },
 
     logAction: _logAction,
@@ -1934,25 +2742,9 @@ export const DataService = {
     },
 
     validateRoomAvailability: (roomId: string, start: string, end: string, excludeId?: string) => {
-        const startMs = new Date(start).getTime();
-        const endMs = new Date(end).getTime();
-        const buffer = 30 * 60 * 1000;
-        const activeBookings = CACHE.bookings.filter(
-            (booking) =>
-                booking.status !== BookingStatus.DELETED && booking.status !== BookingStatus.CANCELLED
-        );
-
-        const conflict = activeBookings.find((booking) => {
-            if (booking.id === excludeId) return false;
-            if (booking.roomId !== roomId) return false;
-
-            const bookingStart = new Date(booking.checkInDate).getTime();
-            const bookingEnd = new Date(booking.checkOutDate).getTime();
-            return startMs < bookingEnd + buffer && endMs + buffer > bookingStart;
-        });
-
-        return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
+        return _validateRoomAvailability(roomId, start, end, excludeId);
     },
+    cleanupExpiredHoldBookings: (options?: BookingActionOptions) => _cleanupExpiredHoldBookings(options),
 
     exportToExcel: (data: any[], fileName: string, auditMetadata?: Record<string, any>) => {
         if (typeof XLSX === 'undefined') return alert('Thư viện Excel chưa tải xong');

@@ -113,10 +113,15 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   };
 
   // --- INTEGRITY CHECK ---
-  // Ensure we only count bookings where the Room actually still exists in the system
-  // This removes "N/A" or "Deleted Room" data from stats
-  const isValidBooking = (b: Booking) => {
-      return b.status !== BookingStatus.DELETED && rooms.some(r => r.id === b.roomId);
+  // Chỉ tính booking thật sự vận hành doanh thu/công suất.
+  // Loại: DELETED, CANCELLED, PENDING/giữ cọc và booking phòng không còn tồn tại.
+  const isOperationalBooking = (booking: Booking) => {
+      if (!rooms.some((room) => room.id === booking.roomId)) return false;
+      if (booking.status === BookingStatus.DELETED) return false;
+      if (booking.status === BookingStatus.CANCELLED) return false;
+      if (booking.status === BookingStatus.PENDING) return false;
+      if (booking.isHold) return false;
+      return true;
   };
 
   // --- Helper: Format Currency ---
@@ -134,7 +139,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   // ==========================================
   const checkoutStats = useMemo(() => {
       const filtered = bookings.filter(b => 
-          isValidBooking(b) && // Check validity
+          isOperationalBooking(b) &&
           b.status === BookingStatus.CHECKED_OUT && 
           isInRange(b.checkOutDate)
       );
@@ -159,7 +164,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   // ==========================================
   const createdStats = useMemo(() => {
       const filtered = bookings.filter(b => 
-          isValidBooking(b) && // Check validity
+          isOperationalBooking(b) &&
           isInRange(b.createdAt)
       );
 
@@ -201,8 +206,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
           const occupiedRoomsOnThisDay = new Set<string>();
 
           bookings.forEach(b => {
-             // Ignore invalid bookings or cancelled
-             if (!isValidBooking(b) || b.status === BookingStatus.CANCELLED) return;
+             if (!isOperationalBooking(b)) return;
              
              const bStart = new Date(b.checkInDate).getTime();
              const bEnd = new Date(b.checkOutDate).getTime();
@@ -249,7 +253,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
         const dayStr = day.toISOString().split('T')[0];
         // Filter bookings CHECKED_OUT on this specific day
         const dayBookings = bookings.filter(b => 
-            isValidBooking(b) && // Check validity
+            isOperationalBooking(b) &&
             b.status === BookingStatus.CHECKED_OUT && 
             b.checkOutDate.startsWith(dayStr)
         );

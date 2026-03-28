@@ -253,7 +253,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           
           "Đã trả": finalPaid,
           "Còn nợ": debt,
-          "Nhân viên tạo đơn": user?.fullName || b.createdBy,
+          "Nhân viên tạo đơn": user?.username || b.createdBy,
           
           // Raw object for table color logic and sorting
           _debtRaw: debt,
