@@ -194,7 +194,7 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
   };
 
   return (
-    <div className="space-y-6 pb-20 animate-fade-in relative">
+    <div className="katka-liquid-page space-y-6 pb-20 animate-fade-in relative">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
                 <h2 className="text-2xl font-bold text-gray-800">Platform Administration</h2>

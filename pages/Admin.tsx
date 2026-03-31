@@ -1,9 +1,8 @@
 
 import React, { useState } from 'react';
 import { User, UserRole, Property, PERMISSIONS } from '../types';
-import { Trash2, UserPlus, Shield, Pencil, CheckSquare, Square, AlertTriangle } from 'lucide-react';
+import { Trash2, UserPlus, AlertTriangle } from 'lucide-react';
 import { DataService } from '../services/dataService';
-import { decodePasswordForView } from '../utils/security';
 
 interface AdminProps {
   users: User[];
@@ -151,11 +150,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
     onRefresh();
   };
 
-  const resolveReadablePassword = (user: User) => {
-      const raw = decodePasswordForView(user.passwordView || '');
-      return raw || '--';
-  };
-
   const permissionOptions = [
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
@@ -168,7 +162,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
   ];
 
   return (
-    <div className="space-y-6 px-5 py-5 md:px-6 md:py-6">
+    <div className="katka-liquid-page space-y-6 px-5 py-5 md:px-6 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
             <h2 className="text-2xl font-bold text-gray-800">Quản trị hệ thống</h2>
@@ -183,16 +177,13 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200/90 overflow-x-auto">
-        <table className="w-full min-w-[980px] text-left">
+        <table className="w-full min-w-[620px] text-left">
           <thead className="bg-gray-50/80 border-b border-gray-200 text-gray-700 font-semibold text-xs uppercase tracking-wide">
             <tr>
               <th className="px-5 py-3.5">Họ và tên</th>
               <th className="px-5 py-3.5">Tên đăng nhập</th>
-              <th className="px-5 py-3.5">Mật khẩu</th>
               <th className="px-5 py-3.5">Vai trò</th>
-              <th className="px-5 py-3.5">Quyền hạn đặc biệt</th>
-              <th className="px-5 py-3.5">Chi nhánh</th>
-              <th className="px-5 py-3.5 text-right">Hành động</th>
+              <th className="px-5 py-3.5 text-right">Chi tiết</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -200,7 +191,6 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
               <tr key={user.id} className="hover:bg-gray-50/80">
                 <td className="px-5 py-4 font-medium text-gray-900">{user.fullName}</td>
                 <td className="px-5 py-4 text-gray-500">{user.username}</td>
-                <td className="px-5 py-4 font-mono text-gray-700">{resolveReadablePassword(user)}</td>
                 <td className="px-5 py-4">
                   <span className={`px-2 py-1 rounded-full text-xs font-bold ${
                     user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700' :
@@ -210,34 +200,14 @@ const Admin: React.FC<AdminProps> = ({ users, properties, onRefresh }) => {
                     {user.role}
                   </span>
                 </td>
-                <td className="px-5 py-4 text-xs">
-                    <div className="flex flex-col gap-1">
-                        {!user.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && <span className="text-gray-400 italic">No Dashboard</span>}
-                        {user.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING) && <span className="text-green-600 flex items-center gap-1"><CheckSquare size={10}/> Thêm</span>}
-                        {user.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING) && <span className="text-blue-600 flex items-center gap-1"><CheckSquare size={10}/> Sửa</span>}
-                        {user.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING) && <span className="text-red-600 flex items-center gap-1"><CheckSquare size={10}/> Xoá</span>}
-                        {user.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT) && <span className="text-orange-600 flex items-center gap-1"><CheckSquare size={10}/> Tải báo cáo</span>}
-                    </div>
-                </td>
-                <td className="px-5 py-4 text-sm">
-                  {user.allowedPropertyIds && user.allowedPropertyIds.length > 0 
-                    ? <div className="flex flex-wrap gap-1">
-                        {user.allowedPropertyIds.map(pid => {
-                            const p = properties.find(prop => prop.id === pid);
-                            return p ? <span key={pid} className="bg-gray-100 px-2 py-0.5 rounded text-xs">{p.name}</span> : null;
-                        })}
-                      </div>
-                    : <span className="text-purple-600 font-semibold flex items-center gap-1"><Shield size={12}/> Tất cả</span>
-                  }
-                </td>
                 <td className="px-5 py-4 text-right">
                   <div className="flex justify-end gap-2">
                       <button 
                           onClick={() => openEditModal(user)}
-                          className="text-blue-500 hover:text-blue-700 p-2 hover:bg-blue-50 rounded-lg"
-                          title="Chỉnh sửa thông tin"
+                          className="text-blue-600 hover:text-blue-700 px-3 py-1.5 text-sm font-semibold border border-blue-200 hover:bg-blue-50 rounded-lg"
+                          title="Xem chi tiết và chỉnh sửa"
                       >
-                          <Pencil size={18} />
+                          Chi tiết
                       </button>
                       
                       <button 

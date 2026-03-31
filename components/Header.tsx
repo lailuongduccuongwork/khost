@@ -63,7 +63,7 @@ const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="h-16 katka-glass border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
+    <header className="h-16 katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
       <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
         <button onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
           <Menu size={24} />
@@ -130,7 +130,7 @@ const Header: React.FC<HeaderProps> = ({
             </button>
             
             {showNotif && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 katka-panel z-50 overflow-hidden animate-fade-in">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 katka-panel katka-liquid-shell z-50 overflow-hidden animate-fade-in">
                     <div className="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2"><Bell size={16} className="text-blue-600"/> Thông báo</h3>
                         {unreadCount > 0 && (

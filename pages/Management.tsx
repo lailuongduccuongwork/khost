@@ -3,7 +3,7 @@ import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory, R
 import { DataService } from '../services/dataService';
 import { 
     Building2, BedDouble, Shield, Settings, Plus, Trash2, Edit2, 
-    Check, X, Tag as TagIcon, DollarSign, AlertTriangle, ArrowDownAZ, ArrowUpZA, GripVertical, Info, Users, Key
+    Check, X, Tag as TagIcon, DollarSign, AlertTriangle, ArrowDownAZ, ArrowUpZA, GripVertical, Info, Users, Key, ChevronDown
 } from 'lucide-react';
 import Admin from './Admin'; 
 
@@ -58,6 +58,7 @@ const InlineInput = ({
 const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPolicies, properties, tags, currentUser, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<TabType>('PROPERTIES');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isMobileTabPickerOpen, setIsMobileTabPickerOpen] = useState(false);
   
   // Modal xóa chung
   const [deleteModal, setDeleteModal] = useState<{isOpen: boolean, title: string, onConfirm: () => void}>({ isOpen: false, title: '', onConfirm: () => {} });
@@ -78,6 +79,15 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [policyRoomTypeIds, setPolicyRoomTypeIds] = useState<string[]>([]);
   const [policyRoomIds, setPolicyRoomIds] = useState<string[]>([]);
   const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>([]);
+  const managementTabs: Array<{ id: TabType; label: string; icon: any; desc: string }> = [
+      { id: 'PROPERTIES', label: 'Cơ sở & Chi nhánh', icon: Building2, desc: 'Quản lý các toà nhà' },
+      { id: 'ROOM_MANAGEMENT', label: 'Phân bổ Hạng & Phòng', icon: BedDouble, desc: 'Cấu hình phòng theo cấu trúc' },
+      { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
+      { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
+      { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag' },
+  ];
+  const activeTabMeta = managementTabs.find(tab => tab.id === activeTab) || managementTabs[0];
+  const ActiveTabIcon = activeTabMeta.icon;
 
   const toggleArrayValue = (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
       setter(prev => prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]);
@@ -140,6 +150,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           return next.length === prev.length ? prev : next;
       });
   }, [policyFilteredRooms]);
+
+  useEffect(() => {
+      setIsMobileTabPickerOpen(false);
+  }, [activeTab]);
 
   const policyTargetSummary = (rule: RoomPolicyRule) => {
       const targetRooms = (rule.roomIds || [])
@@ -309,19 +323,11 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
 
   // --- COMPONENT: MENU BÊN TRÁI ---
   const renderSidebar = () => {
-      const tabs = [
-          { id: 'PROPERTIES', label: 'Cơ sở & Chi nhánh', icon: Building2, desc: 'Quản lý các toà nhà' },
-          { id: 'ROOM_MANAGEMENT', label: 'Phân bổ Hạng & Phòng', icon: BedDouble, desc: 'Cấu hình phòng theo cấu trúc' },
-          { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
-          { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
-          { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag' },
-      ];
-
       return (
           <div className="w-full md:w-72 flex-shrink-0 bg-white border border-gray-200 rounded-2xl shadow-sm p-4 h-fit sticky top-24">
               <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 px-2">Cài đặt hệ thống</h2>
               <nav className="flex flex-col gap-1">
-                  {tabs.map(tab => {
+                  {managementTabs.map(tab => {
                       const Icon = tab.icon;
                       const isActive = activeTab === tab.id;
                       return (
@@ -346,10 +352,45 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 animate-fade-in">
-      {renderSidebar()}
+    <div className="katka-liquid-page flex flex-col md:flex-row gap-6 animate-fade-in">
+      <div className="hidden md:block">{renderSidebar()}</div>
 
       <div className="flex-1 w-full min-w-0">
+          <div className="md:hidden relative mb-3">
+              <button
+                  onClick={() => setIsMobileTabPickerOpen(prev => !prev)}
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3 py-3 flex items-center justify-between shadow-sm"
+              >
+                  <div className="flex items-center gap-2">
+                      <ActiveTabIcon size={18} className="text-blue-600" />
+                      <div className="text-left">
+                          <div className="text-sm font-bold text-gray-800">{activeTabMeta.label}</div>
+                          <div className="text-[11px] text-gray-500">{activeTabMeta.desc}</div>
+                      </div>
+                  </div>
+                  <ChevronDown size={18} className={`text-gray-500 transition-transform ${isMobileTabPickerOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isMobileTabPickerOpen && (
+                  <div className="absolute left-0 right-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+                      {managementTabs.map(tab => {
+                          const Icon = tab.icon;
+                          const isActive = activeTab === tab.id;
+                          return (
+                              <button
+                                  key={`mobile-${tab.id}`}
+                                  onClick={() => setActiveTab(tab.id)}
+                                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left border-b border-gray-100 last:border-b-0 ${
+                                      isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                                  }`}
+                              >
+                                  <Icon size={16} />
+                                  <span className="text-sm font-semibold">{tab.label}</span>
+                              </button>
+                          );
+                      })}
+                  </div>
+              )}
+          </div>
           
           {/* TAB 1: CHI NHÁNH */}
           {activeTab === 'PROPERTIES' && (
@@ -508,7 +549,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                           onDragStart={(e) => { e.stopPropagation(); setDraggedRoom({ propId: prop.id, idx: rIdx }); }}
                                                           onDragOver={(e) => e.preventDefault()}
                                                           onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropRoom(prop.id, rIdx); }}
-                                                          className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all group ${draggedRoom?.idx === rIdx && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${editingId !== room.id ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : 'shadow-lg border-blue-500 scale-105 z-10'}`}
+                                                          className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all group ${draggedRoom?.idx === rIdx && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${editingId !== room.id ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : 'shadow-md border-blue-500 ring-2 ring-blue-300'}`}
                                                       >
                                                           {/* Khi bấm sửa số phòng, khung nhập liệu sẽ chiếm toàn bộ card để không bị đẩy lệch */}
                                                           {editingId === room.id ? (

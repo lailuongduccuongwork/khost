@@ -1012,7 +1012,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
     const referenceLabel = timeRef === 'CREATED_AT' ? 'Ngày tạo đơn' : timeRef === 'CHECK_IN' ? 'Ngày nhận phòng' : 'Ngày trả phòng';
 
     return (
-        <div className="space-y-6 animate-fade-in pb-8">
+        <div className="katka-liquid-page space-y-6 animate-fade-in pb-8">
             <div className="bg-white border border-gray-200 rounded-2xl p-5 md:p-6 shadow-sm">
                 <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
                     <div>

@@ -150,7 +150,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
   const countDirty = processedRooms.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-24 font-sans select-none">
+    <div className="katka-liquid-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
       {/* HEADER */}
       <div className="bg-white px-4 py-3 shadow-sm sticky top-0 z-20 border-b border-gray-200">
         <div className="flex justify-between items-center mb-3">

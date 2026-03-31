@@ -471,7 +471,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   );
 
   return (
-    <div className="space-y-4 md:space-y-6 pb-20 font-sans animate-fade-in">
+    <div className="katka-liquid-page space-y-4 md:space-y-6 pb-20 font-sans animate-fade-in">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 md:gap-4">
         <div>
             <h2 className="text-xl md:text-2xl font-bold text-gray-800">Báo cáo & Thống kê</h2>

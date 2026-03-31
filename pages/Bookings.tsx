@@ -1028,7 +1028,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in relative">
+    <div className="katka-liquid-page bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in relative">
       <div className="p-5 border-b border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
             <h2 className="text-lg font-bold text-gray-800">Danh sách đặt phòng</h2>

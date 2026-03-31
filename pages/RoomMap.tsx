@@ -1293,9 +1293,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
   const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
+  const roomColumnWidthClass = 'w-[104px] md:w-40';
 
   return (
-    <div className="h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
+    <div className="katka-liquid-page h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
        <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-2 justify-between transition-all relative z-20 overflow-x-auto no-scrollbar whitespace-nowrap">
           <div className="flex items-center gap-2 shrink-0">
               
@@ -1409,8 +1410,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
              <div className="flex-1 overflow-auto no-scrollbar relative bg-white">
                  <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative w-fit min-w-full">
                      
-                     <div className="sticky top-0 z-[40] bg-gray-50 border-b flex h-14 shadow-sm ring-1 ring-gray-200">
-                         <div className="w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-[50] shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base">Phòng</div>
+                     <div className={`sticky top-0 z-[40] bg-gray-50 border-b flex shadow-sm ring-1 ring-gray-200 ${timelineMode === 'WEEK' ? 'h-16 md:h-14' : 'h-14'}`}>
+                         <div className={`${roomColumnWidthClass} flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-[50] shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base`}>Phòng</div>
                          <div className="flex-1 grid" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                              {timeSlots.map((slot, i) => {
                                  const isCurrent = isCurrentTimeSlot(slot);
@@ -1419,11 +1420,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                          {timelineMode === 'DAY' ? (
                                              `${slot.getHours()}:00`
                                          ) : timelineMode === 'WEEK' ? (
-                                             <span className="inline-flex items-center gap-1.5">
-                                                 <span className={isCurrent ? 'font-bold text-base' : 'text-sm font-semibold'}>
+                                             <span className="flex flex-col items-center justify-center leading-tight">
+                                                 <span className={isCurrent ? 'font-bold text-sm md:text-base' : 'text-sm md:text-base font-semibold'}>
                                                      {getWeekdayShortVi(slot)}
                                                  </span>
-                                                 <span className={isCurrent ? 'font-bold text-base' : 'text-sm'}>
+                                                 <span className={isCurrent ? 'font-bold text-sm md:text-base' : 'text-sm md:text-base font-semibold'}>
                                                      {slot.getDate()}/{slot.getMonth()+1}
                                                  </span>
                                              </span>
@@ -1467,7 +1468,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
                                  <div className="flex h-20 border-b hover:bg-gray-50 transition-colors group">
                                      <div 
-                                        className={`room-status-panel w-24 md:w-40 flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
+                                        className={`room-status-panel ${roomColumnWidthClass} flex-shrink-0 border-r p-2 md:p-3 flex flex-col justify-center sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative ${statusBg} ${statusBorder}`} 
                                         title={tooltip}
                                         onClick={() => handleStatusIconClick(room)}
                                         style={{cursor: canManageRooms ? 'pointer' : 'default'}}

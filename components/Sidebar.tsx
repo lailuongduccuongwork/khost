@@ -87,7 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
 
       {/* Sidebar Content */}
       <div 
-        className={`w-64 katka-glass text-gray-800 h-screen fixed left-0 top-0 flex flex-col border-r border-white/50 shadow-soft z-50 transition-transform duration-300 transform 
+        className={`w-64 katka-glass katka-liquid-shell katka-liquid-sidebar text-gray-800 h-screen fixed left-0 top-0 flex flex-col border-r border-white/50 shadow-soft z-50 transition-transform duration-300 transform 
         ${isOpen ? 'translate-x-0' : '-translate-x-full'} ${isDesktopHidden ? 'md:-translate-x-full' : 'md:translate-x-0'}`}
       >
         <div className="p-6 border-b border-white/60 flex items-center justify-between">

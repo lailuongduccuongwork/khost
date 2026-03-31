@@ -163,7 +163,7 @@ const HistoryPage: React.FC<HistoryPageProps> = ({ history, users, currentUser }
     }, [history]);
 
     return (
-        <div className="space-y-6 animate-fade-in">
+        <div className="katka-liquid-page space-y-6 animate-fade-in">
             <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
