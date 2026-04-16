@@ -9,9 +9,8 @@ import Reports from './pages/Reports';
 import Performance from './pages/Performance';
 import Housekeeping from './pages/Housekeeping'; 
 import SuperAdmin from './pages/SuperAdmin'; 
-import HistoryPage from './pages/History';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, HistoryLog, RoomPolicyRule } from './types';
+import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, RoomPolicyRule } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
@@ -96,7 +95,6 @@ const App: React.FC = () => {
   const [roomPolicies, setRoomPolicies] = useState<RoomPolicyRule[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [history, setHistory] = useState<HistoryLog[]>([]);
 
   // --- NOTIFICATION ENGINE ---
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -212,7 +210,6 @@ const App: React.FC = () => {
               setTenantList(DataService.getTenants());
               setPlanList(DataService.getPlans()); 
               setSystemUsers(DataService.getSystemUsers()); 
-              setHistory(DataService.getHistory());
           }
           
           clearLoadingFallback();
@@ -259,7 +256,6 @@ const App: React.FC = () => {
         setTenantList(DataService.getTenants());
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
-        setHistory(DataService.getHistory());
         setRoomPolicies([]);
         return;
     }
@@ -327,7 +323,6 @@ const App: React.FC = () => {
     setRoomTypes(DataService.getRoomTypes());
     setRoomPolicies(DataService.getRoomPolicies());
     setTags(DataService.getTags());
-    setHistory(DataService.getHistory());
 
     if (visibleProperties.length === 0) {
         setRooms([]);
@@ -696,7 +691,6 @@ const App: React.FC = () => {
                             properties={properties}
                             tags={tags}
                             users={users}
-                            history={history}
                             customers={customers}
                             onRefresh={manualRefresh}
                             currentUser={effectiveUser}
@@ -709,7 +703,6 @@ const App: React.FC = () => {
                             roomTypes={roomTypes} 
                             roomPolicies={roomPolicies}
                             bookings={bookings} 
-                            history={history}
                             customers={customers}
                             tags={tags}
                             properties={properties}
@@ -747,15 +740,6 @@ const App: React.FC = () => {
                             bookings={bookings}
                             rooms={rooms}
                             properties={properties}
-                            users={users}
-                            history={history}
-                            currentUser={effectiveUser}
-                        />
-                    )}
-
-                    {currentPage === 'history' && (effectiveUser.role === UserRole.ADMIN || effectiveUser.permissions?.includes(PERMISSIONS.VIEW_AUDIT_LOGS)) && (
-                        <HistoryPage
-                            history={history}
                             users={users}
                             currentUser={effectiveUser}
                         />

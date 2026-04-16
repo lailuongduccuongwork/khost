@@ -12,7 +12,6 @@ interface RoomMapProps {
   roomTypes: RoomType[];
   roomPolicies: RoomPolicyRule[];
   bookings: Booking[];
-  history: HistoryLog[];
   customers: Customer[];
   tags: Tag[];
   properties: Property[];
@@ -277,7 +276,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings, history, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings, customers, tags, properties, onRefresh, currentProperty, currentUser }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -316,6 +315,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [showTicketModal, setShowTicketModal] = useState(false); 
   const [isEditMode, setIsEditMode] = useState(false);
   const [showBookingHistory, setShowBookingHistory] = useState(false);
+  const [recentHistory, setRecentHistory] = useState<HistoryLog[]>([]);
+  const [isLoadingRecentHistory, setIsLoadingRecentHistory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); 
   
@@ -1098,6 +1099,33 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const feeNet = extraRevenue - extraExpense;
   const grandTotal = bookingMeta.totalPrice + feeNet; 
 
+  useEffect(() => {
+      let cancelled = false;
+
+      if ((!isEditMode || !showBookingHistory) && !statusModal.isOpen) {
+          setRecentHistory([]);
+          setIsLoadingRecentHistory(false);
+          return;
+      }
+
+      setIsLoadingRecentHistory(true);
+      DataService.fetchRecentHistory(160)
+          .then((logs) => {
+              if (!cancelled) {
+                  setRecentHistory(logs);
+              }
+          })
+          .finally(() => {
+              if (!cancelled) {
+                  setIsLoadingRecentHistory(false);
+              }
+          });
+
+      return () => {
+          cancelled = true;
+      };
+  }, [isEditMode, showBookingHistory, statusModal.isOpen, bookingMeta.id, bookingMeta.groupId, originalBookingIds.join('|')]);
+
   const selectedBookingHistory = useMemo(() => {
       if (!isEditMode) return [];
 
@@ -1110,7 +1138,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
       const targetGroupId = bookingMeta.groupId;
 
-      return history
+      return recentHistory
           .filter(log => {
               const entityType = log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM');
               if (entityType !== 'BOOKING') return false;
@@ -1124,7 +1152,24 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
               return false;
           })
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [history, isEditMode, bookingMeta.id, bookingMeta.groupId, originalBookingIds, bookingRows]);
+  }, [recentHistory, isEditMode, bookingMeta.id, bookingMeta.groupId, originalBookingIds, bookingRows]);
+
+  const selectedRoomStatusHistory = useMemo(() => {
+      if (!statusModal.room) return [];
+
+      return recentHistory
+          .filter((log) => {
+              const entityType = log.entityType || 'SYSTEM';
+              if (entityType !== 'ROOM') return false;
+              if (log.action !== 'STATUS_CHANGE') return false;
+
+              const metadata = (log.metadata || {}) as Record<string, any>;
+              const roomId = log.entityId || metadata.roomId || (log.after as any)?.id || (log.before as any)?.id;
+              return roomId === statusModal.room?.id;
+          })
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, 8);
+  }, [recentHistory, statusModal.room]);
 
   const getBookingOperationName = (log: HistoryLog) => {
       return log.description;
@@ -1958,7 +2003,32 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           {statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'SẠCH (Sẵn sàng đón khách)' : 'BẨN (Cần dọn dẹp)'}
                       </span>?
                   </div>
-                  
+
+                  <div className="mb-5 rounded-xl border border-gray-200 overflow-hidden">
+                      <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                          <span className="text-[11px] font-bold uppercase text-gray-700">Lịch sử đổi trạng thái gần đây</span>
+                          <span className="text-[11px] text-gray-500">{selectedRoomStatusHistory.length} mục</span>
+                      </div>
+                      <div className="max-h-40 overflow-auto">
+                          {isLoadingRecentHistory ? (
+                              <p className="text-xs text-gray-400 italic text-center py-4">Đang tải hoạt động gần đây...</p>
+                          ) : selectedRoomStatusHistory.length === 0 ? (
+                              <p className="text-xs text-gray-400 italic text-center py-4">Chưa có lịch sử đổi trạng thái cho phòng này.</p>
+                          ) : (
+                              <div className="divide-y divide-gray-100">
+                                  {selectedRoomStatusHistory.map((log) => (
+                                      <div key={log.id} className="px-3 py-2">
+                                          <div className="text-xs font-semibold text-gray-900">{log.description}</div>
+                                          <div className="mt-1 text-[11px] text-gray-500">
+                                              {formatAuditDateTime(log.timestamp)} • {getActorUsername(log)}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                  </div>
+
                   <div className="flex gap-3">
                       <button 
                           onClick={() => setStatusModal({...statusModal, isOpen: false})} 
@@ -2054,7 +2124,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                               </div>
 
                               <div className="max-h-44 overflow-auto">
-                                  {selectedBookingHistory.length === 0 ? (
+                                  {isLoadingRecentHistory ? (
+                                      <p className="text-xs text-gray-400 italic text-center py-4">Đang tải lịch sử gần đây...</p>
+                                  ) : selectedBookingHistory.length === 0 ? (
                                       <p className="text-xs text-gray-400 italic text-center py-4">Chưa có lịch sử thao tác cho đơn này.</p>
                                   ) : (
                                       <table className="w-full text-left text-xs table-fixed">

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, BedDouble, CalendarDays, Users, BarChart3, Settings, LogOut, Briefcase, X, Shield, Server, CreditCard, PaintBucket, List, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, BedDouble, Users, BarChart3, LogOut, Briefcase, X, Shield, PaintBucket, List, TrendingUp } from 'lucide-react';
 import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
@@ -66,11 +66,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
   // 2. Define Management/System Items (Visible for Admin ONLY)
   // Logic: Only ADMIN can see System Settings. Manager access removed.
   const showManagement = currentUser.role === UserRole.ADMIN;
-  const canViewHistory = currentUser.role === UserRole.ADMIN || currentUser.permissions?.includes(PERMISSIONS.VIEW_AUDIT_LOGS);
-  const showSystemSection = showManagement || canViewHistory;
+  const showSystemSection = showManagement;
   
   const managementItem = { id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase };
-  const historyItem = { id: 'history', label: 'Lịch sử thao tác', icon: CalendarDays };
 
   // Mobile overlay click handler
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -166,20 +164,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                       >
                           <Briefcase size={20} />
                           <span className="font-medium">{managementItem.label}</span>
-                      </button>
-                    )}
-                    {canViewHistory && (
-                      <button
-                          key={historyItem.id}
-                          onClick={() => onNavigate(historyItem.id)}
-                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
-                          currentPage === historyItem.id
-                              ? 'bg-emerald-600 text-white shadow-soft'
-                              : 'text-gray-700 katka-history-nav-hover'
-                          }`}
-                      >
-                          <CalendarDays size={20} />
-                          <span className="font-medium">{historyItem.label}</span>
                       </button>
                     )}
                     </>

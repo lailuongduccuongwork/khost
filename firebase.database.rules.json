@@ -1,0 +1,100 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "system": {
+      ".read": true,
+      ".write": true,
+      "$other": {
+        ".validate": false
+      },
+      "tenants": {
+        ".read": true,
+        ".write": true,
+        "$tenantId": {
+          ".validate": "newData.hasChildren(['id', 'name']) && newData.child('id').val() === $tenantId"
+        }
+      },
+      "plans": {
+        ".read": true,
+        ".write": true,
+        "$planId": {
+          ".validate": "newData.hasChild('id') && newData.child('id').val() === $planId"
+        }
+      },
+      "users": {
+        ".read": true,
+        ".write": true,
+        "$userId": {
+          ".validate": "newData.hasChildren(['id', 'tenantId', 'username', 'fullName', 'role']) && newData.child('id').val() === $userId"
+        }
+      },
+      "history": {
+        ".read": true,
+        ".write": true,
+        "$logId": {
+          ".validate": "newData.hasChildren(['id', 'timestamp', 'description']) && newData.child('id').val() === $logId"
+        }
+      }
+    },
+    "tenants": {
+      ".read": true,
+      ".write": true,
+      "$tenantId": {
+        "$other": {
+          ".validate": false
+        },
+        "properties": {
+          "$propertyId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $propertyId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "rooms": {
+          "$roomId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $roomId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "roomPolicies": {
+          "$policyId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $policyId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "roomTypes": {
+          "$typeId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $typeId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "bookings": {
+          "$bookingId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'propertyId', 'roomId', 'customerId', 'status', 'checkInDate', 'checkOutDate', 'createdAt', 'createdBy']) && newData.child('id').val() === $bookingId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "customers": {
+          "$customerId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'name', 'phone', 'identityCard']) && newData.child('id').val() === $customerId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "users": {
+          "$userId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'username', 'fullName', 'role']) && newData.child('id').val() === $userId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "tags": {
+          "$tagId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $tagId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "transactionCategories": {
+          "$categoryId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $categoryId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "history": {
+          "$logId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'timestamp', 'description']) && newData.child('id').val() === $logId && newData.child('tenantId').val() === $tenantId"
+          }
+        }
+      }
+    }
+  }
+}

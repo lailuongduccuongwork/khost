@@ -29,7 +29,6 @@ interface PerformanceProps {
     rooms: Room[];
     properties: Property[];
     users: User[];
-    history: HistoryLog[];
     currentUser: User;
 }
 
@@ -403,7 +402,8 @@ const CandlestickPanel: React.FC<{
     );
 };
 
-const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, users, history, currentUser }) => {
+const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, users, currentUser }) => {
+    const history: HistoryLog[] = [];
     const today = useMemo(() => new Date(), []);
     const defaultTo = toDateInputValue(today);
     const defaultFromDate = useMemo(() => {

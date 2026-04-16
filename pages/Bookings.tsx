@@ -1,5 +1,5 @@
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Booking, BookingStatus, Customer, HistoryLog, PERMISSIONS, Property, Room, RoomType, Tag, User } from '../types';
 import { AlertTriangle, ArrowUpDown, CheckCircle, CheckSquare, Clock3, Download, FileUp, Plus, RotateCcw, Search, Square, Trash2, X } from 'lucide-react';
 import { DataService } from '../services/dataService';
@@ -14,7 +14,6 @@ interface BookingsProps {
   properties: Property[];
   tags: Tag[];
   users: User[];
-  history: HistoryLog[];
   customers: Customer[];
   onRefresh?: () => void;
   currentUser: User; // Full user for permissions
@@ -167,7 +166,7 @@ const resolveImportedProperty = (branchName: string, propertyLookup: Map<string,
     return { status: 'MATCHED' as const, property: candidates[0], candidates };
 };
 
-const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, history, customers, onRefresh, currentUser }) => {
+const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, customers, onRefresh, currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [sortField, setSortField] = useState<BookingSortField>('checkOutDate');
@@ -177,6 +176,8 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       bookingId: null,
   });
   const [historyFilters, setHistoryFilters] = useState<BookingHistoryFilters>(defaultHistoryFilters);
+  const [recentHistory, setRecentHistory] = useState<HistoryLog[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Selection State
@@ -316,13 +317,40 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       return bookings.find((booking) => booking.id === historyModal.bookingId) || null;
   }, [bookings, historyModal.bookingId]);
 
+  useEffect(() => {
+      let cancelled = false;
+
+      if (!historyModal.isOpen || !selectedHistoryBooking) {
+          setRecentHistory([]);
+          setIsLoadingHistory(false);
+          return;
+      }
+
+      setIsLoadingHistory(true);
+      DataService.fetchRecentHistory(160)
+          .then((logs) => {
+              if (!cancelled) {
+                  setRecentHistory(logs);
+              }
+          })
+          .finally(() => {
+              if (!cancelled) {
+                  setIsLoadingHistory(false);
+              }
+          });
+
+      return () => {
+          cancelled = true;
+      };
+  }, [historyModal.isOpen, selectedHistoryBooking?.id, selectedHistoryBooking?.groupId]);
+
   const bookingHistoryLogs = useMemo(() => {
       if (!selectedHistoryBooking) return [];
 
       const targetBookingIds = new Set<string>([selectedHistoryBooking.id]);
       const targetGroupId = selectedHistoryBooking.groupId || '';
 
-      return history
+      return recentHistory
           .filter((log) => {
               const entityType = log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM');
               if (entityType !== 'BOOKING') return false;
@@ -333,7 +361,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               return false;
           })
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [history, selectedHistoryBooking]);
+  }, [recentHistory, selectedHistoryBooking]);
 
   const historyFilterOptions = useMemo(() => {
       const propertyMap = new Map<string, string>();
@@ -1412,7 +1440,9 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
                       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
                           <div className="overflow-auto max-h-[420px]">
-                              {filteredBookingHistory.length === 0 ? (
+                              {isLoadingHistory ? (
+                                  <div className="py-10 text-center text-gray-400 text-sm">Đang tải lịch sử gần đây...</div>
+                              ) : filteredBookingHistory.length === 0 ? (
                                   <div className="py-10 text-center text-gray-400 text-sm">Không có lịch sử phù hợp với bộ lọc hiện tại.</div>
                               ) : (
                                   <table className="w-full min-w-[1300px] text-left text-xs">

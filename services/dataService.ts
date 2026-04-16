@@ -32,19 +32,38 @@ import {
 } from './mockData';
 import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, get, onValue, ref, remove, runTransaction, set, update } from 'firebase/database';
+import { getDatabase, get, limitToLast, onValue, query, ref, remove, runTransaction, set, update } from 'firebase/database';
 
 declare const XLSX: any;
+declare global {
+    interface Window {
+        __KHOST_FIREBASE_DEBUG__?: {
+            counters: Record<string, { calls: number; bytes: number }>;
+        };
+    }
+}
+
+const requiredFirebaseEnvKeys = [
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_AUTH_DOMAIN',
+    'VITE_FIREBASE_DATABASE_URL',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_STORAGE_BUCKET',
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+    'VITE_FIREBASE_APP_ID',
+] as const;
+
+const missingFirebaseEnvKeys = requiredFirebaseEnvKeys.filter((key) => !import.meta.env[key]);
 
 const firebaseConfig = {
-    apiKey: "AIzaSyAZOB79Cz0Lj-zrRGmcackL0A3bsRBEwSc",
-    authDomain: "k-host-a2a95.firebaseapp.com",
-    databaseURL: "https://k-host-a2a95-default-rtdb.asia-southeast1.firebasedatabase.app",
-    projectId: "k-host-a2a95",
-    storageBucket: "k-host-a2a95.firebasestorage.app",
-    messagingSenderId: "875551915320",
-    appId: "1:875551915320:web:9516f334551de0a96495cd",
-    measurementId: "G-QZPYL00KCV",
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 let db: any = null;
@@ -265,6 +284,93 @@ const getHistoryPath = (tenantId?: string | null) => {
     return basePath ? `${basePath}/history` : null;
 };
 
+const FIREBASE_DEBUG_ENABLED = true;
+const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+
+const estimateBytes = (value: unknown) => {
+    if (value === undefined) return 0;
+    try {
+        const json = JSON.stringify(value) ?? '';
+        return textEncoder ? textEncoder.encode(json).length : json.length;
+    } catch {
+        return 0;
+    }
+};
+
+const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const countItems = (value: unknown) => {
+    if (Array.isArray(value)) return value.length;
+    if (value && typeof value === 'object') return Object.keys(value as Record<string, unknown>).length;
+    if (value == null) return 0;
+    return 1;
+};
+
+const debugFirebaseTraffic = (kind: string, path: string, payload?: unknown, extra?: Record<string, unknown>) => {
+    if (!FIREBASE_DEBUG_ENABLED) return;
+
+    const bytes = estimateBytes(payload);
+    const items = countItems(payload);
+    const label = `${kind} ${path}`;
+
+    if (typeof window !== 'undefined') {
+        window.__KHOST_FIREBASE_DEBUG__ ??= { counters: {} };
+        const current = window.__KHOST_FIREBASE_DEBUG__.counters[label] || { calls: 0, bytes: 0 };
+        current.calls += 1;
+        current.bytes += bytes;
+        window.__KHOST_FIREBASE_DEBUG__.counters[label] = current;
+    }
+
+    console.groupCollapsed(`[Firebase Debug] ${kind} ${path} | ${formatBytes(bytes)} | ${items} item(s)`);
+    if (extra) console.log('meta', extra);
+    if (typeof window !== 'undefined' && window.__KHOST_FIREBASE_DEBUG__) {
+        console.log('totals', window.__KHOST_FIREBASE_DEBUG__.counters[label]);
+    }
+    if (payload !== undefined) console.log('payload', payload);
+    console.groupEnd();
+};
+
+const trackedGet = async (path: string) => {
+    const snap = await get(ref(db, path));
+    debugFirebaseTraffic('READ:get', path, snap.val(), { exists: snap.exists() });
+    return snap;
+};
+
+const trackedGetRecent = async (path: string, limit: number) => {
+    const snap = await get(query(ref(db, path), limitToLast(limit)));
+    debugFirebaseTraffic('READ:getRecent', path, snap.val(), { exists: snap.exists(), limit });
+    return snap;
+};
+
+const trackedSet = async (path: string, value: unknown, meta?: Record<string, unknown>) => {
+    debugFirebaseTraffic('WRITE:set', path, value, meta);
+    return set(ref(db, path), value);
+};
+
+const trackedUpdateRoot = async (updates: Record<string, unknown>, meta?: Record<string, unknown>) => {
+    debugFirebaseTraffic('WRITE:update', '/', updates, { pathCount: Object.keys(updates).length, ...meta });
+    return update(ref(db), updates);
+};
+
+const trackedRemove = async (path: string, meta?: Record<string, unknown>) => {
+    debugFirebaseTraffic('WRITE:remove', path, null, meta);
+    return remove(ref(db, path));
+};
+
+const trackedOnValue = (path: string, callback: (snap: any) => void, errorCallback?: (error: unknown) => void) =>
+    onValue(
+        ref(db, path),
+        (snap) => {
+            debugFirebaseTraffic('READ:onValue', path, snap.val(), { exists: snap.exists() });
+            callback(snap);
+        },
+        errorCallback
+    );
+
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const snapshotToArray = <T extends { id?: string; number?: string; name?: string }>(snap: any): T[] => {
@@ -303,6 +409,12 @@ const snapshotToArray = <T extends { id?: string; number?: string; name?: string
 const _ensureFirebase = () => {
     if (!isFirebaseReady) {
         try {
+            if (missingFirebaseEnvKeys.length > 0) {
+                console.error(
+                    `Missing Firebase env vars: ${missingFirebaseEnvKeys.join(', ')}. Check your .env.local file.`
+                );
+                return false;
+            }
             const app = initializeApp(firebaseConfig);
             db = getDatabase(app);
             isFirebaseReady = true;
@@ -311,6 +423,7 @@ const _ensureFirebase = () => {
                 disconnectRealtimeConnectionWatcher = onValue(
                     connectedRef,
                     (snap) => {
+                        debugFirebaseTraffic('READ:onValue', '.info/connected', snap.val(), { exists: snap.exists() });
                         realtimeConnectionState = snap.val() === true ? 'CONNECTED' : 'DISCONNECTED';
                     },
                     () => {
@@ -330,7 +443,7 @@ const _resolveRealtimeConnectionState = async (): Promise<'UNKNOWN' | 'CONNECTED
 
     try {
         const stateSnap = await Promise.race([
-            get(ref(db, '.info/connected')),
+            trackedGet('.info/connected'),
             new Promise<null>((resolve) => setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS)),
         ]);
 
@@ -695,11 +808,29 @@ const _writeHistoryLog = (entry: HistoryLog, coalesceKey?: string) => {
     upsertHistoryCache(finalEntry);
 
     try {
-        return set(ref(db, `${historyPath}/${targetId}`), finalEntry).catch((error: any) => {
+        return trackedSet(`${historyPath}/${targetId}`, finalEntry, { source: 'history' }).catch((error: any) => {
             console.error('Write history failed', error);
         });
     } catch (error) {
         console.error('Write history failed', error);
+    }
+};
+
+const _fetchRecentHistory = async (limit: number = 60, tenantId?: string | null) => {
+    if (!_ensureFirebase() || !db) return [] as HistoryLog[];
+
+    const historyPath = getHistoryPath(tenantId);
+    if (!historyPath) return [] as HistoryLog[];
+
+    try {
+        const snap = await trackedGetRecent(historyPath, limit);
+        if (!snap.exists()) return [] as HistoryLog[];
+        return snapshotToArray<HistoryLog>(snap).sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+    } catch (error) {
+        console.error('Fetch recent history failed', error);
+        return [] as HistoryLog[];
     }
 };
 
@@ -749,15 +880,6 @@ const _recordHistory = ({
     return _writeHistoryLog(entry, coalesceKey);
 };
 
-const _bindHistory = (basePath: string) => {
-    onValue(ref(db, `${basePath}/history`), (snap) => {
-        CACHE.history = snapshotToArray<HistoryLog>(snap).sort(
-            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        );
-        _dataChangeCallback();
-    });
-};
-
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
     try {
         activeTenantId = tenantId;
@@ -772,8 +894,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             node: string,
             cacheKey: keyof typeof CACHE
         ) => {
-            const nodeRef = ref(db, `${basePath}/${node}`);
-            onValue(nodeRef, (snap) => {
+            trackedOnValue(`${basePath}/${node}`, (snap) => {
                 const rows = snapshotToArray<T>(snap);
                 if (cacheKey === 'users' || cacheKey === 'systemUsers') {
                     // @ts-ignore
@@ -792,9 +913,8 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             bind<Tenant>('tenants', 'tenants');
             bind<SubscriptionPlan>('plans', 'plans');
             bind<User>('users', 'systemUsers');
-            _bindHistory(basePath);
 
-            get(ref(db, 'system/tenants')).then((snap) => {
+            trackedGet('system/tenants').then((snap) => {
                 if (!snap.exists() || snap.size === 0) _seedSystemData();
             });
             return;
@@ -808,9 +928,8 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
         bind<Booking>('bookings', 'bookings');
         bind<Customer>('customers', 'customers');
-        _bindHistory(basePath);
 
-        onValue(ref(db, `${basePath}/users`), async (snap) => {
+        trackedOnValue(`${basePath}/users`, async (snap) => {
             const users = snapshotToArray<User>(snap).map((user) =>
                 normalizeUserCredentialsForStorage(user, user)
             );
@@ -818,7 +937,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
 
             if (users.length === 0) {
                 try {
-                    const sysSnap = await get(ref(db, 'system/users'));
+                    const sysSnap = await trackedGet('system/users');
                     if (sysSnap.exists()) {
                         const allSystemUsers = snapshotToArray<User>(sysSnap);
                         const recovered = allSystemUsers.filter((user) => user.tenantId === tenantId);
@@ -829,7 +948,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                             recovered.forEach((user) => {
                                 updates[`${basePath}/users/${user.id}`] = normalizeUserCredentialsForStorage(user, user);
                             });
-                            update(ref(db), updates);
+                            trackedUpdateRoot(updates, { source: 'user-recovery' });
                         }
                     }
                 } catch (error) {
@@ -840,9 +959,9 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             _dataChangeCallback();
         });
 
-        get(ref(db, `${basePath}/properties`)).then((propertySnap) => {
+        trackedGet(`${basePath}/properties`).then((propertySnap) => {
             if (!propertySnap.exists() || propertySnap.size === 0) {
-                get(ref(db, `${basePath}/rooms`)).then((roomSnap) => {
+                trackedGet(`${basePath}/rooms`).then((roomSnap) => {
                     if (!roomSnap.exists()) {
                         console.log(`Seeding initial data for ${tenantId}`);
                         _seedTenantData(tenantId);
@@ -905,7 +1024,7 @@ const _seedSystemData = () => {
     });
 
     updates['system/users'] = usersMap;
-    update(ref(db), updates);
+    trackedUpdateRoot(updates, { source: 'seed-system' });
 };
 
 const _seedTenantData = (tenantId: string) => {
@@ -924,7 +1043,7 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
 
-    update(ref(db), updates).then(() => console.log('Seeding complete'));
+    trackedUpdateRoot(updates, { source: 'seed-tenant', tenantId }).then(() => console.log('Seeding complete'));
 };
 
 const _saveItem = (node: string, item: any) => {
@@ -946,7 +1065,7 @@ const _saveItem = (node: string, item: any) => {
     _dataChangeCallback();
 
     try {
-        return set(ref(db, `${basePath}/${node}/${normalizedItem.id}`), normalizedItem).catch((error: any) => {
+        return trackedSet(`${basePath}/${node}/${normalizedItem.id}`, normalizedItem, { node }).catch((error: any) => {
             console.error(`Save ${node} failed`, error);
         });
     } catch (error) {
@@ -968,7 +1087,7 @@ const _deleteItem = (node: string, id: string) => {
     }
     _dataChangeCallback();
 
-    return remove(ref(db, `${basePath}/${node}/${id}`)).catch((error: any) => {
+    return trackedRemove(`${basePath}/${node}/${id}`, { node }).catch((error: any) => {
         console.error(`Delete ${node} failed`, error);
     });
 };
@@ -1010,7 +1129,7 @@ const _saveListAsMap = (node: string, list: any[]) => {
         }
     });
 
-    return update(ref(db), updates).catch((error: any) => {
+    return trackedUpdateRoot(updates, { node, operation: 'bulk-save' }).catch((error: any) => {
         console.error(`Bulk save ${node} failed`, error);
     });
 };
@@ -1034,7 +1153,7 @@ const _deleteItems = (node: string, ids: string[]) => {
     }
     _dataChangeCallback();
 
-    return update(ref(db), updates).catch((error: any) => {
+    return trackedUpdateRoot(updates, { node, operation: 'bulk-delete' }).catch((error: any) => {
         console.error(`Bulk delete ${node} failed`, error);
     });
 };
@@ -1149,7 +1268,7 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus, options: RoomStat
     CACHE.rooms = CACHE.rooms.map((room) => (room.id === roomId ? roomAfter : room));
     _dataChangeCallback();
 
-    update(ref(db), { [`${basePath}/rooms/${roomId}/status`]: status }).catch((error: any) => {
+    trackedUpdateRoot({ [`${basePath}/rooms/${roomId}/status`]: status }, { operation: 'room-status-sync' }).catch((error: any) => {
         console.error('Sync room status failed', error);
     });
 
@@ -1780,6 +1899,10 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         },
         { applyLocally: false }
     );
+    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
+        operation: 'save-booking-group',
+        committed: result.committed,
+    });
 
     if (!result.committed) {
         throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
@@ -1950,7 +2073,7 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
     CACHE.bookings = CACHE.bookings.filter((booking) => !ids.includes(booking.id));
     _dataChangeCallback();
 
-    update(ref(db), updates).catch((error: any) => {
+    trackedUpdateRoot(updates, { operation: 'hard-delete-bookings' }).catch((error: any) => {
         console.error('Hard delete failed', error);
     });
 
@@ -2009,8 +2132,8 @@ const _resetAllBookings = async () => {
         return { ...room, status: RoomStatus.VACANT_CLEAN };
     });
 
-    await remove(ref(db, `${basePath}/bookings`));
-    await update(ref(db), updates);
+    await trackedRemove(`${basePath}/bookings`, { operation: 'reset-all-bookings' });
+    await trackedUpdateRoot(updates, { operation: 'reset-room-statuses' });
 
     CACHE.bookings = [];
     CACHE.rooms = newRooms;
@@ -2082,6 +2205,10 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
         },
         { applyLocally: false }
     );
+    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
+        operation: 'delete-booking',
+        committed: result.committed,
+    });
 
     if (!result.committed || !deletedBooking) {
         return false;
@@ -2166,6 +2293,10 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
         },
         { applyLocally: false }
     );
+    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
+        operation: 'bulk-delete-bookings',
+        committed: result.committed,
+    });
 
     if (!result.committed) {
         throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
@@ -2239,7 +2370,7 @@ const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
         [`system/users/${user.id}`]: userWithTenant,
         [`${tenantPath}/users/${user.id}`]: userWithTenant,
     };
-    update(ref(db), updates);
+    trackedUpdateRoot(updates, { operation: 'save-user' });
 
     _recordHistory({
         tenantId: targetTenantId,
@@ -2278,7 +2409,7 @@ const _deleteUser = (id: string) => {
         _dataChangeCallback();
     }
 
-    update(ref(db), updates);
+    trackedUpdateRoot(updates, { operation: 'delete-user' });
 
     _recordHistory({
         tenantId: targetTenantId || SYSTEM_TENANT_ID,
@@ -2301,7 +2432,7 @@ const _deleteTenant = (id: string) => {
         [`tenants/${id}`]: null,
         [`system/users/u_${id}_admin`]: null,
     };
-    update(ref(db), updates);
+    trackedUpdateRoot(updates, { operation: 'delete-tenant' });
 
     _recordHistory({
         tenantId: SYSTEM_TENANT_ID,
@@ -2323,7 +2454,7 @@ const _seedTenantAdminUser = (user: User) => {
         [`system/users/${normalizedUser.id}`]: normalizedUser,
         [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
     };
-    update(ref(db), updates);
+    trackedUpdateRoot(updates, { operation: 'seed-tenant-admin-user' });
 
     _recordHistory({
         tenantId: normalizedUser.tenantId,
@@ -2551,6 +2682,10 @@ const _cleanupExpiredHoldBookings = async (options: BookingActionOptions = {}) =
         },
         { applyLocally: false }
     );
+    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
+        operation: 'cleanup-expired-holds',
+        committed: result.committed,
+    });
 
     if (!result.committed || deletedBookings.length === 0) return 0;
 
@@ -2686,6 +2821,10 @@ const _saveBookingAtomic = async (
             applyLocally: false,
         }
     );
+    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
+        operation: mode === 'create' ? 'create-booking' : 'update-booking',
+        committed: result.committed,
+    });
 
     if (!result.committed) {
         throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
@@ -2835,7 +2974,7 @@ export const DataService = {
             }
 
             const snap = await Promise.race([
-                get(ref(db, 'system/users')),
+                trackedGet('system/users'),
                 new Promise<null>((resolve) =>
                     setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS + 1000)
                 ),
@@ -2855,7 +2994,7 @@ export const DataService = {
                         if (migratedUser.tenantId && migratedUser.tenantId !== SYSTEM_TENANT_ID) {
                             updates[`tenants/${migratedUser.tenantId}/users/${migratedUser.id}`] = migratedUser;
                         }
-                        update(ref(db), updates).catch((error: any) => {
+                        trackedUpdateRoot(updates, { operation: 'migrate-user-credential' }).catch((error: any) => {
                             console.error('Migrate user credential failed', error);
                         });
                         return { user: migratedUser, reason: null as null };
@@ -2866,7 +3005,7 @@ export const DataService = {
 
             // Fallback self-heal: trong trường hợp system/users bị lệch, thử tra ngược tenant users.
             const tenantSnap = await Promise.race([
-                get(ref(db, 'tenants')),
+                trackedGet('tenants'),
                 new Promise<null>((resolve) =>
                     setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS + 1000)
                 ),
@@ -2899,7 +3038,7 @@ export const DataService = {
                         [`system/users/${normalizedUser.id}`]: normalizedUser,
                         [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
                     };
-                    update(ref(db), updates).catch((error: any) => {
+                    trackedUpdateRoot(updates, { operation: 'self-heal-user-index' }).catch((error: any) => {
                         console.error('Self-heal user index failed', error);
                     });
 
@@ -2953,6 +3092,7 @@ export const DataService = {
     getTags: () => CACHE.tags,
     getTransactionCategories: () => CACHE.transactionCategories,
     getHistory: () => CACHE.history,
+    fetchRecentHistory: (limit?: number, tenantId?: string | null) => _fetchRecentHistory(limit, tenantId),
 
     saveTenants: (list: Tenant[]) => _saveAuditedList('tenants', list),
     deleteTenant: _deleteTenant,
