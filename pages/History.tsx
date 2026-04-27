@@ -225,7 +225,7 @@ const HistoryPage: React.FC<HistoryPageProps> = ({ history, users, currentUser }
                         className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                     >
                         <option value="ALL">Tất cả hành động</option>
-                        {Array.from(new Set(history.map((log) => log.action))).map((action) => (
+                        {Array.from(new Set<string>(history.map((log) => String(log.action || '')))).map((action) => (
                             <option key={action} value={action}>{ACTION_LABELS[action] || action}</option>
                         ))}
                     </select>
@@ -236,7 +236,7 @@ const HistoryPage: React.FC<HistoryPageProps> = ({ history, users, currentUser }
                         className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                     >
                         <option value="ALL">Tất cả đối tượng</option>
-                        {Array.from(new Set(history.map((log) => log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM')))).map((entity) => (
+                        {Array.from(new Set<string>(history.map((log) => String(log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM'))))).map((entity) => (
                             <option key={entity} value={entity}>{ENTITY_LABELS[entity] || entity}</option>
                         ))}
                     </select>

@@ -31,8 +31,9 @@ import {
     INITIAL_USERS,
 } from './mockData';
 import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
+import { deriveBookingStatus, deriveRoomOperationalStatus, isBookingOccupyingRoom } from '../utils/bookingState';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, get, limitToLast, onValue, query, ref, remove, runTransaction, set, update } from 'firebase/database';
+import { equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, set, update } from 'firebase/database';
 
 declare const XLSX: any;
 declare global {
@@ -71,6 +72,9 @@ let isFirebaseReady = false;
 
 let activeTenantId: string | null = null;
 const SYSTEM_TENANT_ID = 'SYSTEM';
+let activeRealtimeUnsubscribers: Array<() => void> = [];
+const missingQueryIndexPaths = new Set<string>();
+let bookingIndexWriteEnabled = true;
 const AUDIT_COALESCE_WINDOW_MS = 1500;
 
 const CACHE = {
@@ -93,6 +97,7 @@ let _dataChangeCallback: () => void = () => {};
 let realtimeConnectionState: 'UNKNOWN' | 'CONNECTED' | 'DISCONNECTED' = 'UNKNOWN';
 let disconnectRealtimeConnectionWatcher: (() => void) | null = null;
 const CONNECTION_PREFLIGHT_TIMEOUT_MS = 2000;
+const BOOKING_INDEX_NODE = 'bookingIndexByPropertyDate';
 
 type AuditSource = 'WEB' | 'SYSTEM' | 'IMPORT';
 type AuditedNode =
@@ -284,7 +289,18 @@ const getHistoryPath = (tenantId?: string | null) => {
     return basePath ? `${basePath}/history` : null;
 };
 
-const FIREBASE_DEBUG_ENABLED = true;
+const isFirebaseDebugEnabled = () => {
+    if (typeof window === 'undefined') return !!import.meta.env.DEV;
+    try {
+        if (import.meta.env.DEV) return true;
+        const hostname = window.location?.hostname || '';
+        if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+        if ((window as any).__KHOST_ENABLE_FIREBASE_DEBUG__ === true) return true;
+        return window.localStorage?.getItem('k_host_firebase_debug') === '1';
+    } catch {
+        return !!import.meta.env.DEV;
+    }
+};
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 
 const estimateBytes = (value: unknown) => {
@@ -311,7 +327,7 @@ const countItems = (value: unknown) => {
 };
 
 const debugFirebaseTraffic = (kind: string, path: string, payload?: unknown, extra?: Record<string, unknown>) => {
-    if (!FIREBASE_DEBUG_ENABLED) return;
+    if (!isFirebaseDebugEnabled()) return;
 
     const bytes = estimateBytes(payload);
     const items = countItems(payload);
@@ -340,6 +356,33 @@ const trackedGet = async (path: string) => {
     return snap;
 };
 
+const trackedGetByChild = async (path: string, child: string, value: string) => {
+    const snap = await get(query(ref(db, path), orderByChild(child), equalTo(value)));
+    debugFirebaseTraffic('READ:getByChild', path, snap.val(), { exists: snap.exists(), child, value });
+    return snap;
+};
+
+const trackedOnValueByChild = (
+    path: string,
+    child: string,
+    value: string,
+    callback: (snap: any) => void,
+    errorCallback?: (error: unknown) => void
+) =>
+    onValue(
+        query(ref(db, path), orderByChild(child), equalTo(value)),
+        (snap) => {
+            debugFirebaseTraffic('READ:onValueByChild', path, snap.val(), { exists: snap.exists(), child, value });
+            callback(snap);
+        },
+        errorCallback
+    );
+
+const isMissingIndexError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return message.includes('Index not defined');
+};
+
 const trackedGetRecent = async (path: string, limit: number) => {
     const snap = await get(query(ref(db, path), limitToLast(limit)));
     debugFirebaseTraffic('READ:getRecent', path, snap.val(), { exists: snap.exists(), limit });
@@ -356,6 +399,49 @@ const trackedUpdateRoot = async (updates: Record<string, unknown>, meta?: Record
     return update(ref(db), updates);
 };
 
+const isPermissionDeniedError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return message.includes('PERMISSION_DENIED') || message.includes('permission_denied');
+};
+
+const stripBookingIndexUpdates = (updates: Record<string, unknown>) =>
+    Object.fromEntries(
+        Object.entries(updates).filter(([path]) => !path.includes(`/${BOOKING_INDEX_NODE}/`) && !path.endsWith(`/${BOOKING_INDEX_NODE}`))
+    );
+
+const trackedUpdateRootWithBookingIndexFallback = async (
+    updates: Record<string, unknown>,
+    meta?: Record<string, unknown>
+) => {
+    const hasBookingIndexPaths = Object.keys(updates).some(
+        (path) => path.includes(`/${BOOKING_INDEX_NODE}/`) || path.endsWith(`/${BOOKING_INDEX_NODE}`)
+    );
+
+    if (!hasBookingIndexPaths || !bookingIndexWriteEnabled) {
+        const safeUpdates = !bookingIndexWriteEnabled ? stripBookingIndexUpdates(updates) : updates;
+        return trackedUpdateRoot(safeUpdates, meta);
+    }
+
+    try {
+        return await trackedUpdateRoot(updates, meta);
+    } catch (error) {
+        if (!isPermissionDeniedError(error)) {
+            throw error;
+        }
+
+        bookingIndexWriteEnabled = false;
+        const fallbackUpdates = stripBookingIndexUpdates(updates);
+        console.warn(
+            `[Firebase Debug] Booking index write is not permitted by current rules. Falling back to booking-only updates until rules are updated.`
+        );
+        return trackedUpdateRoot(fallbackUpdates, {
+            ...meta,
+            bookingIndexFallback: true,
+            pathCount: Object.keys(fallbackUpdates).length,
+        });
+    }
+};
+
 const trackedRemove = async (path: string, meta?: Record<string, unknown>) => {
     debugFirebaseTraffic('WRITE:remove', path, null, meta);
     return remove(ref(db, path));
@@ -370,6 +456,17 @@ const trackedOnValue = (path: string, callback: (snap: any) => void, errorCallba
         },
         errorCallback
     );
+
+const _disposeActiveRealtimeBindings = () => {
+    activeRealtimeUnsubscribers.forEach((unsubscribe) => {
+        try {
+            unsubscribe();
+        } catch (error) {
+            console.warn('Cleanup realtime binding failed', error);
+        }
+    });
+    activeRealtimeUnsubscribers = [];
+};
 
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -492,6 +589,22 @@ const sanitizeForLog = (value: any): any => {
     return sanitized;
 };
 
+const normalizeLegacyBookingStatus = (status?: string): BookingStatus => {
+    if (status === BookingStatus.HOLD || status === 'PENDING') return BookingStatus.HOLD;
+    if (status === BookingStatus.CONFIRMED) return BookingStatus.CONFIRMED;
+    if (status === BookingStatus.CHECKED_IN) return BookingStatus.CHECKED_IN;
+    if (status === BookingStatus.CHECKED_OUT) return BookingStatus.CHECKED_OUT;
+    if (status === BookingStatus.DELETED || status === 'CANCELLED') return BookingStatus.DELETED;
+    return BookingStatus.CONFIRMED;
+};
+
+const normalizeLegacyRoomStatus = (status?: string): RoomStatus => {
+    if (status === RoomStatus.VACANT_CLEAN) return RoomStatus.VACANT_CLEAN;
+    if (status === RoomStatus.VACANT_DIRTY || status === 'MAINTENANCE') return RoomStatus.VACANT_DIRTY;
+    if (status === RoomStatus.OCCUPIED) return RoomStatus.OCCUPIED;
+    return RoomStatus.VACANT_CLEAN;
+};
+
 const removeUndefinedDeep = (value: any): any => {
     if (value === undefined) return null;
     if (value === null || typeof value !== 'object') return value;
@@ -528,6 +641,28 @@ const normalizeForNode = (node: string, item: any, tenantId: string | null) => {
     if (!item) return item;
     if (node === 'history') {
         return { ...item, tenantId: item.tenantId || tenantId || undefined };
+    }
+    if (node === 'bookings') {
+        const normalizedStatus = normalizeLegacyBookingStatus(item.status);
+        const normalizedBooking = {
+            ...item,
+            status: normalizedStatus,
+            isHold: item.isHold || normalizedStatus === BookingStatus.HOLD,
+        };
+        const derivedStatus = deriveBookingStatus(normalizedBooking as Booking);
+        const bookingWithDerivedStatus = {
+            ...normalizedBooking,
+            status: derivedStatus,
+            isHold: normalizedBooking.isHold || derivedStatus === BookingStatus.HOLD,
+        };
+        return tenantId ? { ...bookingWithDerivedStatus, tenantId: item.tenantId || tenantId } : bookingWithDerivedStatus;
+    }
+    if (node === 'rooms') {
+        const normalizedRoom = {
+            ...item,
+            status: normalizeLegacyRoomStatus(item.status),
+        };
+        return tenantId ? { ...normalizedRoom, tenantId: item.tenantId || tenantId } : normalizedRoom;
     }
     if (node === 'users') {
         const withTenant = tenantId ? { ...item, tenantId: item.tenantId || tenantId } : { ...item };
@@ -877,11 +1012,20 @@ const _recordHistory = ({
         staffId: resolvedActor.id,
     };
 
+    if (isFirebaseDebugEnabled()) {
+        console.groupCollapsed(
+            `[KHost Action] ${entry.action}${entry.entityType ? `:${entry.entityType}` : ''} | ${entry.description}`
+        );
+        console.log('entry', entry);
+        console.groupEnd();
+    }
+
     return _writeHistoryLog(entry, coalesceKey);
 };
 
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
     try {
+        _disposeActiveRealtimeBindings();
         activeTenantId = tenantId;
         _dataChangeCallback = onDataChange;
 
@@ -894,7 +1038,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             node: string,
             cacheKey: keyof typeof CACHE
         ) => {
-            trackedOnValue(`${basePath}/${node}`, (snap) => {
+            const unsubscribe = trackedOnValue(`${basePath}/${node}`, (snap) => {
                 const rows = snapshotToArray<T>(snap);
                 if (cacheKey === 'users' || cacheKey === 'systemUsers') {
                     // @ts-ignore
@@ -907,6 +1051,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
                 }
                 _dataChangeCallback();
             });
+            activeRealtimeUnsubscribers.push(unsubscribe);
         };
 
         if (tenantId === SYSTEM_TENANT_ID) {
@@ -924,12 +1069,10 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<RoomType>('roomTypes', 'roomTypes');
         bind<Tag>('tags', 'tags');
         bind<TransactionCategory>('transactionCategories', 'transactionCategories');
-        bind<Room>('rooms', 'rooms');
         bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
-        bind<Booking>('bookings', 'bookings');
         bind<Customer>('customers', 'customers');
 
-        trackedOnValue(`${basePath}/users`, async (snap) => {
+        const usersUnsubscribe = trackedOnValue(`${basePath}/users`, async (snap) => {
             const users = snapshotToArray<User>(snap).map((user) =>
                 normalizeUserCredentialsForStorage(user, user)
             );
@@ -958,6 +1101,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
 
             _dataChangeCallback();
         });
+        activeRealtimeUnsubscribers.push(usersUnsubscribe);
 
         trackedGet(`${basePath}/properties`).then((propertySnap) => {
             if (!propertySnap.exists() || propertySnap.size === 0) {
@@ -972,6 +1116,506 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
     } catch (error) {
         console.error('Sync init error', error);
     }
+};
+
+const normalizePropertyScope = (propertyIds?: string[]) =>
+    Array.from(new Set((propertyIds || []).filter(Boolean))).sort();
+
+const filterRowsByPropertyScope = <T extends { propertyId?: string }>(rows: T[], propertyIds?: string[]) => {
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) return [] as T[];
+    const scopeSet = new Set(scopeIds);
+    return rows.filter((row) => row.propertyId && scopeSet.has(row.propertyId));
+};
+
+const filterBookingsForRange = (bookings: Booking[], startMs: number, endMs: number) =>
+    bookings.filter((booking) => {
+        if (booking.status === BookingStatus.DELETED || isExpiredHoldBooking(booking)) return false;
+        const bookingStartMs = new Date(booking.checkInDate).getTime();
+        const bookingEndMs = new Date(booking.checkOutDate).getTime();
+        return bookingStartMs < endMs && bookingEndMs > startMs;
+    });
+
+const _loadScopedCollectionByProperty = async <T extends { id?: string }>(
+    node: 'rooms' | 'bookings',
+    cacheKey: 'rooms' | 'bookings',
+    propertyIds?: string[],
+    syncCache: boolean = true
+) => {
+    if (!_ensureFirebase()) return [] as T[];
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as T[];
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) {
+        if (syncCache) {
+            CACHE[cacheKey] = [];
+        }
+        return [] as T[];
+    }
+
+    const path = `${basePath}/${node}`;
+    let snapshots: any[] = [];
+
+    if (!missingQueryIndexPaths.has(path)) {
+        try {
+            snapshots = await Promise.all(scopeIds.map((propertyId) => trackedGetByChild(path, 'propertyId', propertyId)));
+        } catch (error) {
+            if (!isMissingIndexError(error)) {
+                throw error;
+            }
+            missingQueryIndexPaths.add(path);
+            console.warn(
+                `[Firebase Debug] Missing index for ${path}. Falling back to full read until ".indexOn": "propertyId" is added to database rules.`
+            );
+        }
+    }
+
+    if (snapshots.length === 0) {
+        const fallbackSnap = await trackedGet(path);
+        snapshots = [fallbackSnap];
+    }
+
+    const unique = new Map<string, T>();
+    snapshots.forEach((snap) => {
+        snapshotToArray<T>(snap).forEach((item) => {
+            const id = item.id || `${node}_${unique.size}`;
+            unique.set(id, item);
+        });
+    });
+
+    const rows = Array.from(unique.values()).map((item) => {
+        if (node === 'bookings') return normalizeForNode('bookings', item, activeTenantId) as T;
+        if (node === 'rooms') return normalizeForNode('rooms', item, activeTenantId) as T;
+        return item;
+    });
+    const scopedRows = filterRowsByPropertyScope(rows as Array<T & { propertyId?: string }>, scopeIds) as T[];
+    if (syncCache) {
+        // @ts-ignore
+        CACHE[cacheKey] = scopedRows;
+    }
+    return scopedRows;
+};
+
+const _loadRoomsForProperties = async (propertyIds?: string[]) => {
+    return _loadScopedCollectionByProperty<Room>('rooms', 'rooms', propertyIds);
+};
+
+const _loadBookingsForProperties = async (propertyIds?: string[]) => {
+    return _loadScopedCollectionByProperty<Booking>('bookings', 'bookings', propertyIds);
+};
+
+const _loadRoomsForPropertiesView = async (propertyIds?: string[]) => {
+    return _loadScopedCollectionByProperty<Room>('rooms', 'rooms', propertyIds, false);
+};
+
+const _loadBookingsForPropertiesView = async (propertyIds?: string[]) => {
+    return _loadScopedCollectionByProperty<Booking>('bookings', 'bookings', propertyIds, false);
+};
+
+const _fetchBookingsForProperties = async (propertyIds?: string[]) => {
+    if (!_ensureFirebase()) return [] as Booking[];
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as Booking[];
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) return [] as Booking[];
+
+    const snapshots = await Promise.all(scopeIds.map((propertyId) => trackedGetByChild(`${basePath}/bookings`, 'propertyId', propertyId)));
+    const unique = new Map<string, Booking>();
+
+    snapshots.forEach((snap) => {
+        snapshotToArray<Booking>(snap).forEach((booking) => {
+            if (!booking?.id) return;
+            unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+        });
+    });
+
+    return Array.from(unique.values()).filter(
+        (booking) => booking.status !== BookingStatus.DELETED && !isExpiredHoldBooking(booking)
+    );
+};
+
+const subscribeScopedCollectionByProperty = <T extends { id?: string }>(
+    node: 'rooms' | 'bookings',
+    cacheKey: 'rooms' | 'bookings',
+    propertyIds: string[] | undefined,
+    callback: (rows: T[]) => void,
+    errorCallback?: (error: unknown) => void,
+    syncCache: boolean = true
+) => {
+    if (!_ensureFirebase()) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) {
+        if (syncCache) {
+            // @ts-ignore
+            CACHE[cacheKey] = [];
+        }
+        callback([]);
+        return () => undefined;
+    }
+
+    const path = `${basePath}/${node}`;
+    const snapshotMap = new Map<string, any>();
+    let fallbackUnsubscribe: (() => void) | null = null;
+    let propertyUnsubscribes: Array<() => void> = [];
+
+    const emit = () => {
+        const unique = new Map<string, T>();
+        snapshotMap.forEach((snap) => {
+            snapshotToArray<T>(snap).forEach((item) => {
+                const id = item.id || `${node}_${unique.size}`;
+                unique.set(id, item);
+            });
+        });
+        const rows = Array.from(unique.values()).map((item) => {
+            if (node === 'bookings') return normalizeForNode('bookings', item, activeTenantId) as T;
+            if (node === 'rooms') return normalizeForNode('rooms', item, activeTenantId) as T;
+            return item;
+        });
+        const scopedRows = filterRowsByPropertyScope(rows as Array<T & { propertyId?: string }>, scopeIds) as T[];
+        if (syncCache) {
+            // @ts-ignore
+            CACHE[cacheKey] = scopedRows;
+        }
+        callback(scopedRows);
+    };
+
+    const teardownPropertySubscriptions = () => {
+        propertyUnsubscribes.forEach((unsubscribe) => {
+            try {
+                unsubscribe();
+            } catch (error) {
+                console.warn('Cleanup scoped subscription failed', error);
+            }
+        });
+        propertyUnsubscribes = [];
+    };
+
+    const activateFallback = () => {
+        if (fallbackUnsubscribe) return;
+        teardownPropertySubscriptions();
+        fallbackUnsubscribe = trackedOnValue(
+            path,
+            (snap) => {
+                snapshotMap.clear();
+                snapshotMap.set('fallback', snap);
+                emit();
+            },
+            errorCallback
+        );
+    };
+
+    if (missingQueryIndexPaths.has(path)) {
+        activateFallback();
+    } else {
+        propertyUnsubscribes = scopeIds.map((propertyId) =>
+            trackedOnValueByChild(
+                path,
+                'propertyId',
+                propertyId,
+                (snap) => {
+                    snapshotMap.set(propertyId, snap);
+                    emit();
+                },
+                (error) => {
+                    if (isMissingIndexError(error)) {
+                        missingQueryIndexPaths.add(path);
+                        console.warn(
+                            `[Firebase Debug] Missing realtime index for ${path}. Falling back to full realtime read until ".indexOn": "propertyId" is added to database rules.`
+                        );
+                        activateFallback();
+                        return;
+                    }
+                    errorCallback?.(error);
+                }
+            )
+        );
+    }
+
+    return () => {
+        teardownPropertySubscriptions();
+        if (fallbackUnsubscribe) {
+            try {
+                fallbackUnsubscribe();
+            } catch (error) {
+                console.warn('Cleanup fallback subscription failed', error);
+            }
+        }
+    };
+};
+
+const _subscribeRoomsForProperties = (
+    propertyIds: string[] | undefined,
+    callback: (rows: Room[]) => void,
+    errorCallback?: (error: unknown) => void
+) => subscribeScopedCollectionByProperty<Room>('rooms', 'rooms', propertyIds, callback, errorCallback);
+
+const _subscribeBookingsForProperties = (
+    propertyIds: string[] | undefined,
+    callback: (rows: Booking[]) => void,
+    errorCallback?: (error: unknown) => void
+) => subscribeScopedCollectionByProperty<Booking>('bookings', 'bookings', propertyIds, callback, errorCallback);
+
+const _subscribeRoomsForPropertiesView = (
+    propertyIds: string[] | undefined,
+    callback: (rows: Room[]) => void,
+    errorCallback?: (error: unknown) => void
+) => subscribeScopedCollectionByProperty<Room>('rooms', 'rooms', propertyIds, callback, errorCallback, false);
+
+const _subscribeBookingsForPropertiesView = (
+    propertyIds: string[] | undefined,
+    callback: (rows: Booking[]) => void,
+    errorCallback?: (error: unknown) => void
+) => subscribeScopedCollectionByProperty<Booking>('bookings', 'bookings', propertyIds, callback, errorCallback, false);
+
+const _fetchBookingByIdRemote = async (bookingId: string) => {
+    if (!_ensureFirebase() || !bookingId) return null;
+
+    const basePath = getBaseRef();
+    if (!basePath) return null;
+
+    const snap = await trackedGet(`${basePath}/bookings/${bookingId}`);
+    if (!snap.exists()) return null;
+    return normalizeForNode('bookings', { id: bookingId, ...snap.val() }, activeTenantId) as Booking;
+};
+
+const _fetchBookingById = async (bookingId: string) => {
+    if (!_ensureFirebase() || !bookingId) return null;
+
+    const cached = CACHE.bookings.find((booking) => booking.id === bookingId) || null;
+    if (cached && cached.status !== BookingStatus.DELETED) return cached;
+
+    const remote = await _fetchBookingByIdRemote(bookingId);
+    return remote || cached;
+};
+
+const _fetchOperationalBookings = async (
+    propertyId: string,
+    start: string,
+    end: string,
+    paddingDays: number = 14
+) => {
+    return _fetchOperationalBookingsForProperties([propertyId], start, end, paddingDays);
+};
+
+const _fetchOperationalBookingsForProperties = async (
+    propertyIds: string[] | undefined,
+    start: string,
+    end: string,
+    paddingDays: number = 14
+) => {
+    if (!_ensureFirebase()) return [] as Booking[];
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as Booking[];
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) return [] as Booking[];
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return [] as Booking[];
+
+    const rangeStartMs = startDate.getTime();
+    const rangeEndMs = endDate.getTime();
+
+    if (!bookingIndexWriteEnabled) {
+        const fallback = await _fetchBookingsForProperties(scopeIds);
+        const result = filterBookingsForRange(fallback, rangeStartMs, rangeEndMs);
+        return result;
+    }
+
+    const paddedStart = new Date(startDate);
+    paddedStart.setDate(paddedStart.getDate() - paddingDays);
+    const paddedEnd = new Date(endDate);
+    paddedEnd.setDate(paddedEnd.getDate() + paddingDays);
+
+    const dayKeys = getDateKeysBetween(paddedStart, paddedEnd);
+    const unique = new Map<string, Booking>();
+
+    await Promise.all(
+        scopeIds.flatMap((propertyId) =>
+            dayKeys.map(async (dateKey) => {
+                const snap = await trackedGet(`${basePath}/${BOOKING_INDEX_NODE}/${propertyId}/${dateKey}`);
+                snapshotToArray<Booking>(snap).forEach((booking) => {
+                    if (!booking?.id) return;
+                    unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+                });
+            })
+        )
+    );
+
+    const lowerBoundMs = paddedStart.getTime();
+    const upperBoundMs = paddedEnd.getTime();
+
+    const fallback = await _fetchBookingsForProperties(scopeIds);
+    fallback.forEach((booking) => {
+        if (!booking?.id) return;
+        unique.set(booking.id, booking);
+    });
+
+    return filterBookingsForRange(Array.from(unique.values()), lowerBoundMs, upperBoundMs);
+};
+
+const _subscribeOperationalBookings = (
+    propertyIds: string[] | undefined,
+    start: string,
+    end: string,
+    callback: (rows: Booking[]) => void,
+    errorCallback?: (error: unknown) => void,
+    paddingDays: number = 14
+) => {
+    if (!_ensureFirebase()) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        callback([]);
+        return () => undefined;
+    }
+
+    const rangeStartMs = startDate.getTime();
+    const rangeEndMs = endDate.getTime();
+    const paddedStart = new Date(startDate);
+    paddedStart.setDate(paddedStart.getDate() - paddingDays);
+    const paddedEnd = new Date(endDate);
+    paddedEnd.setDate(paddedEnd.getDate() + paddingDays);
+    const lowerBoundMs = paddedStart.getTime();
+    const upperBoundMs = paddedEnd.getTime();
+
+    if (!bookingIndexWriteEnabled) {
+        return subscribeScopedCollectionByProperty<Booking>(
+            'bookings',
+            'bookings',
+            scopeIds,
+            (rows) => {
+                const result = filterBookingsForRange(rows, rangeStartMs, rangeEndMs);
+                callback(result);
+            },
+            errorCallback,
+            false
+        );
+    }
+
+    const dayKeys = getDateKeysBetween(paddedStart, paddedEnd);
+    const snapshotMap = new Map<string, any>();
+    const expectedSnapshotCount = scopeIds.length * dayKeys.length;
+    const seenSnapshotKeys = new Set<string>();
+    let fallbackRows: Booking[] = [];
+
+    const fallbackUnsubscribe = subscribeScopedCollectionByProperty<Booking>(
+        'bookings',
+        'bookings',
+        scopeIds,
+        (rows) => {
+            fallbackRows = rows;
+            emitIndexRows();
+        },
+        errorCallback,
+        false
+    );
+
+    const emitIndexRows = () => {
+        const unique = new Map<string, Booking>();
+        snapshotMap.forEach((storedSnap) => {
+            snapshotToArray<Booking>(storedSnap).forEach((booking) => {
+                if (!booking?.id) return;
+                unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+            });
+        });
+
+        fallbackRows.forEach((booking) => {
+            if (!booking?.id) return;
+            unique.set(booking.id, booking);
+        });
+
+        callback(filterBookingsForRange(Array.from(unique.values()), lowerBoundMs, upperBoundMs));
+    };
+
+    const unsubscribes = scopeIds.flatMap((propertyId) =>
+        dayKeys.map((dateKey) =>
+            trackedOnValue(
+                `${basePath}/${BOOKING_INDEX_NODE}/${propertyId}/${dateKey}`,
+                (snap) => {
+                    const snapshotKey = `${propertyId}:${dateKey}`;
+                    seenSnapshotKeys.add(snapshotKey);
+                    snapshotMap.set(snapshotKey, snap);
+                    emitIndexRows();
+                },
+                errorCallback
+            )
+        )
+    );
+
+    return () => {
+        unsubscribes.forEach((unsubscribe) => {
+            try {
+                unsubscribe();
+            } catch (error) {
+                console.warn('Cleanup operational booking subscription failed', error);
+            }
+        });
+        if (fallbackUnsubscribe) {
+            try {
+                fallbackUnsubscribe();
+            } catch (error) {
+                console.warn('Cleanup operational booking fallback subscription failed', error);
+            }
+        }
+    };
+};
+
+const _validateRoomAvailabilityRemote = async (
+    propertyId: string,
+    roomId: string,
+    start: string,
+    end: string,
+    excludeId?: string
+) => {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+
+    const policyCheck = _validateRoomPolicy(roomId, start, end);
+    if (!policyCheck.valid) {
+        return {
+            valid: false,
+            reason: policyCheck.reason || 'Vi phạm chính sách phòng',
+            policyMode: (policyCheck as any).policyMode,
+        };
+    }
+
+    const propertyBookings = await _fetchBookingsForProperties([propertyId]);
+    const activeBookings = propertyBookings.filter((booking) => isBookingActiveForConflict(booking));
+    const conflict = findBookingConflict(activeBookings, roomId, startMs, endMs, excludeId);
+    return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
 };
 
 const _seedSystemData = () => {
@@ -1255,22 +1899,46 @@ const _saveAuditedList = (node: AuditedNode, list: any[]) => {
     _auditCollectionMutation(node, previousList, normalizedList);
 };
 
-const _updateRoomStatus = (roomId: string, status: RoomStatus, options: RoomStatusOptions = {}) => {
-    if (!db || !activeTenantId || !roomId) return;
-
-    const roomBefore = CACHE.rooms.find((room) => room.id === roomId);
-    if (!roomBefore || roomBefore.status === status) return;
+const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: RoomStatusOptions = {}) => {
+    if (!db || !activeTenantId || !roomId) {
+        throw new Error('Không thể cập nhật trạng thái phòng: thiếu kết nối dữ liệu.');
+    }
 
     const basePath = getBaseRef();
-    if (!basePath) return;
+    if (!basePath) {
+        throw new Error('Không thể cập nhật trạng thái phòng: không xác định được tenant hiện tại.');
+    }
 
+    let roomBefore = CACHE.rooms.find((room) => room.id === roomId);
+    if (!roomBefore) {
+        const roomSnap = await trackedGet(`${basePath}/rooms/${roomId}`);
+        if (roomSnap.exists()) {
+            roomBefore = normalizeForNode('rooms', { id: roomId, ...roomSnap.val() }, activeTenantId) as Room;
+        }
+    }
+    if (!roomBefore) {
+        throw new Error(`Không tìm thấy phòng ${roomId} để cập nhật trạng thái.`);
+    }
+    if (roomBefore.status === status) return;
+
+    const existedInCache = CACHE.rooms.some((room) => room.id === roomId);
     const roomAfter: Room = { ...roomBefore, status };
-    CACHE.rooms = CACHE.rooms.map((room) => (room.id === roomId ? roomAfter : room));
+    CACHE.rooms = existedInCache
+        ? CACHE.rooms.map((room) => (room.id === roomId ? roomAfter : room))
+        : [...CACHE.rooms, roomAfter];
     _dataChangeCallback();
 
-    trackedUpdateRoot({ [`${basePath}/rooms/${roomId}/status`]: status }, { operation: 'room-status-sync' }).catch((error: any) => {
+    try {
+        await trackedUpdateRoot({ [`${basePath}/rooms/${roomId}/status`]: status }, { operation: 'room-status-sync' });
+    } catch (error: any) {
+        // Rollback local optimistic state when remote write fails.
+        CACHE.rooms = existedInCache
+            ? CACHE.rooms.map((room) => (room.id === roomId ? roomBefore! : room))
+            : CACHE.rooms.filter((room) => room.id !== roomId);
+        _dataChangeCallback();
         console.error('Sync room status failed', error);
-    });
+        throw error;
+    }
 
     if (!options.suppressLog) {
         _recordHistory({
@@ -1295,11 +1963,77 @@ const _updateRoomStatus = (roomId: string, status: RoomStatus, options: RoomStat
     }
 };
 
+const _syncRoomStatusesForRooms = async (roomIds: string[], options: RoomStatusOptions = {}) => {
+    const uniqueRoomIds = Array.from(new Set((roomIds || []).filter(Boolean)));
+    if (uniqueRoomIds.length === 0) return;
+
+    const targetRooms = uniqueRoomIds
+        .map((roomId) => CACHE.rooms.find((room) => room.id === roomId))
+        .filter(Boolean) as Room[];
+
+    if (targetRooms.length === 0) return;
+
+    const propertyIds = normalizePropertyScope(
+        Array.from(new Set(targetRooms.map((room) => room.propertyId).filter(Boolean)))
+    );
+    const bookingsSource =
+        db && activeTenantId && propertyIds.length > 0
+            ? await _fetchBookingsForProperties(propertyIds)
+            : CACHE.bookings;
+
+    const nowMs = Date.now();
+    targetRooms.forEach((room) => {
+        const targetStatus = deriveRoomOperationalStatus(
+            room,
+            bookingsSource.filter((booking) => booking.roomId === room.id),
+            nowMs
+        );
+        if (room.status !== targetStatus) {
+            _updateRoomStatus(room.id, targetStatus, { ...options, suppressLog: true });
+        }
+    });
+};
+
+const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
+    const nowMs = Date.now();
+    const nextBookings = CACHE.bookings.map((booking) => {
+        const derivedStatus = deriveBookingStatus(booking, nowMs);
+        return booking.status === derivedStatus ? booking : { ...booking, status: derivedStatus };
+    });
+    const changedBookings = nextBookings.filter((booking, index) => booking.status !== CACHE.bookings[index]?.status);
+
+    if (changedBookings.length > 0 && db && activeTenantId) {
+        const basePath = getBaseRef();
+        if (basePath) {
+            const updates: Record<string, unknown> = {};
+            changedBookings.forEach((booking) => {
+                updates[`${basePath}/bookings/${booking.id}/status`] = booking.status;
+            });
+            await trackedUpdateRootWithBookingIndexFallback(updates, {
+                operation: 'sync-operational-booking-statuses',
+                bookingCount: changedBookings.length,
+            });
+        }
+    }
+
+    CACHE.bookings = nextBookings;
+    _dataChangeCallback();
+    await _syncRoomStatusesForRooms(
+        nextBookings.filter((booking) => booking.status !== BookingStatus.DELETED).map((booking) => booking.roomId),
+        { source: options.source, suppressLog: true }
+    );
+};
+
 const _addBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
     const { savedBooking } = await _saveBookingAtomic(booking, 'create');
 
     if (savedBooking.status === BookingStatus.CHECKED_IN) {
         _updateRoomStatus(savedBooking.roomId, RoomStatus.OCCUPIED, {
+            source: options.source,
+            suppressLog: true,
+        });
+    } else if (savedBooking.status === BookingStatus.CHECKED_OUT) {
+        _updateRoomStatus(savedBooking.roomId, RoomStatus.VACANT_DIRTY, {
             source: options.source,
             suppressLog: true,
         });
@@ -1320,6 +2054,8 @@ const _addBooking = async (booking: Booking, options: BookingActionOptions = {})
         staffId: options.staffId,
         bookingSnapshot: savedBooking,
     });
+
+    await _syncRoomStatusesForRooms([savedBooking.roomId], { source: options.source, suppressLog: true });
 };
 
 const _updateBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
@@ -1392,8 +2128,6 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
             _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, { source: options.source, suppressLog: true });
         } else if (booking.status === BookingStatus.CHECKED_OUT) {
             _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, { source: options.source, suppressLog: true });
-        } else if (booking.status === BookingStatus.CANCELLED) {
-            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, { source: options.source, suppressLog: true });
         }
 
         let action: HistoryAction = 'UPDATE';
@@ -1410,12 +2144,6 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
             description = `Check-out đơn ${booking.id}`;
             operationName = 'Đổi trạng thái check-out';
         }
-        if (booking.status === BookingStatus.CANCELLED) {
-            action = 'CANCEL';
-            description = `Hủy đơn ${booking.id}`;
-            operationName = 'Đổi trạng thái cancel';
-        }
-
         _recordHistory({
             action,
             entityType: 'BOOKING',
@@ -1440,10 +2168,12 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
 
     if (roomChanged) {
         if (oldBooking.status === BookingStatus.CHECKED_IN) {
-            _updateRoomStatus(oldBooking.roomId, RoomStatus.VACANT_CLEAN, { source: options.source, suppressLog: true });
+            _updateRoomStatus(oldBooking.roomId, RoomStatus.VACANT_DIRTY, { source: options.source, suppressLog: true });
         }
         if (booking.status === BookingStatus.CHECKED_IN) {
             _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, { source: options.source, suppressLog: true });
+        } else if (booking.status === BookingStatus.CHECKED_OUT) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, { source: options.source, suppressLog: true });
         }
     }
 
@@ -1783,6 +2513,11 @@ const _updateBooking = async (booking: Booking, options: BookingActionOptions = 
             bookingSnapshot: booking,
         });
     }
+
+    await _syncRoomStatusesForRooms(
+        Array.from(new Set([oldBooking.roomId, savedBooking.roomId].filter(Boolean))),
+        { source: options.source, suppressLog: true }
+    );
 };
 
 const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: BookingActionOptions = {}) => {
@@ -1822,93 +2557,98 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         (id) => !normalizedUpsertMap.has(id)
     );
 
-    const bookingRef = ref(db, `${basePath}/bookings`);
-    let rejectReason = '';
     const beforeById = new Map<string, Booking | null>();
-    let deletedBefore: Booking[] = [];
-
-    const result = await runTransaction(
-        bookingRef,
-        (currentValue) => {
-            rejectReason = '';
-            beforeById.clear();
-            deletedBefore = [];
-
-            const nextMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
-
-            for (const deleteId of deleteIds) {
-                const existing = nextMap[deleteId] as Booking | undefined;
-                if (!existing || existing.status === BookingStatus.DELETED) {
-                    rejectReason = `Đơn ${deleteId} đã bị xóa hoặc không còn tồn tại.`;
-                    return;
-                }
-                deletedBefore.push({
-                    ...existing,
-                    id: existing.id || deleteId,
-                });
-                delete nextMap[deleteId];
-            }
-
-            for (const item of normalizedUpserts) {
-                const nextBooking = item.booking;
-                const existing = nextMap[nextBooking.id] as Booking | undefined;
-
-                if (item.mode === 'create' && existing) {
-                    rejectReason = `Mã đơn ${nextBooking.id} đã tồn tại.`;
-                    return;
-                }
-                if (item.mode === 'update' && (!existing || existing.status === BookingStatus.DELETED)) {
-                    rejectReason = `Đơn ${nextBooking.id} đã bị xóa hoặc không còn tồn tại.`;
-                    return;
-                }
-
-                beforeById.set(
-                    nextBooking.id,
-                    existing
-                        ? {
-                              ...existing,
-                              id: existing.id || nextBooking.id,
-                          }
-                        : null
-                );
-
-                const startMs = new Date(nextBooking.checkInDate).getTime();
-                const endMs = new Date(nextBooking.checkOutDate).getTime();
-                const policyCheck = _validateRoomPolicy(nextBooking.roomId, nextBooking.checkInDate, nextBooking.checkOutDate);
-                if (!policyCheck.valid) {
-                    rejectReason = policyCheck.reason || 'Vi phạm chính sách phòng';
-                    return;
-                }
-
-                const conflict = findBookingConflict(
-                    toBookingListFromMap(nextMap),
-                    nextBooking.roomId,
-                    startMs,
-                    endMs,
-                    item.mode === 'update' ? nextBooking.id : undefined
-                );
-                if (conflict) {
-                    rejectReason = `Trùng đơn ${conflict.id}`;
-                    return;
-                }
-
-                nextMap[nextBooking.id] = nextBooking;
-            }
-
-            return nextMap;
-        },
-        { applyLocally: false }
-    );
-    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
-        operation: 'save-booking-group',
-        committed: result.committed,
+    const deletedBefore: Booking[] = [];
+    const remoteExistingById = new Map<string, Booking>();
+    const knownIds = [
+        ...normalizedUpserts.map((item) => item.booking.id),
+        ...deleteIds,
+    ];
+    const knownBookings = (await Promise.all(knownIds.map((id) => _fetchBookingById(id)))).filter(Boolean) as Booking[];
+    knownBookings.forEach((booking) => {
+        remoteExistingById.set(booking.id, booking);
     });
 
-    if (!result.committed) {
-        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    const involvedPropertyIds = normalizePropertyScope(
+        Array.from(
+            new Set([
+                ...normalizedUpserts.map((item) => item.booking.propertyId),
+                ...knownBookings.map((booking) => booking.propertyId),
+            ])
+        )
+    );
+    const remotePropertyBookings = await _fetchBookingsForProperties(involvedPropertyIds);
+    const nextMap = new Map<string, Booking>();
+
+    remotePropertyBookings.forEach((booking) => {
+        nextMap.set(booking.id, booking);
+    });
+
+    for (const deleteId of deleteIds) {
+        const existing = nextMap.get(deleteId) || remoteExistingById.get(deleteId) || null;
+        if (!existing || existing.status === BookingStatus.DELETED) {
+            throw new Error(`Đơn ${deleteId} đã bị xóa hoặc không còn tồn tại.`);
+        }
+        deletedBefore.push(existing);
+        nextMap.delete(deleteId);
     }
 
-    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    for (const item of normalizedUpserts) {
+        const nextBooking = item.booking;
+        const existing = nextMap.get(nextBooking.id) || remoteExistingById.get(nextBooking.id) || null;
+
+        if (item.mode === 'create' && existing) {
+            throw new Error(`Mã đơn ${nextBooking.id} đã tồn tại.`);
+        }
+        if (item.mode === 'update' && (!existing || existing.status === BookingStatus.DELETED)) {
+            throw new Error(`Đơn ${nextBooking.id} đã bị xóa hoặc không còn tồn tại.`);
+        }
+
+        beforeById.set(nextBooking.id, existing || null);
+
+        const startMs = new Date(nextBooking.checkInDate).getTime();
+        const endMs = new Date(nextBooking.checkOutDate).getTime();
+        const policyCheck = _validateRoomPolicy(nextBooking.roomId, nextBooking.checkInDate, nextBooking.checkOutDate);
+        if (!policyCheck.valid) {
+            throw new Error(policyCheck.reason || 'Vi phạm chính sách phòng');
+        }
+
+        const conflict = findBookingConflict(
+            Array.from(nextMap.values()),
+            nextBooking.roomId,
+            startMs,
+            endMs,
+            item.mode === 'update' ? nextBooking.id : undefined
+        );
+        if (conflict) {
+            throw new Error(`Trùng đơn ${conflict.id}`);
+        }
+
+        nextMap.set(nextBooking.id, nextBooking);
+    }
+
+    const updates: Record<string, unknown> = {};
+    deleteIds.forEach((id) => {
+        updates[`${basePath}/bookings/${id}`] = null;
+    });
+    normalizedUpserts.forEach((item) => {
+        updates[`${basePath}/bookings/${item.booking.id}`] = item.booking;
+    });
+    deletedBefore.forEach((booking) => {
+        Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
+    });
+    normalizedUpserts.forEach((item) => {
+        const before = beforeById.get(item.booking.id) || null;
+        Object.assign(updates, buildBookingIndexDiff(basePath, before, item.booking));
+    });
+
+    await trackedUpdateRootWithBookingIndexFallback(updates, {
+        operation: 'save-booking-group',
+        upsertCount: normalizedUpserts.length,
+        deleteCount: deleteIds.length,
+    });
+
+    CACHE.bookings = Array.from(nextMap.values());
     _dataChangeCallback();
 
     const createdIds: string[] = [];
@@ -1917,8 +2657,8 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
 
     deletedBefore.forEach((booking) => {
         deletedIds.push(booking.id);
-        if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
-            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
+        if (booking.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, {
                 source,
                 staffId: options.staffId,
                 suppressLog: true,
@@ -1977,7 +2717,7 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         updatedIds.push(booking.id);
         const roomChanged = before.roomId !== booking.roomId;
         if (roomChanged && before.status === BookingStatus.CHECKED_IN) {
-            _updateRoomStatus(before.roomId, RoomStatus.VACANT_CLEAN, {
+            _updateRoomStatus(before.roomId, RoomStatus.VACANT_DIRTY, {
                 source,
                 staffId: options.staffId,
                 suppressLog: true,
@@ -1996,15 +2736,15 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
                     staffId: options.staffId,
                     suppressLog: true,
                 });
-            } else if (booking.status === BookingStatus.CANCELLED) {
-                _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
-                    source,
-                    staffId: options.staffId,
-                    suppressLog: true,
-                });
             }
         } else if (roomChanged && booking.status === BookingStatus.CHECKED_IN) {
             _updateRoomStatus(booking.roomId, RoomStatus.OCCUPIED, {
+                source,
+                staffId: options.staffId,
+                suppressLog: true,
+            });
+        } else if (roomChanged && booking.status === BookingStatus.CHECKED_OUT) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, {
                 source,
                 staffId: options.staffId,
                 suppressLog: true,
@@ -2046,6 +2786,21 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         });
     }
 
+    await _syncRoomStatusesForRooms(
+        Array.from(
+            new Set(
+                [
+                    ...deletedBefore.map((booking) => booking.roomId),
+                    ...Array.from(beforeById.values())
+                        .filter(Boolean)
+                        .map((booking) => (booking as Booking).roomId),
+                    ...normalizedUpserts.map((item) => item.booking.roomId),
+                ].filter(Boolean)
+            )
+        ),
+        { source, staffId: options.staffId, suppressLog: true }
+    );
+
     return { createdIds, updatedIds, deletedIds };
 };
 
@@ -2061,11 +2816,12 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
     const updates: Record<string, any> = {};
     bookingsToDelete.forEach((booking) => {
         updates[`${basePath}/bookings/${booking.id}`] = null;
+        Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
 
-        if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
-            updates[`${basePath}/rooms/${booking.roomId}/status`] = RoomStatus.VACANT_CLEAN;
+        if (booking.status === BookingStatus.CHECKED_IN) {
+            updates[`${basePath}/rooms/${booking.roomId}/status`] = RoomStatus.VACANT_DIRTY;
             CACHE.rooms = CACHE.rooms.map((room) =>
-                room.id === booking.roomId ? { ...room, status: RoomStatus.VACANT_CLEAN } : room
+                room.id === booking.roomId ? { ...room, status: RoomStatus.VACANT_DIRTY } : room
             );
         }
     });
@@ -2073,7 +2829,7 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
     CACHE.bookings = CACHE.bookings.filter((booking) => !ids.includes(booking.id));
     _dataChangeCallback();
 
-    trackedUpdateRoot(updates, { operation: 'hard-delete-bookings' }).catch((error: any) => {
+    trackedUpdateRootWithBookingIndexFallback(updates, { operation: 'hard-delete-bookings' }).catch((error: any) => {
         console.error('Hard delete failed', error);
     });
 
@@ -2126,17 +2882,14 @@ const _resetAllBookings = async () => {
     const deletedIds = CACHE.bookings.map((booking) => booking.id);
     const deletedCount = deletedIds.length;
 
-    const updates: Record<string, any> = {};
-    const newRooms = CACHE.rooms.map((room) => {
-        updates[`${basePath}/rooms/${room.id}/status`] = RoomStatus.VACANT_CLEAN;
-        return { ...room, status: RoomStatus.VACANT_CLEAN };
-    });
+    const updates: Record<string, unknown> = {
+        [`${basePath}/bookings`]: null,
+        [`${basePath}/${BOOKING_INDEX_NODE}`]: null,
+    };
 
-    await trackedRemove(`${basePath}/bookings`, { operation: 'reset-all-bookings' });
-    await trackedUpdateRoot(updates, { operation: 'reset-room-statuses' });
+    await trackedUpdateRootWithBookingIndexFallback(updates, { operation: 'reset-all-bookings', pathCount: 2 });
 
     CACHE.bookings = [];
-    CACHE.rooms = newRooms;
     _dataChangeCallback();
 
     _recordHistory({
@@ -2184,41 +2937,27 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
     if (!basePath) return false;
     await _assertOnlineForMutation('xóa đơn');
 
-    const bookingRef = ref(db, `${basePath}/bookings`);
-    let deletedBooking: Booking | null = null;
+    const deletedBooking = await _fetchBookingById(id);
 
-    const result = await runTransaction(
-        bookingRef,
-        (currentValue) => {
-            deletedBooking = null;
-            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
-            const existing = currentMap[id] as Booking | undefined;
-            if (!existing || existing.status === BookingStatus.DELETED) {
-                return;
-            }
-            deletedBooking = {
-                ...existing,
-                id: existing.id || id,
-            };
-            delete currentMap[id];
-            return currentMap;
-        },
-        { applyLocally: false }
-    );
-    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
-        operation: 'delete-booking',
-        committed: result.committed,
-    });
-
-    if (!result.committed || !deletedBooking) {
+    if (!deletedBooking || deletedBooking.status === BookingStatus.DELETED) {
         return false;
     }
 
-    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    const deleteUpdates: Record<string, unknown> = {
+        [`${basePath}/bookings/${id}`]: null,
+        ...buildBookingIndexDiff(basePath, deletedBooking, null),
+    };
+
+    await trackedUpdateRootWithBookingIndexFallback(deleteUpdates, {
+        operation: 'delete-booking',
+        pathCount: Object.keys(deleteUpdates).length,
+    });
+
+    CACHE.bookings = CACHE.bookings.filter((booking) => booking.id !== id);
     _dataChangeCallback();
 
-    if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(deletedBooking.status)) {
-        _updateRoomStatus(deletedBooking.roomId, RoomStatus.VACANT_CLEAN, {
+    if (deletedBooking.status === BookingStatus.CHECKED_IN) {
+        _updateRoomStatus(deletedBooking.roomId, RoomStatus.VACANT_DIRTY, {
             source,
             staffId,
             suppressLog: true,
@@ -2239,6 +2978,12 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
         source,
         staffId,
         bookingSnapshot: deletedBooking,
+    });
+
+    await _syncRoomStatusesForRooms([deletedBooking.roomId], {
+        source,
+        staffId,
+        suppressLog: true,
     });
 
     return true;
@@ -2262,54 +3007,34 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
     const basePath = getBaseRef();
     if (!basePath) return [] as string[];
 
-    const bookingRef = ref(db, `${basePath}/bookings`);
-    const deletedBookings: Booking[] = [];
-    let rejectReason = '';
-
-    const result = await runTransaction(
-        bookingRef,
-        (currentValue) => {
-            rejectReason = '';
-            deletedBookings.length = 0;
-            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
-
-            for (const id of uniqueIds) {
-                const existing = currentMap[id] as Booking | undefined;
-                if (!existing || existing.status === BookingStatus.DELETED) {
-                    rejectReason = `Đơn ${id} đã bị xóa hoặc không còn tồn tại.`;
-                    return;
-                }
-                deletedBookings.push({
-                    ...existing,
-                    id: existing.id || id,
-                });
-            }
-
-            deletedBookings.forEach((booking) => {
-                delete currentMap[booking.id];
-            });
-
-            return currentMap;
-        },
-        { applyLocally: false }
-    );
-    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
-        operation: 'bulk-delete-bookings',
-        committed: result.committed,
-    });
-
-    if (!result.committed) {
-        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    const deletedBookings = await Promise.all(uniqueIds.map((id) => _fetchBookingById(id)));
+    const invalidIndex = deletedBookings.findIndex((booking) => !booking || booking.status === BookingStatus.DELETED);
+    const invalidId = invalidIndex >= 0 ? uniqueIds[invalidIndex] : null;
+    if (invalidId) {
+        throw new Error(`Đơn ${invalidId} đã bị xóa hoặc không còn tồn tại.`);
     }
 
-    if (deletedBookings.length === 0) return [] as string[];
+    const concreteDeletedBookings = deletedBookings.filter(Boolean) as Booking[];
+    if (concreteDeletedBookings.length === 0) return [] as string[];
 
-    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    const updates: Record<string, unknown> = {};
+    concreteDeletedBookings.forEach((booking) => {
+        updates[`${basePath}/bookings/${booking.id}`] = null;
+        Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
+    });
+
+    await trackedUpdateRootWithBookingIndexFallback(updates, {
+        operation: 'bulk-delete-bookings',
+        bookingCount: concreteDeletedBookings.length,
+    });
+
+    const deletedIdSet = new Set(concreteDeletedBookings.map((booking) => booking.id));
+    CACHE.bookings = CACHE.bookings.filter((booking) => !deletedIdSet.has(booking.id));
     _dataChangeCallback();
 
-    deletedBookings.forEach((booking) => {
-        if ([BookingStatus.CHECKED_IN, BookingStatus.CONFIRMED].includes(booking.status)) {
-            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_CLEAN, {
+    concreteDeletedBookings.forEach((booking) => {
+        if (booking.status === BookingStatus.CHECKED_IN) {
+            _updateRoomStatus(booking.roomId, RoomStatus.VACANT_DIRTY, {
                 source,
                 staffId,
                 suppressLog: true,
@@ -2333,14 +3058,14 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
         });
     });
 
-    if (deletedBookings.length > 1) {
+    if (concreteDeletedBookings.length > 1) {
         _recordHistory({
             action: 'BULK_DELETE',
             entityType: 'BOOKING',
-            description: `Xóa hàng loạt ${deletedBookings.length} đơn đặt phòng`,
+            description: `Xóa hàng loạt ${concreteDeletedBookings.length} đơn đặt phòng`,
             metadata: {
-                count: deletedBookings.length,
-                bookingIds: deletedBookings.map((booking) => booking.id),
+                count: concreteDeletedBookings.length,
+                bookingIds: concreteDeletedBookings.map((booking) => booking.id),
                 operationName: 'Xóa hàng loạt booking',
             },
             source,
@@ -2348,7 +3073,12 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
         });
     }
 
-    return deletedBookings.map((booking) => booking.id);
+    await _syncRoomStatusesForRooms(
+        concreteDeletedBookings.map((booking) => booking.roomId),
+        { source, staffId, suppressLog: true }
+    );
+
+    return concreteDeletedBookings.map((booking) => booking.id);
 };
 
 const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
@@ -2586,8 +3316,63 @@ const isExpiredHoldBooking = (booking: Booking, nowMs: number = Date.now()) => {
     return holdUntilMs <= nowMs;
 };
 
+const toDateKey = (input: string | Date) => {
+    const date = typeof input === 'string' ? new Date(input) : input;
+    if (isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getDateKeysBetween = (startInput: string | Date, endInput: string | Date) => {
+    const startDate = typeof startInput === 'string' ? new Date(startInput) : new Date(startInput);
+    const endDate = typeof endInput === 'string' ? new Date(endInput) : new Date(endInput);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return [] as string[];
+
+    const cursor = new Date(startDate);
+    cursor.setHours(0, 0, 0, 0);
+
+    const exclusiveEnd = new Date(endDate.getTime() - 1);
+    if (isNaN(exclusiveEnd.getTime())) return [] as string[];
+    exclusiveEnd.setHours(0, 0, 0, 0);
+
+    const keys: string[] = [];
+    while (cursor.getTime() <= exclusiveEnd.getTime()) {
+        keys.push(toDateKey(cursor));
+        cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return keys;
+};
+
+const buildBookingIndexDiff = (basePath: string, previousBooking: Booking | null, nextBooking: Booking | null) => {
+    const updates: Record<string, unknown> = {};
+    const previousPaths = new Set<string>();
+
+    if (previousBooking) {
+        getDateKeysBetween(previousBooking.checkInDate, previousBooking.checkOutDate).forEach((dateKey) => {
+            previousPaths.add(
+                `${basePath}/${BOOKING_INDEX_NODE}/${previousBooking.propertyId}/${dateKey}/${previousBooking.id}`
+            );
+        });
+    }
+
+    previousPaths.forEach((path) => {
+        updates[path] = null;
+    });
+
+    if (nextBooking) {
+        getDateKeysBetween(nextBooking.checkInDate, nextBooking.checkOutDate).forEach((dateKey) => {
+            updates[`${basePath}/${BOOKING_INDEX_NODE}/${nextBooking.propertyId}/${dateKey}/${nextBooking.id}`] = nextBooking;
+        });
+    }
+
+    return updates;
+};
+
 const isBookingActiveForConflict = (booking: Booking, nowMs: number = Date.now()) => {
-    if (booking.status === BookingStatus.DELETED || booking.status === BookingStatus.CANCELLED) return false;
+    if (booking.status === BookingStatus.DELETED) return false;
     if (isExpiredHoldBooking(booking, nowMs)) return false;
     return true;
 };
@@ -2596,7 +3381,7 @@ const toBookingListFromMap = (rawValue: any): Booking[] => {
     if (!rawValue || typeof rawValue !== 'object') return [];
     return Object.entries(rawValue).reduce<Booking[]>((acc, [key, value]) => {
         if (!value || typeof value !== 'object') return acc;
-        const booking = value as Booking;
+        const booking = normalizeForNode('bookings', value, activeTenantId) as Booking;
         acc.push({ ...booking, id: booking.id || key });
         return acc;
     }, []);
@@ -2656,40 +3441,22 @@ const _cleanupExpiredHoldBookings = async (options: BookingActionOptions = {}) =
     const basePath = getBaseRef();
     if (!basePath) return 0;
 
-    const bookingRef = ref(db, `${basePath}/bookings`);
-    const deletedBookings: Booking[] = [];
+    const deletedBookings = CACHE.bookings.filter((booking) => isExpiredHoldBooking(booking, nowMs));
+    if (deletedBookings.length === 0) return 0;
 
-    const result = await runTransaction(
-        bookingRef,
-        (currentValue) => {
-            deletedBookings.length = 0;
-            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
-            let changed = false;
-
-            Object.entries(currentMap).forEach(([bookingId, rawValue]) => {
-                if (!rawValue || typeof rawValue !== 'object') return;
-                const booking = rawValue as Booking;
-                const normalizedBooking: Booking = { ...booking, id: booking.id || bookingId };
-                if (!isExpiredHoldBooking(normalizedBooking, nowMs)) return;
-
-                delete currentMap[bookingId];
-                deletedBookings.push(normalizedBooking);
-                changed = true;
-            });
-
-            if (!changed) return;
-            return currentMap;
-        },
-        { applyLocally: false }
-    );
-    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
-        operation: 'cleanup-expired-holds',
-        committed: result.committed,
+    const updates: Record<string, unknown> = {};
+    deletedBookings.forEach((booking) => {
+        updates[`${basePath}/bookings/${booking.id}`] = null;
+        Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
     });
 
-    if (!result.committed || deletedBookings.length === 0) return 0;
+    await trackedUpdateRootWithBookingIndexFallback(updates, {
+        operation: 'cleanup-expired-holds',
+        bookingCount: deletedBookings.length,
+    });
 
-    CACHE.bookings = toBookingListFromMap(result.snapshot.val());
+    const deletedIds = new Set(deletedBookings.map((booking) => booking.id));
+    CACHE.bookings = CACHE.bookings.filter((booking) => !deletedIds.has(booking.id));
     _dataChangeCallback();
 
     deletedBookings.forEach((booking) => {
@@ -2753,82 +3520,59 @@ const _saveBookingAtomic = async (
         };
     }
 
-    const bookingRef = ref(db, `${basePath}/bookings`);
     const startMs = new Date(normalizedBooking.checkInDate).getTime();
     const endMs = new Date(normalizedBooking.checkOutDate).getTime();
-    let rejectReason = '';
-    let previousBookingFromCommittedTxn: Booking | null = null;
+    const cachedPreviousBooking = CACHE.bookings.find((item) => item.id === normalizedBooking.id) || null;
+    const remotePreviousBooking = await _fetchBookingByIdRemote(normalizedBooking.id);
+    const previousBookingFromCommittedTxn = remotePreviousBooking || cachedPreviousBooking;
 
-    const result = await runTransaction(
-        bookingRef,
-        (currentValue) => {
-            rejectReason = '';
-            previousBookingFromCommittedTxn = null;
-            const currentMap = currentValue && typeof currentValue === 'object' ? { ...currentValue } : {};
-            const currentBookings = toBookingListFromMap(currentMap);
-            const existingSameId = currentMap[normalizedBooking.id] as Booking | undefined;
-            if (existingSameId && typeof existingSameId === 'object') {
-                previousBookingFromCommittedTxn = {
-                    ...(existingSameId as Booking),
-                    id: (existingSameId as Booking).id || normalizedBooking.id,
-                };
-            }
-
-            if (mode === 'create' && existingSameId) {
-                rejectReason = `Mã đơn ${normalizedBooking.id} đã tồn tại`;
-                return;
-            }
-
-            if (mode === 'update' && (!existingSameId || existingSameId.status === BookingStatus.DELETED)) {
-                rejectReason = missingUpdateMessage;
-                return;
-            }
-
-            const scheduleChanged =
-                mode === 'create' ||
-                existingSameId.roomId !== normalizedBooking.roomId ||
-                existingSameId.checkInDate !== normalizedBooking.checkInDate ||
-                existingSameId.checkOutDate !== normalizedBooking.checkOutDate;
-
-            if (scheduleChanged) {
-                const policyCheck = _validateRoomPolicy(
-                    normalizedBooking.roomId,
-                    normalizedBooking.checkInDate,
-                    normalizedBooking.checkOutDate
-                );
-                if (!policyCheck.valid) {
-                    rejectReason = policyCheck.reason || 'Vi phạm chính sách phòng';
-                    return;
-                }
-
-                const conflict = findBookingConflict(
-                    currentBookings,
-                    normalizedBooking.roomId,
-                    startMs,
-                    endMs,
-                    mode === 'update' ? normalizedBooking.id : undefined
-                );
-                if (conflict) {
-                    rejectReason = `Trùng đơn ${conflict.id}`;
-                    return;
-                }
-            }
-
-            currentMap[normalizedBooking.id] = normalizedBooking;
-            return currentMap;
-        },
-        {
-            applyLocally: false,
-        }
-    );
-    debugFirebaseTraffic('TX:runTransaction', `${basePath}/bookings`, result.snapshot.val(), {
-        operation: mode === 'create' ? 'create-booking' : 'update-booking',
-        committed: result.committed,
-    });
-
-    if (!result.committed) {
-        throw new Error(rejectReason || 'Dữ liệu vừa thay đổi bởi người dùng khác. Vui lòng thử lại.');
+    if (mode === 'create' && previousBookingFromCommittedTxn) {
+        throw new Error(`Mã đơn ${normalizedBooking.id} đã tồn tại`);
     }
+
+    if (mode === 'update' && (!previousBookingFromCommittedTxn || previousBookingFromCommittedTxn.status === BookingStatus.DELETED)) {
+        throw new Error(missingUpdateMessage);
+    }
+
+    const scheduleChanged =
+        mode === 'create' ||
+        !previousBookingFromCommittedTxn ||
+        previousBookingFromCommittedTxn.roomId !== normalizedBooking.roomId ||
+        previousBookingFromCommittedTxn.checkInDate !== normalizedBooking.checkInDate ||
+        previousBookingFromCommittedTxn.checkOutDate !== normalizedBooking.checkOutDate;
+
+    if (scheduleChanged) {
+        const policyCheck = _validateRoomPolicy(
+            normalizedBooking.roomId,
+            normalizedBooking.checkInDate,
+            normalizedBooking.checkOutDate
+        );
+        if (!policyCheck.valid) {
+            throw new Error(policyCheck.reason || 'Vi phạm chính sách phòng');
+        }
+
+        const propertyBookings = await _fetchBookingsForProperties([normalizedBooking.propertyId]);
+        const conflict = findBookingConflict(
+            propertyBookings,
+            normalizedBooking.roomId,
+            startMs,
+            endMs,
+            mode === 'update' ? normalizedBooking.id : undefined
+        );
+        if (conflict) {
+            throw new Error(`Trùng đơn ${conflict.id}`);
+        }
+    }
+
+    const updates: Record<string, unknown> = {
+        [`${basePath}/bookings/${normalizedBooking.id}`]: normalizedBooking,
+        ...buildBookingIndexDiff(basePath, previousBookingFromCommittedTxn, normalizedBooking as Booking),
+    };
+
+    await trackedUpdateRootWithBookingIndexFallback(updates, {
+        operation: mode === 'create' ? 'create-booking' : 'update-booking',
+        pathCount: Object.keys(updates).length,
+    });
 
     const cacheIndex = CACHE.bookings.findIndex((item) => item.id === normalizedBooking.id);
     if (cacheIndex > -1) CACHE.bookings[cacheIndex] = normalizedBooking as Booking;
@@ -3066,12 +3810,49 @@ export const DataService = {
     getSystemUsers: () => CACHE.systemUsers,
     getProperties: () => [...CACHE.properties].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)),
     getRoomTypes: () => [...CACHE.roomTypes].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)),
+    loadRoomsForProperties: (propertyIds?: string[]) => _loadRoomsForProperties(propertyIds),
+    loadRoomsForPropertiesView: (propertyIds?: string[]) => _loadRoomsForPropertiesView(propertyIds),
+    subscribeRoomsForProperties: (
+        propertyIds: string[] | undefined,
+        callback: (rows: Room[]) => void,
+        errorCallback?: (error: unknown) => void
+    ) => _subscribeRoomsForProperties(propertyIds, callback, errorCallback),
+    subscribeRoomsForPropertiesView: (
+        propertyIds: string[] | undefined,
+        callback: (rows: Room[]) => void,
+        errorCallback?: (error: unknown) => void
+    ) => _subscribeRoomsForPropertiesView(propertyIds, callback, errorCallback),
     getRooms: (propertyId?: string) => {
         let rooms = [...CACHE.rooms];
         if (propertyId) rooms = rooms.filter((room) => room.propertyId === propertyId);
         return rooms.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
     },
     getRoomPolicies: () => CACHE.roomPolicies,
+    loadBookingsForProperties: (propertyIds?: string[]) => _loadBookingsForProperties(propertyIds),
+    loadBookingsForPropertiesView: (propertyIds?: string[]) => _loadBookingsForPropertiesView(propertyIds),
+    subscribeBookingsForProperties: (
+        propertyIds: string[] | undefined,
+        callback: (rows: Booking[]) => void,
+        errorCallback?: (error: unknown) => void
+    ) => _subscribeBookingsForProperties(propertyIds, callback, errorCallback),
+    subscribeBookingsForPropertiesView: (
+        propertyIds: string[] | undefined,
+        callback: (rows: Booking[]) => void,
+        errorCallback?: (error: unknown) => void
+    ) => _subscribeBookingsForPropertiesView(propertyIds, callback, errorCallback),
+    fetchOperationalBookings: (propertyId: string, start: string, end: string, paddingDays?: number) =>
+        _fetchOperationalBookings(propertyId, start, end, paddingDays),
+    fetchOperationalBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string, paddingDays?: number) =>
+        _fetchOperationalBookingsForProperties(propertyIds, start, end, paddingDays),
+    subscribeOperationalBookings: (
+        propertyIds: string[] | undefined,
+        start: string,
+        end: string,
+        callback: (rows: Booking[]) => void,
+        errorCallback?: (error: unknown) => void,
+        paddingDays?: number
+    ) => _subscribeOperationalBookings(propertyIds, start, end, callback, errorCallback, paddingDays),
+    fetchBookingById: (bookingId: string) => _fetchBookingById(bookingId),
     getBookings: (propertyId?: string) => {
         const nowMs = Date.now();
         if (nowMs - lastHoldCleanupAttemptMs > HOLD_CLEANUP_THROTTLE_MS) {
@@ -3083,7 +3864,10 @@ export const DataService = {
 
         let bookings = CACHE.bookings.filter(
             (booking) => booking.status !== BookingStatus.DELETED && !isExpiredHoldBooking(booking, nowMs)
-        );
+        ).map((booking) => {
+            const derivedStatus = deriveBookingStatus(booking, nowMs);
+            return booking.status === derivedStatus ? booking : { ...booking, status: derivedStatus };
+        });
         if (propertyId) bookings = bookings.filter((booking) => booking.propertyId === propertyId);
         return bookings;
     },
@@ -3093,6 +3877,14 @@ export const DataService = {
     getTransactionCategories: () => CACHE.transactionCategories,
     getHistory: () => CACHE.history,
     fetchRecentHistory: (limit?: number, tenantId?: string | null) => _fetchRecentHistory(limit, tenantId),
+    validateRoomAvailabilityRemote: (
+        propertyId: string,
+        roomId: string,
+        start: string,
+        end: string,
+        excludeId?: string
+    ) => _validateRoomAvailabilityRemote(propertyId, roomId, start, end, excludeId),
+    syncOperationalStatuses: (options?: BookingActionOptions) => _syncOperationalStatuses(options),
 
     saveTenants: (list: Tenant[]) => _saveAuditedList('tenants', list),
     deleteTenant: _deleteTenant,

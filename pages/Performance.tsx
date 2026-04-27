@@ -12,6 +12,7 @@ import {
     Sparkles,
     TrendingUp,
 } from 'lucide-react';
+import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import {
     Bar,
     CartesianGrid,
@@ -23,6 +24,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { deriveBookingStatus } from '../utils/bookingState';
 
 interface PerformanceProps {
     bookings: Booking[];
@@ -485,13 +487,14 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
     };
 
     const passesCommonFilters = (booking: Booking) => {
-        if (booking.status === BookingStatus.DELETED) return false;
-        if (booking.isHold) return false;
-        if (selectedStatus === 'ALL' && booking.status === BookingStatus.PENDING) return false;
-        if (selectedStatus === 'ALL' && booking.status === BookingStatus.CANCELLED) return false;
+        const room = roomById.get(booking.roomId);
+        const effectiveStatus = deriveBookingStatus(booking);
+        if (effectiveStatus === BookingStatus.DELETED) return false;
+        if (!room || isArchiveBucketRoom(room)) return false;
+        if (effectiveStatus === BookingStatus.HOLD) return false;
         if (selectedPropertyId !== 'ALL' && booking.propertyId !== selectedPropertyId) return false;
         if (selectedRoomId !== 'ALL' && booking.roomId !== selectedRoomId) return false;
-        if (selectedStatus !== 'ALL' && booking.status !== selectedStatus) return false;
+        if (selectedStatus !== 'ALL' && effectiveStatus !== selectedStatus) return false;
         return true;
     };
 
@@ -1169,11 +1172,10 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                             className="mt-1 w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                         >
                             <option value="ALL">Tất cả trạng thái</option>
-                            <option value={BookingStatus.PENDING}>PENDING</option>
+                            <option value={BookingStatus.HOLD}>HOLD</option>
                             <option value={BookingStatus.CONFIRMED}>CONFIRMED</option>
                             <option value={BookingStatus.CHECKED_IN}>CHECKED_IN</option>
                             <option value={BookingStatus.CHECKED_OUT}>CHECKED_OUT</option>
-                            <option value={BookingStatus.CANCELLED}>CANCELLED</option>
                         </select>
                     </label>
 

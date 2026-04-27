@@ -1,12 +1,16 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { DollarSign, BedDouble, CalendarCheck, TrendingUp, Filter, CreditCard, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
-import { Booking, BookingStatus, Room } from '../types';
+import { DollarSign, BedDouble, CalendarCheck, Filter, CreditCard, ArrowUpCircle, ArrowDownCircle, Building2, Info } from 'lucide-react';
+import { Booking, BookingStatus, Room, Property } from '../types';
+import { isArchiveBucketRoom } from '../utils/roomBuckets';
+import { deriveBookingStatus } from '../utils/bookingState';
 
 interface DashboardProps {
   bookings: Booking[];
   rooms: Room[];
+  properties: Property[];
+  currentPropertyId: string;
 }
 
 type DatePreset = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_30_DAYS' | 'THIS_QUARTER' | 'LAST_QUARTER' | 'THIS_YEAR' | 'LAST_YEAR' | 'CUSTOM';
@@ -51,11 +55,91 @@ const CustomizedDot = (props: any) => {
     );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
+const startOfLocalDay = (input: string | Date) => {
+    const date = typeof input === 'string' ? new Date(input) : new Date(input);
+    date.setHours(0, 0, 0, 0);
+    return date;
+};
+
+const getLocalDateKey = (input: string | Date) => {
+    const date = typeof input === 'string' ? new Date(input) : new Date(input);
+    if (isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getMonthKey = (input: string | Date) => {
+    const date = typeof input === 'string' ? new Date(input) : new Date(input);
+    if (isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, '0')}`;
+};
+
+const getMonthLabel = (monthKey: string) => {
+    const [year, month] = monthKey.split('-');
+    return month && year ? `${month}/${year}` : monthKey;
+};
+
+const aggregateBookingMoney = (source: Booking[], nowMs: number) => {
+    const grouped = new Map<string, Booking[]>();
+    const singles: Booking[] = [];
+
+    source.forEach((booking) => {
+        if (deriveBookingStatus(booking, nowMs) === BookingStatus.DELETED) return;
+        if (booking.groupId) {
+            const list = grouped.get(booking.groupId) || [];
+            list.push(booking);
+            grouped.set(booking.groupId, list);
+            return;
+        }
+        singles.push(booking);
+    });
+
+    const records = singles.map((booking) => ({
+        id: booking.id,
+        totalBill: Number(booking.totalPrice) || 0,
+        paid: Number(booking.paidAmount) || 0,
+    }));
+
+    grouped.forEach((members, groupId) => {
+        const sorted = [...members].sort((left, right) => left.id.localeCompare(right.id));
+        records.push({
+            id: groupId,
+            totalBill: sorted.reduce((sum, booking) => sum + (Number(booking.totalPrice) || 0), 0),
+            paid: sorted.reduce((sum, booking) => sum + (Number(booking.paidAmount) || 0), 0),
+        });
+    });
+
+    return {
+        count: records.length,
+        totalBill: records.reduce((sum, record) => sum + record.totalBill, 0),
+        paid: records.reduce((sum, record) => sum + record.paid, 0),
+        debt: records.reduce((sum, record) => sum + Math.max(record.totalBill - record.paid, 0), 0),
+    };
+};
+
+const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, currentPropertyId }) => {
   // --- Filter State ---
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+      const timer = window.setInterval(() => {
+          setNowMs(Date.now());
+      }, 30_000);
+
+      return () => {
+          window.clearInterval(timer);
+      };
+  }, []);
+
+  const currentPropertyName = useMemo(() => {
+      if (currentPropertyId === 'ALL') return `Toàn bộ chi nhánh (${properties.length})`;
+      return properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
+  }, [currentPropertyId, properties]);
 
   // --- Date Logic ---
   useEffect(() => {
@@ -112,17 +196,50 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       return d >= s.getTime() && d <= e.getTime();
   };
 
+  const dateRangeInfo = useMemo(() => {
+      if (!startDate || !endDate) {
+          return { valid: false, message: 'Vui lòng chọn đủ ngày bắt đầu và ngày kết thúc.', days: 0 };
+      }
+      const start = startOfLocalDay(startDate);
+      const end = startOfLocalDay(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return { valid: false, message: 'Khoảng ngày không hợp lệ.', days: 0 };
+      }
+      if (start.getTime() > end.getTime()) {
+          return { valid: false, message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.', days: 0 };
+      }
+      const oneDay = 24 * 60 * 60 * 1000;
+      return {
+          valid: true,
+          message: '',
+          days: Math.floor((end.getTime() - start.getTime()) / oneDay) + 1,
+      };
+  }, [startDate, endDate]);
+
+  const roomById = useMemo(() => {
+      const map = new Map<string, Room>();
+      rooms.forEach((room) => {
+          if (!isArchiveBucketRoom(room)) map.set(room.id, room);
+      });
+      return map;
+  }, [rooms]);
+
   // --- INTEGRITY CHECK ---
   // Chỉ tính booking thật sự vận hành doanh thu/công suất.
-  // Loại: DELETED, CANCELLED, PENDING/giữ cọc và booking phòng không còn tồn tại.
+  // Loại: DELETED, HOLD/giữ phòng và booking phòng không còn tồn tại.
   const isOperationalBooking = (booking: Booking) => {
-      if (!rooms.some((room) => room.id === booking.roomId)) return false;
-      if (booking.status === BookingStatus.DELETED) return false;
-      if (booking.status === BookingStatus.CANCELLED) return false;
-      if (booking.status === BookingStatus.PENDING) return false;
+      const room = roomById.get(booking.roomId);
+      if (!room) return false;
+      const effectiveStatus = deriveBookingStatus(booking, nowMs);
+      if (effectiveStatus === BookingStatus.DELETED) return false;
+      if (effectiveStatus === BookingStatus.HOLD) return false;
       if (booking.isHold) return false;
       return true;
   };
+  const operationalRooms = useMemo(
+      () => rooms.filter((room) => !isArchiveBucketRoom(room)),
+      [rooms]
+  );
 
   // --- Helper: Format Currency ---
   const formatVND = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
@@ -138,142 +255,142 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
   // 1. STATS: CHECKED-OUT (Khách đã trả phòng)
   // ==========================================
   const checkoutStats = useMemo(() => {
+      if (!dateRangeInfo.valid) {
+          return { count: 0, totalBill: 0, paid: 0, debt: 0, totalNights: 0 };
+      }
       const filtered = bookings.filter(b => 
           isOperationalBooking(b) &&
-          b.status === BookingStatus.CHECKED_OUT && 
+          deriveBookingStatus(b, nowMs) === BookingStatus.CHECKED_OUT && 
           isInRange(b.checkOutDate)
       );
 
       return {
-          count: filtered.length,
-          totalBill: filtered.reduce((sum, b) => sum + b.totalPrice, 0),
-          paid: filtered.reduce((sum, b) => sum + b.paidAmount, 0),
-          debt: filtered.reduce((sum, b) => sum + (b.totalPrice - b.paidAmount), 0),
+          ...aggregateBookingMoney(filtered, nowMs),
           totalNights: filtered.reduce((sum, b) => {
-              const start = new Date(b.checkInDate).getTime();
-              const end = new Date(b.checkOutDate).getTime();
+              const start = startOfLocalDay(b.checkInDate).getTime();
+              const end = startOfLocalDay(b.checkOutDate).getTime();
               const nights = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
               return sum + nights;
           }, 0)
       };
-  }, [bookings, rooms, startDate, endDate]);
+  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid]);
 
 
   // ==========================================
   // 2. STATS: CREATED / PHÁT SINH (Đơn mới)
   // ==========================================
   const createdStats = useMemo(() => {
+      if (!dateRangeInfo.valid) {
+          return { count: 0, totalBill: 0, paid: 0, debt: 0 };
+      }
       const filtered = bookings.filter(b => 
           isOperationalBooking(b) &&
           isInRange(b.createdAt)
       );
 
-      return {
-          count: filtered.length,
-          totalBill: filtered.reduce((sum, b) => sum + b.totalPrice, 0),
-          paid: filtered.reduce((sum, b) => sum + b.paidAmount, 0),
-          debt: filtered.reduce((sum, b) => sum + (b.totalPrice - b.paidAmount), 0)
-      };
-  }, [bookings, rooms, startDate, endDate]);
+      return aggregateBookingMoney(filtered, nowMs);
+  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid]);
 
 
   // ==========================================
   // 3. STATS: OCCUPANCY (OCC%) & ADR
   // ==========================================
   const performanceStats = useMemo(() => {
-      if (!startDate || !endDate || rooms.length === 0) return { occ: 0, adr: 0, occupiedInventory: 0, totalInventory: 0 };
+      if (!dateRangeInfo.valid || operationalRooms.length === 0) return { occ: 0, adr: 0, occupiedInventory: 0, totalInventory: 0 };
 
-      // Parse start and end dates strictly
-      const start = new Date(startDate); start.setHours(0,0,0,0);
-      const end = new Date(endDate); end.setHours(23,59,59,999);
+      const start = startOfLocalDay(startDate);
       
       const oneDay = 24 * 60 * 60 * 1000;
-      // Total days in the filter range
-      const daysDiff = Math.floor((end.getTime() - start.getTime()) / oneDay) + 1;
+      const daysDiff = dateRangeInfo.days;
       
       // 1. Total Inventory (Tổng quỹ phòng khả dụng)
-      const totalInventory = rooms.length * daysDiff;
+      const totalInventory = operationalRooms.length * daysDiff;
 
-      // 2. Occupied Inventory (Số đêm đã bán - The Seat Rule)
+      // 2. Occupied Inventory: tính đêm ở từ ngày nhận đến trước ngày trả.
       let occupiedInventory = 0;
+      const bookingsWithSoldNight = new Set<string>();
       
       for (let i = 0; i < daysDiff; i++) {
-          // Define the specific day range (00:00 to 23:59:59)
           const currentDayStart = new Date(start.getTime() + i * oneDay);
-          const currentDayEnd = new Date(currentDayStart);
-          currentDayEnd.setHours(23, 59, 59, 999);
           
           const occupiedRoomsOnThisDay = new Set<string>();
 
           bookings.forEach(b => {
              if (!isOperationalBooking(b)) return;
              
-             const bStart = new Date(b.checkInDate).getTime();
-             const bEnd = new Date(b.checkOutDate).getTime();
+             const bookingStartDay = startOfLocalDay(b.checkInDate).getTime();
+             const bookingEndDay = startOfLocalDay(b.checkOutDate).getTime();
 
-             // Check Intersection: [BookingStart, BookingEnd] intersects with [DayStart, DayEnd]
-             // Logic: Booking Starts BEFORE Day Ends AND Booking Ends AFTER Day Starts
-             if (bStart < currentDayEnd.getTime() && bEnd > currentDayStart.getTime()) {
+             if (bookingStartDay <= currentDayStart.getTime() && bookingEndDay > currentDayStart.getTime()) {
                  occupiedRoomsOnThisDay.add(b.roomId);
+                 bookingsWithSoldNight.add(b.id);
              }
           });
           
-          // Add unique rooms occupied this day to the total sold nights
           occupiedInventory += occupiedRoomsOnThisDay.size;
       }
 
-      // 3. OCC % Calculation
       const occ = totalInventory > 0 ? Math.min(100, Math.round((occupiedInventory / totalInventory) * 100)) : 0;
-      
-      // 4. ADR Calculation
-      // ADR = Total Real Revenue (Checked-out bookings) / Total Sold Nights (Seat Rule)
-      const totalRevenue = checkoutStats.totalBill;
+      const soldNightBookings = bookings.filter((booking) => bookingsWithSoldNight.has(booking.id));
+      const totalRevenue = aggregateBookingMoney(soldNightBookings, nowMs).totalBill;
       const adr = occupiedInventory > 0 ? Math.round(totalRevenue / occupiedInventory) : 0;
 
       return { occ, adr, occupiedInventory, totalInventory };
-  }, [bookings, rooms, startDate, endDate, checkoutStats]);
+  }, [bookings, operationalRooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid, dateRangeInfo.days]);
 
 
   // ==========================================
   // 4. CHART DATA: DAILY REVENUE (Line Chart)
   // ==========================================
-  const { chartData, maxVal, minVal } = useMemo(() => {
-    if (!startDate || !endDate) return { chartData: [], maxVal: 0, minVal: 0 };
+  const { chartData, maxVal, minVal, chartGranularity } = useMemo(() => {
+    if (!dateRangeInfo.valid) return { chartData: [], maxVal: 0, minVal: 0, chartGranularity: 'DAY' as const };
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = startOfLocalDay(startDate);
+    const end = startOfLocalDay(endDate);
+    const shouldGroupByMonth = dateRangeInfo.days > 45;
     const days = [];
     
-    // Generate dates
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         days.push(new Date(d));
     }
 
-    const data = days.map(day => {
-        const dayStr = day.toISOString().split('T')[0];
-        // Filter bookings CHECKED_OUT on this specific day
-        const dayBookings = bookings.filter(b => 
+    const checkoutBookings = bookings.filter(b => 
             isOperationalBooking(b) &&
-            b.status === BookingStatus.CHECKED_OUT && 
-            b.checkOutDate.startsWith(dayStr)
-        );
+            deriveBookingStatus(b, nowMs) === BookingStatus.CHECKED_OUT && 
+            isInRange(b.checkOutDate)
+    );
 
-        const total = dayBookings.reduce((sum, b) => sum + b.totalPrice, 0);
-        const paid = dayBookings.reduce((sum, b) => sum + b.paidAmount, 0);
+    const data = shouldGroupByMonth
+        ? Array.from(new Set(days.map((day) => getMonthKey(day)))).map((monthKey) => {
+            const monthBookings = checkoutBookings.filter((booking) => getMonthKey(booking.checkOutDate) === monthKey);
+            const totals = aggregateBookingMoney(monthBookings, nowMs);
+            return {
+                dateStr: monthKey,
+                name: getMonthLabel(monthKey),
+                totalBill: totals.totalBill,
+                paidAmount: totals.paid,
+            };
+        })
+        : days.map(day => {
+            const dayStr = getLocalDateKey(day);
+            const dayBookings = checkoutBookings.filter((booking) => getLocalDateKey(booking.checkOutDate) === dayStr);
+            const totals = aggregateBookingMoney(dayBookings, nowMs);
 
-        return {
-            dateStr: dayStr,
-            name: `${day.getDate()}/${day.getMonth() + 1}`,
-            totalBill: total,
-            paidAmount: paid
-        };
-    });
+            return {
+                dateStr: dayStr,
+                name: `${day.getDate()}/${day.getMonth() + 1}`,
+                totalBill: totals.totalBill,
+                paidAmount: totals.paid,
+            };
+        });
+
+    if (data.length === 0) return { chartData: [], maxVal: 0, minVal: 0, chartGranularity: shouldGroupByMonth ? 'MONTH' as const : 'DAY' as const };
 
     const max = Math.max(...data.map(d => d.totalBill));
     const min = Math.min(...data.map(d => d.totalBill));
 
-    return { chartData: data, maxVal: max, minVal: min };
-  }, [bookings, rooms, startDate, endDate]);
+    return { chartData: data, maxVal: max, minVal: min, chartGranularity: shouldGroupByMonth ? 'MONTH' as const : 'DAY' as const };
+  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid, dateRangeInfo.days]);
 
 
   return (
@@ -281,7 +398,13 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
               <h2 className="text-xl md:text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
-              <p className="text-gray-500 text-xs md:text-sm">Thống kê chi tiết theo thời gian thực</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
+                      <Building2 size={12} />
+                      Đang xem: {currentPropertyName}
+                  </span>
+                  <span className="text-gray-500 text-xs md:text-sm">Số liệu cập nhật theo dữ liệu đã tải và khoảng thời gian đang lọc.</span>
+              </div>
           </div>
           
           {/* FILTER BAR */}
@@ -320,6 +443,24 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
              </div>
           </div>
       </div>
+
+      {!dateRangeInfo.valid && (
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {dateRangeInfo.message}
+          </div>
+      )}
+
+      {dateRangeInfo.valid && operationalRooms.length === 0 && (
+          <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+              Không có phòng vận hành trong phạm vi chi nhánh hiện tại.
+          </div>
+      )}
+
+      {dateRangeInfo.valid && operationalRooms.length > 0 && bookings.length === 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600">
+              Chưa có đơn đặt phòng trong phạm vi dữ liệu hiện tại. Các chỉ số tiền và biểu đồ sẽ hiển thị 0.
+          </div>
+      )}
 
       {/* STATS GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
@@ -394,7 +535,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
                  <h3 className="text-xl md:text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
                     Hiệu suất
                  </h3>
-                 <p className="text-[13px] font-medium text-gray-400 mt-1">Chỉ số vận hành 24h</p>
+                 <p className="text-[13px] font-medium text-gray-400 mt-1">Theo khoảng thời gian đang lọc</p>
              </div>
 
              <div className="p-4 md:p-6 pt-2 grid grid-cols-2 gap-4 md:gap-5 h-full">
@@ -436,9 +577,9 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms }) => {
       <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 w-full overflow-hidden">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <div>
-                  <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">Biểu đồ doanh thu thực tế</h3>
+                  <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">Biểu đồ tổng bill và tiền đã trả</h3>
                   <p className="text-xs md:text-sm text-gray-500 mt-1">
-                      Thống kê theo ngày khách trả phòng (Check-out)
+                      Thống kê theo {chartGranularity === 'MONTH' ? 'tháng' : 'ngày'} khách trả phòng (Check-out)
                   </p>
               </div>
               <div className="flex gap-4 text-xs font-medium bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 w-full md:w-auto justify-between md:justify-start">

@@ -3,6 +3,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
 import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { isArchiveBucketRoom } from '../utils/roomBuckets';
+import { deriveBookingStatus } from '../utils/bookingState';
 
 interface ReportsProps {
   bookings: Booking[];
@@ -11,6 +13,7 @@ interface ReportsProps {
   roomTypes: RoomType[];
   properties: Property[];
   tags: Tag[];
+  currentPropertyId: string;
   currentUser: User; // Need full user for permissions
 }
 
@@ -32,7 +35,7 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags, currentUser }) => {
+const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags, currentPropertyId, currentUser }) => {
   const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
   
   // Filter States
@@ -44,6 +47,35 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
 
   const canExport = currentUser.permissions?.includes(PERMISSIONS.CAN_EXPORT_REPORT);
+  const visiblePropertyIds = useMemo(() => {
+      const allowedIds = currentUser?.allowedPropertyIds || [];
+      const hasRestrictions = allowedIds.length > 0;
+      return (hasRestrictions ? properties.filter((p) => allowedIds.includes(p.id)) : properties).map(
+          (property) => property.id
+      );
+  }, [currentUser?.allowedPropertyIds, properties]);
+
+  const targetPropertyIds = useMemo(() => {
+      if (currentPropertyId && currentPropertyId !== 'ALL') return [currentPropertyId];
+      return visiblePropertyIds;
+  }, [currentPropertyId, visiblePropertyIds]);
+
+  const targetPropertySet = useMemo(() => new Set(targetPropertyIds), [targetPropertyIds]);
+
+  const reportRooms = useMemo(() => {
+      return rooms
+          .filter((room) => !isArchiveBucketRoom(room))
+          .filter((room) => targetPropertySet.has(room.propertyId))
+          .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  }, [rooms, targetPropertySet]);
+
+  const reportRoomIds = useMemo(() => new Set(reportRooms.map((room) => room.id)), [reportRooms]);
+
+  const reportBookings = useMemo(() => {
+      return bookings
+          .filter((booking) => targetPropertySet.has(booking.propertyId))
+          .filter((booking) => reportRoomIds.has(booking.roomId));
+  }, [bookings, targetPropertySet, reportRoomIds]);
 
   // --- Date Logic Helpers ---
   const getRange = (preset: DatePreset): { start: Date, end: Date } | null => {
@@ -174,8 +206,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  const getFullBookingData = (b: Booking) => {
-      const room = rooms.find(r => r.id === b.roomId);
+  const getFullBookingData = (b: Booking, aggregationSource: Booking[] = reportBookings) => {
+      const room = reportRooms.find(r => r.id === b.roomId);
       const user = users.find(u => u.id === b.createdBy);
       const type = roomTypes.find(t => t.id === room?.typeId);
       const property = properties.find(p => p.id === b.propertyId);
@@ -195,7 +227,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
 
       if (b.groupId) {
           // 1. Tìm tất cả các phòng trong đoàn
-          const groupMembers = bookings.filter(x => x.groupId === b.groupId && x.status !== BookingStatus.DELETED);
+          const groupMembers = aggregationSource.filter(x => x.groupId === b.groupId && deriveBookingStatus(x) !== BookingStatus.DELETED);
           
           // 2. Sắp xếp để tìm "Leader"
           groupMembers.sort((x, y) => x.id.localeCompare(y.id));
@@ -257,7 +289,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           
           // Raw object for table color logic and sorting
           _debtRaw: debt,
-          _status: b.status,
+          _status: deriveBookingStatus(b),
           _checkOutDate: new Date(b.checkOutDate),
           _checkInDate: new Date(b.checkInDate),
           _createdAt: new Date(b.createdAt),
@@ -276,8 +308,9 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // --- INTEGRITY CHECK ---
   // Only allow bookings where Room, RoomType AND Property still exist
   const isValidLinkage = (b: Booking) => {
-      const room = rooms.find(r => r.id === b.roomId);
+      const room = reportRooms.find(r => r.id === b.roomId);
       if (!room) return false; // Room deleted
+      if (isArchiveBucketRoom(room)) return false;
 
       const type = roomTypes.find(t => t.id === room.typeId);
       if (!type) return false; // Type deleted
@@ -291,11 +324,13 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // --- 1. Revenue Report (Báo cáo doanh thu phòng) ---
   // Criteria: Booking has ended (CHECKED_OUT) AND checkOutDate is within range
   const revenueData = useMemo(() => {
-      let data = bookings
+      const eligibleBookings = reportBookings
         .filter(isValidLinkage) // <-- Apply Orphan Filter
-        .filter(b => b.status === BookingStatus.CHECKED_OUT)
-        .filter(b => filterDateRange(new Date(b.checkOutDate))) // Filter by Checkout Time
-        .map(getFullBookingData);
+        .filter(b => deriveBookingStatus(b) !== BookingStatus.DELETED)
+        .filter(b => deriveBookingStatus(b) === BookingStatus.CHECKED_OUT)
+        .filter(b => filterDateRange(new Date(b.checkOutDate))); // Filter by Checkout Time
+
+      let data = eligibleBookings.map((booking) => getFullBookingData(booking, eligibleBookings));
 
       if (sortConfig) {
           data.sort((a: any, b: any) => {
@@ -315,7 +350,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           data.sort((a, b) => b._checkOutDate.getTime() - a._checkOutDate.getTime());
       }
       return data;
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
+  }, [reportBookings, reportRooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
   // Total Revenue based on NET REVENUE (Real income)
   const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Doanh thu net"], 0);
@@ -323,10 +358,15 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   // --- 2. Booking Report (Báo cáo đặt phòng phát sinh) ---
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
-      let data = bookings
+      const eligibleBookings = reportBookings
         .filter(isValidLinkage) // <-- Apply Orphan Filter
-        .filter(b => filterDateRange(new Date(b.createdAt))) // Filter by Creation Time
-        .map(getFullBookingData);
+        .filter(b => {
+            const effectiveStatus = deriveBookingStatus(b);
+            return effectiveStatus !== BookingStatus.DELETED && effectiveStatus !== BookingStatus.HOLD;
+        })
+        .filter(b => filterDateRange(new Date(b.createdAt))); // Filter by Creation Time
+
+      let data = eligibleBookings.map((booking) => getFullBookingData(booking, eligibleBookings));
 
       if (sortConfig) {
           data.sort((a: any, b: any) => {
@@ -345,7 +385,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
            data.sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime());
       }
       return data;
-  }, [bookings, rooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
+  }, [reportBookings, reportRooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
 
   const handleExport = (data: any[], fileName: string) => {

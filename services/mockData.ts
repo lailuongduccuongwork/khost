@@ -61,7 +61,7 @@ export const INITIAL_ROOMS: Room[] = [
   { id: 'r102', tenantId: DEFAULT_TENANT_ID, number: '102', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 1 },
   { id: 'r103', tenantId: DEFAULT_TENANT_ID, number: '103', typeId: 'rt1', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 2 },
   { id: 'r201', tenantId: DEFAULT_TENANT_ID, number: '201', typeId: 'rt3', propertyId: 'p1', status: RoomStatus.VACANT_CLEAN, floor: 2, sortOrder: 3 },
-  { id: 'r202', tenantId: DEFAULT_TENANT_ID, number: '202', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.MAINTENANCE, floor: 2, sortOrder: 4 },
+  { id: 'r202', tenantId: DEFAULT_TENANT_ID, number: '202', typeId: 'rt2', propertyId: 'p1', status: RoomStatus.VACANT_DIRTY, floor: 2, sortOrder: 4 },
   // Danang Rooms
   { id: 'r301', tenantId: DEFAULT_TENANT_ID, number: '301', typeId: 'rt2', propertyId: 'p2', status: RoomStatus.VACANT_CLEAN, floor: 3, sortOrder: 0 },
   { id: 'r302', tenantId: DEFAULT_TENANT_ID, number: '302', typeId: 'rt3', propertyId: 'p2', status: RoomStatus.VACANT_CLEAN, floor: 3, sortOrder: 1 },

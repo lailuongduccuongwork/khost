@@ -1,6 +1,6 @@
 import React from 'react';
 import { Room, RoomStatus, RoomType, Booking } from '../types';
-import { CheckCircle, AlertCircle, XCircle, Wrench, User } from 'lucide-react';
+import { CheckCircle, AlertCircle, User } from 'lucide-react';
 
 interface RoomCardProps {
   room: Room;
@@ -19,8 +19,6 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, type, currentBooking, custome
         return { color: 'bg-yellow-100 border-yellow-300', text: 'text-yellow-700', icon: AlertCircle, label: 'Chưa dọn' };
       case RoomStatus.OCCUPIED:
         return { color: 'bg-red-100 border-red-300', text: 'text-red-700', icon: User, label: 'Đang ở' };
-      case RoomStatus.MAINTENANCE:
-        return { color: 'bg-gray-100 border-gray-300', text: 'text-gray-700', icon: Wrench, label: 'Bảo trì' };
       default:
         return { color: 'bg-gray-100 border-gray-200', text: 'text-gray-500', icon: AlertCircle, label: 'Unknown' };
     }

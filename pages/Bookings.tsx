@@ -1,8 +1,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Booking, BookingStatus, Customer, HistoryLog, PERMISSIONS, Property, Room, RoomType, Tag, User } from '../types';
-import { AlertTriangle, ArrowUpDown, CheckCircle, CheckSquare, Clock3, Download, FileUp, Plus, RotateCcw, Search, Square, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, CheckCircle, CheckSquare, Clock3, Download, Eye, FileUp, Plus, RotateCcw, Search, Square, Trash2, X } from 'lucide-react';
 import { DataService } from '../services/dataService';
+import { isArchiveBucketRoom } from '../utils/roomBuckets';
+import { deriveBookingStatus } from '../utils/bookingState';
 
 // Declare XLSX from global scope (loaded via CDN in index.html)
 declare const XLSX: any;
@@ -16,12 +18,18 @@ interface BookingsProps {
   users: User[];
   customers: Customer[];
   onRefresh?: () => void;
+  onCreateBooking?: () => void;
+  onOpenRoomMapBooking?: (booking: Booking) => void;
+  currentPropertyId: string;
+  isScopeLoading?: boolean;
   currentUser: User; // Full user for permissions
 }
 
 type BookingSortField = 'createdAt' | 'checkInDate' | 'checkOutDate';
 type SortDirection = 'asc' | 'desc';
 type HistorySourceFilter = 'ALL' | 'WEB' | 'IMPORT' | 'SYSTEM';
+type BookingStatusFilter = 'ALL' | BookingStatus;
+const BOOKINGS_PER_PAGE = 20;
 
 type BookingHistoryFilters = {
     fromDate: string;
@@ -61,6 +69,38 @@ const toDateTimeWithSecondsLabel = (iso: string) => {
     });
 };
 
+const getBookingStatusLabel = (status: BookingStatus) => {
+    switch (status) {
+        case BookingStatus.HOLD:
+            return 'Giữ chỗ';
+        case BookingStatus.CONFIRMED:
+            return 'Đã xác nhận';
+        case BookingStatus.CHECKED_IN:
+            return 'Đang ở';
+        case BookingStatus.CHECKED_OUT:
+            return 'Đã trả';
+        case BookingStatus.DELETED:
+            return 'Đã xóa';
+        default:
+            return status;
+    }
+};
+
+const getBookingStatusPillClass = (status: BookingStatus) => {
+    switch (status) {
+        case BookingStatus.HOLD:
+            return 'bg-amber-50 text-amber-700 border-amber-200';
+        case BookingStatus.CONFIRMED:
+            return 'bg-blue-50 text-blue-700 border-blue-200';
+        case BookingStatus.CHECKED_IN:
+            return 'bg-red-50 text-red-700 border-red-200';
+        case BookingStatus.CHECKED_OUT:
+            return 'bg-gray-100 text-gray-700 border-gray-200';
+        default:
+            return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+};
+
 const defaultHistoryFilters = (): BookingHistoryFilters => ({
     fromDate: '',
     toDate: '',
@@ -70,6 +110,16 @@ const defaultHistoryFilters = (): BookingHistoryFilters => ({
     actorId: 'ALL',
     source: 'ALL',
 });
+
+const formatDateInputValue = (iso?: string | null) => {
+    if (!iso) return '';
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return '';
+    const year = dt.getFullYear();
+    const month = `${dt.getMonth() + 1}`.padStart(2, '0');
+    const day = `${dt.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 const BRANCH_STOP_WORDS = new Set(['chi', 'nhanh', 'cn', 'co', 'so', 'khost', 'host', 'branch']);
 
@@ -166,11 +216,21 @@ const resolveImportedProperty = (branchName: string, propertyLookup: Map<string,
     return { status: 'MATCHED' as const, property: candidates[0], candidates };
 };
 
-const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, customers, onRefresh, currentUser }) => {
+const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, customers, onRefresh, onCreateBooking, onOpenRoomMapBooking, currentPropertyId, isScopeLoading = false, currentUser }) => {
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [searchTerm, setSearchTerm] = useState('');
+  const [propertyFilter, setPropertyFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<BookingStatusFilter>('ALL');
+  const [roomTypeFilter, setRoomTypeFilter] = useState<string>('ALL');
+  const [roomFilter, setRoomFilter] = useState<string>('ALL');
+  const [fromDateFilter, setFromDateFilter] = useState('');
+  const [toDateFilter, setToDateFilter] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [isHydratingScope, setIsHydratingScope] = useState(false);
   const [sortField, setSortField] = useState<BookingSortField>('checkOutDate');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [currentPageIndex, setCurrentPageIndex] = useState(1);
+  const [detailModalBookingId, setDetailModalBookingId] = useState<string | null>(null);
   const [historyModal, setHistoryModal] = useState<{ isOpen: boolean; bookingId: string | null }>({
       isOpen: false,
       bookingId: null,
@@ -195,6 +255,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
+  const isHeaderScopedToSingleProperty = currentPropertyId !== 'ALL';
+  const currentScopeName = currentPropertyId === 'ALL'
+      ? `Toàn bộ chi nhánh (${properties.length})`
+      : properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
 
   const customerById = useMemo(() => new Map(customers.map(customer => [customer.id, customer])), [customers]);
   const roomById = useMemo(() => new Map(rooms.map(room => [room.id, room])), [rooms]);
@@ -202,6 +266,38 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property.name])), [properties]);
   const tagById = useMemo(() => new Map(tags.map(tag => [tag.id, tag.name])), [tags]);
   const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+
+  useEffect(() => {
+      const timer = window.setInterval(() => {
+          setNowMs(Date.now());
+      }, 30_000);
+
+      return () => {
+          window.clearInterval(timer);
+      };
+  }, []);
+
+  useEffect(() => {
+      setPropertyFilter(currentPropertyId || 'ALL');
+      setRoomFilter('ALL');
+      setIsHydratingScope(true);
+  }, [currentPropertyId]);
+
+  useEffect(() => {
+      if (!isHydratingScope) return;
+      const timer = window.setTimeout(() => setIsHydratingScope(false), 250);
+      return () => window.clearTimeout(timer);
+  }, [bookings, rooms, isHydratingScope]);
+  const visibleRooms = useMemo(() => {
+      return rooms
+          .filter((room) => {
+              if (isArchiveBucketRoom(room)) return false;
+              if (propertyFilter !== 'ALL' && room.propertyId !== propertyFilter) return false;
+              if (roomTypeFilter !== 'ALL' && room.typeId !== roomTypeFilter) return false;
+              return true;
+          })
+          .sort((a, b) => a.number.localeCompare(b.number, 'vi', { numeric: true }));
+  }, [rooms, propertyFilter, roomTypeFilter]);
   const userLookupByImportKey = useMemo(() => {
       const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
       const map = new Map<string, User>();
@@ -216,8 +312,8 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   const getDisplayName = (booking: Booking) =>
       booking.guestName || customerById.get(booking.customerId)?.name || 'Khách lẻ';
 
-  const getRoomNumber = (roomId: string) => roomById.get(roomId)?.number || '--';
-  const getRoomTypeName = (booking: Booking) => roomTypeById.get(roomById.get(booking.roomId)?.typeId || '') || '--';
+  const getRoomNumber = (roomId: string) => roomById.get(roomId)?.number || 'Phòng không xác định';
+  const getRoomTypeName = (booking: Booking) => roomTypeById.get(roomById.get(booking.roomId)?.typeId || '') || 'Không xác định';
   const getPropertyName = (booking: Booking) =>
       propertyById.get(booking.propertyId || roomById.get(booking.roomId)?.propertyId || '') || '--';
   const getCreatorLabel = (booking: Booking) => {
@@ -226,19 +322,86 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       return staff.username || booking.createdBy || '--';
   };
   const getBookingTags = (booking: Booking) => (booking.tags || []).map(tagId => tagById.get(tagId) || tagId);
-  const getFeeTotals = (booking: Booking) => {
-      const feeList = booking.extraFees || [];
-      const extraRevenue = feeList
-          .filter(fee => fee.type === 'REVENUE')
-          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
-      const extraExpense = feeList
-          .filter(fee => fee.type === 'EXPENSE')
-          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
-      const netRevenue = (Number(booking.totalPrice) || 0) + extraRevenue - extraExpense;
-      const paidAmount = Number(booking.paidAmount) || 0;
-      const outstanding = Math.max(netRevenue - paidAmount, 0);
+  const bookingsByGroupId = useMemo(() => {
+      const map = new Map<string, Booking[]>();
+      bookings
+          .filter((booking) => booking.groupId && deriveBookingStatus(booking, nowMs) !== BookingStatus.DELETED)
+          .forEach((booking) => {
+              const groupId = booking.groupId!;
+              if (!map.has(groupId)) map.set(groupId, []);
+              map.get(groupId)!.push(booking);
+          });
 
-      return { extraRevenue, extraExpense, netRevenue, paidAmount, outstanding };
+      map.forEach((groupBookings) => {
+          groupBookings.sort((a, b) => a.id.localeCompare(b.id));
+      });
+
+      return map;
+  }, [bookings, nowMs]);
+
+  const getBookingFinancialSummary = (booking: Booking) => {
+      const ownFees = booking.extraFees || [];
+      const ownExtraRevenue = ownFees
+          .filter((fee) => fee.type === 'REVENUE')
+          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+      const ownExtraExpense = ownFees
+          .filter((fee) => fee.type === 'EXPENSE')
+          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+
+      if (!booking.groupId) {
+          const netRevenue = Number(booking.totalPrice) || 0;
+          const paidAmount = Number(booking.paidAmount) || 0;
+          const totalBill = netRevenue + ownExtraExpense;
+          const outstanding = Math.max(totalBill - paidAmount, 0);
+
+          return {
+              extraRevenue: ownExtraRevenue,
+              extraExpense: ownExtraExpense,
+              netRevenue,
+              totalBill,
+              paidAmount,
+              outstanding,
+              isGroupedChild: false,
+          };
+      }
+
+      const groupBookings = bookingsByGroupId.get(booking.groupId) || [booking];
+      const leader = groupBookings[0];
+      const isLeader = leader?.id === booking.id;
+
+      if (!isLeader) {
+          return {
+              extraRevenue: 0,
+              extraExpense: 0,
+              netRevenue: 0,
+              totalBill: 0,
+              paidAmount: 0,
+              outstanding: 0,
+              isGroupedChild: true,
+          };
+      }
+
+      const leaderFees = leader.extraFees || [];
+      const extraRevenue = leaderFees
+          .filter((fee) => fee.type === 'REVENUE')
+          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+      const extraExpense = leaderFees
+          .filter((fee) => fee.type === 'EXPENSE')
+          .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+      const netRevenue = groupBookings.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
+      const paidAmount = groupBookings.reduce((sum, item) => sum + (Number(item.paidAmount) || 0), 0);
+      const totalBill = netRevenue + extraExpense;
+      const outstanding = Math.max(totalBill - paidAmount, 0);
+
+      return {
+          extraRevenue,
+          extraExpense,
+          netRevenue,
+          totalBill,
+          paidAmount,
+          outstanding,
+          isGroupedChild: false,
+      };
   };
 
   const getRoomContextLabelByIds = (roomId?: string | null, propertyId?: string | null) => {
@@ -316,6 +479,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       if (!historyModal.bookingId) return null;
       return bookings.find((booking) => booking.id === historyModal.bookingId) || null;
   }, [bookings, historyModal.bookingId]);
+  const selectedDetailBooking = useMemo(() => {
+      if (!detailModalBookingId) return null;
+      return bookings.find((booking) => booking.id === detailModalBookingId) || null;
+  }, [bookings, detailModalBookingId]);
 
   useEffect(() => {
       let cancelled = false;
@@ -327,7 +494,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       }
 
       setIsLoadingHistory(true);
-      DataService.fetchRecentHistory(160)
+      DataService.fetchRecentHistory(80)
           .then((logs) => {
               if (!cancelled) {
                   setRecentHistory(logs);
@@ -504,9 +671,26 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
   const filteredBookings = useMemo(() => {
       const term = searchTerm.trim().toLowerCase();
-      if (!term) return bookings.filter(Boolean);
+      const visibleBookings = bookings.filter((booking) => {
+          if (!booking || booking.status === BookingStatus.DELETED) return false;
+          const room = roomById.get(booking.roomId);
+          if (room && isArchiveBucketRoom(room)) return false;
+          const effectiveStatus = deriveBookingStatus(booking, nowMs);
+          if (propertyFilter !== 'ALL' && booking.propertyId !== propertyFilter && room?.propertyId !== propertyFilter) return false;
+          if (statusFilter !== 'ALL' && effectiveStatus !== statusFilter) return false;
+          if (roomTypeFilter !== 'ALL' && room?.typeId !== roomTypeFilter) return false;
+          if (roomFilter !== 'ALL' && booking.roomId !== roomFilter) return false;
 
-      return bookings.filter(booking => {
+          const checkInDateValue = formatDateInputValue(booking.checkInDate);
+          const checkOutDateValue = formatDateInputValue(booking.checkOutDate);
+          if (fromDateFilter && checkOutDateValue < fromDateFilter) return false;
+          if (toDateFilter && checkInDateValue > toDateFilter) return false;
+          return true;
+      });
+
+      if (!term) return visibleBookings;
+
+      return visibleBookings.filter(booking => {
           if (!booking) return false;
           const customerName = getDisplayName(booking).toLowerCase();
           const customerPhone = (booking.guestPhone || customerById.get(booking.customerId)?.phone || '').toLowerCase();
@@ -516,6 +700,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           const creator = getCreatorLabel(booking).toLowerCase();
           const tagsLabel = getBookingTags(booking).join(' ').toLowerCase();
           const bookingCode = (booking.id || '').toLowerCase();
+          const statusLabel = getBookingStatusLabel(deriveBookingStatus(booking, nowMs)).toLowerCase();
 
           return (
               customerName.includes(term) ||
@@ -525,10 +710,26 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               propertyName.includes(term) ||
               creator.includes(term) ||
               tagsLabel.includes(term) ||
-              bookingCode.includes(term)
+              bookingCode.includes(term) ||
+              statusLabel.includes(term)
           );
       });
-  }, [bookings, searchTerm, customerById, getCreatorLabel, getPropertyName, getRoomNumber, getRoomTypeName, getDisplayName, getBookingTags]);
+  }, [bookings, searchTerm, customerById, getCreatorLabel, getPropertyName, getRoomNumber, getRoomTypeName, getDisplayName, getBookingTags, roomById, propertyFilter, statusFilter, roomTypeFilter, roomFilter, fromDateFilter, toDateFilter, nowMs]);
+
+  useEffect(() => {
+      const visibleBookingIds = new Set(filteredBookings.map((booking) => booking.id));
+      setSelectedIds((previous) => {
+          const next = new Set(Array.from(previous).filter((id) => visibleBookingIds.has(id)));
+          return next.size === previous.size ? previous : next;
+      });
+
+      if (detailModalBookingId && !visibleBookingIds.has(detailModalBookingId)) {
+          setDetailModalBookingId(null);
+      }
+      if (historyModal.bookingId && !visibleBookingIds.has(historyModal.bookingId)) {
+          setHistoryModal({ isOpen: false, bookingId: null });
+      }
+  }, [filteredBookings, detailModalBookingId, historyModal.bookingId]);
 
   const sortedBookings = useMemo(() => {
       const parseTime = (value: string) => {
@@ -550,18 +751,60 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       });
   }, [filteredBookings, sortDirection, sortField]);
 
-  const selectedInViewCount = sortedBookings.filter(booking => selectedIds.has(booking.id)).length;
-  const isAllInViewSelected = sortedBookings.length > 0 && selectedInViewCount === sortedBookings.length;
+  const totalPages = Math.max(1, Math.ceil(sortedBookings.length / BOOKINGS_PER_PAGE));
+  const safePageIndex = Math.min(currentPageIndex, totalPages);
+  const pageStartIndex = (safePageIndex - 1) * BOOKINGS_PER_PAGE;
+  const paginatedBookings = sortedBookings.slice(pageStartIndex, pageStartIndex + BOOKINGS_PER_PAGE);
+  const selectedInPageCount = paginatedBookings.filter(booking => selectedIds.has(booking.id)).length;
+  const isAllInViewSelected = paginatedBookings.length > 0 && selectedInPageCount === paginatedBookings.length;
+  const visibleRangeStart = sortedBookings.length === 0 ? 0 : pageStartIndex + 1;
+  const visibleRangeEnd = Math.min(pageStartIndex + BOOKINGS_PER_PAGE, sortedBookings.length);
+
+  useEffect(() => {
+      setCurrentPageIndex(1);
+  }, [searchTerm, propertyFilter, statusFilter, roomTypeFilter, roomFilter, fromDateFilter, toDateFilter, sortField, sortDirection]);
+
+  useEffect(() => {
+      if (currentPageIndex > totalPages) {
+          setCurrentPageIndex(totalPages);
+      }
+  }, [currentPageIndex, totalPages]);
+  const filteredSummary = useMemo(() => {
+      return filteredBookings.reduce(
+          (summary, booking) => {
+              const status = deriveBookingStatus(booking, nowMs);
+              const financial = getBookingFinancialSummary(booking);
+              summary.total += 1;
+              if (status === BookingStatus.CHECKED_IN) summary.checkedIn += 1;
+              if (status === BookingStatus.CONFIRMED) summary.confirmed += 1;
+              if (status === BookingStatus.CHECKED_OUT) summary.checkedOut += 1;
+              if (!financial.isGroupedChild) summary.debt += financial.outstanding;
+              return summary;
+          },
+          { total: 0, checkedIn: 0, confirmed: 0, checkedOut: 0, debt: 0 }
+      );
+  }, [filteredBookings, nowMs]);
+  const hasActiveFilters =
+      searchTerm.trim() ||
+      propertyFilter !== (currentPropertyId || 'ALL') ||
+      statusFilter !== 'ALL' ||
+      roomTypeFilter !== 'ALL' ||
+      roomFilter !== 'ALL' ||
+      fromDateFilter ||
+      toDateFilter;
+  const emptyStateText = sortedBookings.length === 0
+      ? `Không có đơn phù hợp trong phạm vi ${currentScopeName}${statusFilter !== 'ALL' ? `, trạng thái ${getBookingStatusLabel(statusFilter as BookingStatus)}` : ''}${searchTerm.trim() ? `, từ khóa "${searchTerm.trim()}"` : ''}.`
+      : '';
 
   // --- SELECTION LOGIC ---
   const toggleSelectAll = () => {
       if (isAllInViewSelected) {
           const nextSelected = new Set(selectedIds);
-          sortedBookings.forEach(booking => nextSelected.delete(booking.id));
+          paginatedBookings.forEach(booking => nextSelected.delete(booking.id));
           setSelectedIds(nextSelected);
       } else {
           const nextSelected = new Set(selectedIds);
-          sortedBookings.forEach(booking => nextSelected.add(booking.id));
+          paginatedBookings.forEach(booking => nextSelected.add(booking.id));
           setSelectedIds(nextSelected);
       }
   };
@@ -590,9 +833,13 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   // 2. Trigger for Bulk Delete
   const handleDeleteSelected = () => {
       if (!canDelete || selectedIds.size === 0) return;
+      const visibleSelectedIds = paginatedBookings
+          .filter((booking) => selectedIds.has(booking.id))
+          .map((booking) => booking.id);
+      if (visibleSelectedIds.length === 0) return;
       setDeleteModal({
           isOpen: true,
-          idsToDelete: Array.from(selectedIds)
+          idsToDelete: visibleSelectedIds
       });
   };
 
@@ -637,7 +884,13 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   };
 
   const handleResetAll = async () => {
-      if(confirm("CẢNH BÁO CỰC KỲ QUAN TRỌNG!\n\nBạn sắp XOÁ SẠCH TOÀN BỘ dữ liệu đặt phòng trên hệ thống.\nHành động này không thể khôi phục được.\n\nBạn có chắc chắn muốn làm mới (Reset) toàn bộ không?")) {
+      if(!confirm("Bạn sắp mở thao tác nguy hiểm: XÓA TOÀN BỘ ĐƠN trên hệ thống.")) return;
+      const typed = window.prompt('Nhập chính xác: XOA TOAN BO DON');
+      if (typed !== 'XOA TOAN BO DON') {
+          alert('Đã hủy. Nội dung xác nhận không khớp.');
+          return;
+      }
+      if(confirm("Xác nhận lần cuối: thao tác này không thể khôi phục. Tiếp tục xóa toàn bộ đơn?")) {
           try {
               const deletedCount = await DataService.resetAllBookings();
               if(onRefresh) onRefresh();
@@ -654,7 +907,21 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           alert("Bạn không có quyền tạo đơn.");
           return;
       }
+      if (onCreateBooking) {
+          onCreateBooking();
+          return;
+      }
       alert("Vui lòng sử dụng Sơ đồ phòng để tạo đơn mới trực quan hơn.");
+  };
+
+  const resetFilters = () => {
+      setSearchTerm('');
+      setPropertyFilter(currentPropertyId || 'ALL');
+      setStatusFilter('ALL');
+      setRoomTypeFilter('ALL');
+      setRoomFilter('ALL');
+      setFromDateFilter('');
+      setToDateFilter('');
   };
 
   // --- EXCEL IMPORT/EXPORT LOGIC (UPDATED) ---
@@ -1060,21 +1327,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       <div className="p-5 border-b border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
             <h2 className="text-lg font-bold text-gray-800">Danh sách đặt phòng</h2>
-            <p className="text-xs text-gray-500">Quản lý và tra cứu lịch sử đặt phòng</p>
+            <p className="text-xs text-gray-500">Phạm vi đang xem: <span className="font-bold text-gray-700">{currentScopeName}</span></p>
         </div>
         
         <div className="flex gap-2 w-full md:w-auto">
-            {/* RESET BUTTON */}
-            {canDelete && (
-                <button 
-                    onClick={handleResetAll}
-                    className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3 py-2 rounded-lg flex items-center gap-2 text-sm font-bold transition-colors"
-                    title="Xoá sạch toàn bộ dữ liệu đặt phòng"
-                >
-                    <Trash2 size={16} /> <span className="hidden sm:inline">Reset Dữ Liệu</span>
-                </button>
-            )}
-
             {canAdd && (
                 <>
                     <button 
@@ -1104,11 +1360,34 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                     <button 
                         onClick={handleCreate}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
+                        title="Chuyển sang Sơ đồ phòng để tạo đơn mới"
                     >
-                        <Plus size={16} /> Tạo đơn
+                        <Plus size={16} /> Tạo đơn mới
                     </button>
                 </>
             )}
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <div className="text-[11px] font-bold uppercase text-gray-400">Tổng đơn</div>
+                <div className="text-base font-black text-gray-900">{filteredSummary.total}</div>
+            </div>
+            <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
+                <div className="text-[11px] font-bold uppercase text-red-400">Đang ở</div>
+                <div className="text-base font-black text-red-700">{filteredSummary.checkedIn}</div>
+            </div>
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                <div className="text-[11px] font-bold uppercase text-blue-400">Sắp vào</div>
+                <div className="text-base font-black text-blue-700">{filteredSummary.confirmed}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <div className="text-[11px] font-bold uppercase text-gray-400">Đã trả</div>
+                <div className="text-base font-black text-gray-700">{filteredSummary.checkedOut}</div>
+            </div>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                <div className="text-[11px] font-bold uppercase text-amber-500">Tổng nợ</div>
+                <div className="text-base font-black text-amber-700">{formatCurrency(filteredSummary.debt)}</div>
+            </div>
         </div>
       </div>
       
@@ -1130,21 +1409,40 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           </div>
       )}
 
+      {/* DANGER ZONE */}
+      {canDelete && (
+          <div className="border-b border-red-100 bg-red-50 px-5 py-3">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                      <div className="text-sm font-black text-red-700">Khu vực nguy hiểm</div>
+                      <div className="text-xs text-red-600">Xóa toàn bộ đơn yêu cầu nhập xác nhận bằng chữ.</div>
+                  </div>
+                  <button 
+                      onClick={handleResetAll}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-100"
+                      title="Xóa sạch toàn bộ dữ liệu đặt phòng"
+                  >
+                      <Trash2 size={16} /> Xóa toàn bộ đơn
+                  </button>
+              </div>
+          </div>
+      )}
+
       {/* BULK ACTIONS TOOLBAR (Floating) */}
-      {selectedIds.size > 0 && canDelete && (
+      {selectedInPageCount > 0 && canDelete && (
           <div className="absolute top-[80px] left-0 right-0 z-10 mx-4">
               <div className="bg-gray-800 text-white p-3 rounded-lg shadow-xl flex justify-between items-center animate-slide-up">
                   <div className="flex items-center gap-3">
                       <span className="font-bold text-sm bg-gray-700 px-2 py-1 rounded">
-                          Đã chọn {selectedIds.size}
+                          Đã chọn {selectedInPageCount}
                       </span>
-                      <span className="text-xs text-gray-300">đơn đặt phòng</span>
+                      <span className="text-xs text-gray-300">đơn đang hiển thị</span>
                   </div>
                   <button 
                       onClick={handleDeleteSelected}
                       className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-md text-sm font-bold flex items-center gap-2 transition-colors shadow-sm"
                   >
-                      <Trash2 size={16}/> Xoá {selectedIds.size} đơn
+                      <Trash2 size={16}/> Xoá {selectedInPageCount} đơn
                   </button>
               </div>
           </div>
@@ -1164,6 +1462,75 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+                <select
+                    value={propertyFilter}
+                    onChange={(e) => {
+                        setPropertyFilter(e.target.value);
+                        setRoomFilter('ALL');
+                    }}
+                    disabled={isHeaderScopedToSingleProperty}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title={isHeaderScopedToSingleProperty ? 'Bộ lọc chi nhánh đang đồng bộ theo header hiện tại' : 'Lọc theo chi nhánh'}
+                >
+                    <option value="ALL">Toàn bộ chi nhánh</option>
+                    {properties.map((property) => (
+                        <option key={property.id} value={property.id}>{property.name}</option>
+                    ))}
+                </select>
+                <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as BookingStatusFilter)}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    <option value="ALL">Tất cả trạng thái</option>
+                    <option value={BookingStatus.HOLD}>Giữ chỗ</option>
+                    <option value={BookingStatus.CONFIRMED}>Đã xác nhận</option>
+                    <option value={BookingStatus.CHECKED_IN}>Đang ở</option>
+                    <option value={BookingStatus.CHECKED_OUT}>Đã trả</option>
+                </select>
+                <select
+                    value={roomTypeFilter}
+                    onChange={(e) => {
+                        setRoomTypeFilter(e.target.value);
+                        setRoomFilter('ALL');
+                    }}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    <option value="ALL">Tất cả hạng phòng</option>
+                    {roomTypes.map((roomType) => (
+                        <option key={roomType.id} value={roomType.id}>{roomType.name}</option>
+                    ))}
+                </select>
+                <select
+                    value={roomFilter}
+                    onChange={(e) => setRoomFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    <option value="ALL">Tất cả phòng</option>
+                    {visibleRooms.map((room) => (
+                        <option key={room.id} value={room.id}>{room.number}</option>
+                    ))}
+                </select>
+                <input
+                    type="date"
+                    value={fromDateFilter}
+                    onChange={(e) => setFromDateFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="Từ ngày"
+                />
+                <input
+                    type="date"
+                    value={toDateFilter}
+                    onChange={(e) => setToDateFilter(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    title="Đến ngày"
+                />
+                <button
+                    onClick={resetFilters}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                    Xóa lọc
+                </button>
                 <span className="text-xs font-semibold text-gray-600 inline-flex items-center gap-1">
                     <ArrowUpDown size={14} />
                     Sắp xếp
@@ -1185,12 +1552,35 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                     <option value="asc">Tăng dần</option>
                     <option value="desc">Giảm dần</option>
                 </select>
+                <span className="text-xs text-gray-500 bg-white px-3 py-2 rounded-md border border-gray-200">
+                    Hiển thị <span className="font-bold text-gray-700">{visibleRangeStart}-{visibleRangeEnd}</span> / {sortedBookings.length} đơn phù hợp
+                </span>
             </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+            <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 font-bold text-blue-700">
+                Phạm vi: {currentScopeName}
+            </span>
+            {(isHydratingScope || isScopeLoading) && (
+                <span className="inline-flex items-center rounded-full border border-blue-100 bg-white px-3 py-1 text-blue-700">
+                    Đang tải danh sách đơn...
+                </span>
+            )}
+            {isHeaderScopedToSingleProperty && (
+                <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-3 py-1">
+                    Bộ lọc chi nhánh đang theo header, đổi chi nhánh ở thanh trên để xem cơ sở khác.
+                </span>
+            )}
+            {hasActiveFilters && (
+                <span className="inline-flex items-center rounded-full border border-amber-100 bg-amber-50 px-3 py-1 text-amber-700">
+                    Đang áp dụng bộ lọc
+                </span>
+            )}
         </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[2400px] text-left text-sm text-gray-600">
+        <table className="w-full min-w-[1700px] text-left text-sm text-gray-600">
           <thead className="bg-gray-50 text-gray-700 font-semibold uppercase text-xs">
             <tr>
               <th className="px-4 py-3 w-10 text-center">
@@ -1203,29 +1593,29 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                   </button>
               </th>
               <th className="px-6 py-3">Mã BK</th>
-              <th className="px-6 py-3">Khách hàng</th>
+              <th className="sticky left-0 z-20 min-w-[220px] bg-gray-50 px-6 py-3 shadow-[4px_0_6px_-4px_rgba(0,0,0,0.25)]">Khách hàng</th>
               <th className="px-6 py-3">Tags</th>
-              <th className="px-6 py-3">Phòng</th>
+              <th className="sticky left-[220px] z-20 min-w-[150px] bg-gray-50 px-6 py-3 shadow-[4px_0_6px_-4px_rgba(0,0,0,0.25)]">Phòng</th>
               <th className="px-6 py-3">Hạng phòng</th>
               <th className="px-6 py-3">Chi nhánh</th>
               <th className="px-6 py-3">Ngày tạo</th>
               <th className="px-6 py-3">Thời gian nhận phòng</th>
               <th className="px-6 py-3">Thời gian trả phòng</th>
-              <th className="px-6 py-3 text-right">Tổng bill</th>
-              <th className="px-6 py-3 text-right">Thu khác</th>
-              <th className="px-6 py-3 text-right">Chi khác</th>
-              <th className="px-6 py-3 text-right">Doanh thu net</th>
-              <th className="px-6 py-3 text-right">Đã trả</th>
-              <th className="px-6 py-3 text-right">Còn nợ</th>
+              <th className="px-6 py-3">Trạng thái</th>
+              <th className="px-6 py-3 text-right">Tài chính</th>
               <th className="px-6 py-3">Nhân viên tạo đơn</th>
-              <th className="px-6 py-3 text-right">Thao tác</th>
+              <th className="sticky right-0 z-20 min-w-[190px] bg-gray-50 px-6 py-3 text-right shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.25)]">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {sortedBookings.map((booking) => {
+            {paginatedBookings.map((booking) => {
                 const isSelected = selectedIds.has(booking.id);
                 const tagLabels = getBookingTags(booking);
-                const { extraRevenue, extraExpense, netRevenue, paidAmount, outstanding } = getFeeTotals(booking);
+                const effectiveStatus = deriveBookingStatus(booking, nowMs);
+                const room = roomById.get(booking.roomId);
+                const isMissingRoom = !room;
+                const { extraRevenue, extraExpense, netRevenue, totalBill, paidAmount, outstanding, isGroupedChild } =
+                    getBookingFinancialSummary(booking);
                 return (
                   <tr key={booking.id} className={`hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50' : ''}`}>
                     <td className="px-4 py-4 text-center">
@@ -1238,7 +1628,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                         </button>
                     </td>
                     <td className="px-6 py-4 font-mono text-blue-600 font-medium">{booking.id}</td>
-                    <td className="px-6 py-4 font-medium text-gray-900">
+                    <td className={`sticky left-0 z-10 min-w-[220px] px-6 py-4 font-medium text-gray-900 shadow-[4px_0_6px_-4px_rgba(0,0,0,0.25)] ${isSelected ? 'bg-blue-50' : 'bg-white'}`}>
                         <div>{getDisplayName(booking)}</div>
                         <div className="text-xs text-gray-400">{booking.guestPhone}</div>
                     </td>
@@ -1255,27 +1645,46 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                             </div>
                         )}
                     </td>
-                    <td className="px-6 py-4">
-                        <span className="bg-gray-100 px-2 py-1 rounded font-bold text-gray-700">{getRoomNumber(booking.roomId)}</span>
+                    <td className={`sticky left-[220px] z-10 min-w-[150px] px-6 py-4 shadow-[4px_0_6px_-4px_rgba(0,0,0,0.25)] ${isSelected ? 'bg-blue-50' : 'bg-white'}`}>
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded font-bold ${isMissingRoom ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-100 text-gray-700'}`}>
+                            {isMissingRoom && <AlertTriangle size={13} />}
+                            {getRoomNumber(booking.roomId)}
+                        </span>
                     </td>
                     <td className="px-6 py-4">{getRoomTypeName(booking)}</td>
                     <td className="px-6 py-4">{getPropertyName(booking)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{toDateTimeLabel(booking.createdAt)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{toDateTimeLabel(booking.checkInDate)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{toDateTimeLabel(booking.checkOutDate)}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-gray-800">{formatCurrency(booking.totalPrice || 0)}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-green-600">{formatCurrency(extraRevenue)}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-red-600">{formatCurrency(extraExpense)}</td>
-                    <td className="px-6 py-4 text-right font-bold text-blue-700">{formatCurrency(netRevenue)}</td>
-                    <td className="px-6 py-4 text-right font-semibold text-gray-800">{formatCurrency(paidAmount)}</td>
-                    <td className="px-6 py-4 text-right">
-                        <span className={`font-bold ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {formatCurrency(outstanding)}
+                    <td className="px-6 py-4">
+                        <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${getBookingStatusPillClass(effectiveStatus)}`}>
+                            {getBookingStatusLabel(effectiveStatus)}
                         </span>
                     </td>
-                    <td className="px-6 py-4">{getCreatorLabel(booking)}</td>
                     <td className="px-6 py-4 text-right">
+                        {isGroupedChild ? (
+                            <span className="text-xs text-gray-400 italic">Theo đoàn</span>
+                        ) : (
+                            <div className="space-y-0.5 whitespace-nowrap text-xs">
+                                <div><span className="text-gray-400">Bill:</span> <span className="font-bold text-gray-800">{formatCurrency(totalBill)}</span></div>
+                                <div><span className="text-gray-400">Đã trả:</span> <span className="font-semibold text-gray-700">{formatCurrency(paidAmount)}</span></div>
+                                <div><span className="text-gray-400">Nợ:</span> <span className={`font-black ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(outstanding)}</span></div>
+                                {(extraRevenue > 0 || extraExpense > 0) && (
+                                    <div className="text-[11px] text-gray-400">Khác: +{formatCurrency(extraRevenue)} / -{formatCurrency(extraExpense)}</div>
+                                )}
+                            </div>
+                        )}
+                    </td>
+                    <td className="px-6 py-4">{getCreatorLabel(booking)}</td>
+                    <td className={`sticky right-0 z-10 min-w-[190px] px-6 py-4 text-right shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.25)] ${isSelected ? 'bg-blue-50' : 'bg-white'}`}>
                         <div className="flex items-center justify-end gap-2">
+                            <button
+                                onClick={() => setDetailModalBookingId(booking.id)}
+                                className="inline-flex items-center gap-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-2.5 py-2 rounded transition-colors font-bold text-xs"
+                                title="Chi tiết đơn"
+                            >
+                                <Eye size={16} /> Chi tiết
+                            </button>
                             <button
                                 onClick={() => openBookingHistory(booking.id)}
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-colors"
@@ -1299,12 +1708,161 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
             })}
             {sortedBookings.length === 0 && (
                 <tr>
-                    <td colSpan={18} className="px-6 py-8 text-center text-gray-400">Không tìm thấy dữ liệu</td>
+                    <td colSpan={14} className="px-6 py-10 text-center">
+                        <div className="mx-auto max-w-xl rounded-xl border border-gray-200 bg-gray-50 p-5">
+                            <div className="font-bold text-gray-800">{isHydratingScope || isScopeLoading ? 'Đang tải danh sách đơn...' : 'Không có đơn phù hợp'}</div>
+                            <div className="mt-1 text-sm text-gray-500">
+                                {isHydratingScope || isScopeLoading ? `Đang đồng bộ dữ liệu trong phạm vi ${currentScopeName}.` : emptyStateText}
+                            </div>
+                            {!isHydratingScope && !isScopeLoading && hasActiveFilters && (
+                                <button
+                                    onClick={resetFilters}
+                                    className="mt-4 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-100"
+                                >
+                                    Xóa bộ lọc
+                                </button>
+                            )}
+                        </div>
+                    </td>
                 </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {sortedBookings.length > BOOKINGS_PER_PAGE && (
+          <div className="flex flex-col gap-3 border-t border-gray-200 bg-white px-5 py-4 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-gray-600">
+                  Trang <span className="font-bold text-gray-900">{safePageIndex}</span> / {totalPages}, hiển thị {visibleRangeStart}-{visibleRangeEnd} trong {sortedBookings.length} đơn phù hợp.
+              </div>
+              <div className="flex items-center gap-2">
+                  <button
+                      type="button"
+                      onClick={() => setCurrentPageIndex(1)}
+                      disabled={safePageIndex === 1}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-gray-50"
+                  >
+                      Đầu
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => setCurrentPageIndex((page) => Math.max(1, page - 1))}
+                      disabled={safePageIndex === 1}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-gray-50"
+                  >
+                      Trước
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => setCurrentPageIndex((page) => Math.min(totalPages, page + 1))}
+                      disabled={safePageIndex === totalPages}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-gray-50"
+                  >
+                      Sau
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => setCurrentPageIndex(totalPages)}
+                      disabled={safePageIndex === totalPages}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-gray-50"
+                  >
+                      Cuối
+                  </button>
+              </div>
+          </div>
+      )}
+
+      {selectedDetailBooking && (
+          <div className="fixed inset-0 bg-black/50 z-[104] flex items-center justify-center p-3 md:p-5" onClick={() => setDetailModalBookingId(null)}>
+              <div
+                  className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[calc(100dvh-32px)] overflow-hidden animate-fade-in"
+                  onClick={(e) => e.stopPropagation()}
+              >
+                  <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+                      <div>
+                          <h3 className="text-lg font-bold text-gray-900">Chi tiết đơn #{selectedDetailBooking.id}</h3>
+                          <p className="text-xs text-gray-500 mt-1">Xem nhanh thông tin khách, phòng, lịch ở và tài chính</p>
+                      </div>
+                      <button
+                          onClick={() => setDetailModalBookingId(null)}
+                          className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                          title="Đóng chi tiết"
+                      >
+                          <X size={18} />
+                      </button>
+                  </div>
+
+                  <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm overflow-y-auto max-h-[calc(100dvh-140px)]">
+                      <div className="space-y-3">
+                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                              <div className="text-xs font-semibold text-gray-500 uppercase">Khách hàng</div>
+                              <div className="mt-2 text-base font-bold text-gray-900">{getDisplayName(selectedDetailBooking)}</div>
+                              <div className="text-sm text-gray-600 mt-1">{selectedDetailBooking.guestPhone || '--'}</div>
+                              <div className="text-sm text-gray-600 mt-1">Trạng thái: <span className="font-semibold text-gray-900">{getBookingStatusLabel(deriveBookingStatus(selectedDetailBooking, nowMs))}</span></div>
+                          </div>
+                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                              <div className="text-xs font-semibold text-gray-500 uppercase">Lưu trú</div>
+                              <div className="mt-2 text-sm text-gray-700">Chi nhánh: <span className="font-semibold text-gray-900">{getPropertyName(selectedDetailBooking)}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Phòng: <span className="font-semibold text-gray-900">{getRoomNumber(selectedDetailBooking.roomId)}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Hạng phòng: <span className="font-semibold text-gray-900">{getRoomTypeName(selectedDetailBooking)}</span></div>
+                              {!roomById.get(selectedDetailBooking.roomId) && (
+                                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                                      Phòng của đơn này không còn khớp dữ liệu phòng hiện tại.
+                                  </div>
+                              )}
+                              <div className="mt-1 text-sm text-gray-700">Nhận phòng: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.checkInDate)}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Trả phòng: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.checkOutDate)}</span></div>
+                              {onOpenRoomMapBooking && (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                      <button
+                                          onClick={() => onOpenRoomMapBooking(selectedDetailBooking)}
+                                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                                      >
+                                          Mở trên sơ đồ phòng
+                                      </button>
+                                      <button
+                                          onClick={() => onOpenRoomMapBooking(selectedDetailBooking)}
+                                          className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                                      >
+                                          Sửa đơn
+                                      </button>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+
+                      <div className="space-y-3">
+                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                              <div className="text-xs font-semibold text-gray-500 uppercase">Tài chính</div>
+                              {(() => {
+                                  const summary = getBookingFinancialSummary(selectedDetailBooking);
+                                  return (
+                                      <div className="mt-2 space-y-1 text-sm text-gray-700">
+                                          <div>Tổng bill: <span className="font-semibold text-gray-900">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.totalBill)}</span></div>
+                                          <div>Thu khác: <span className="font-semibold text-green-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.extraRevenue)}</span></div>
+                                          <div>Chi khác: <span className="font-semibold text-red-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.extraExpense)}</span></div>
+                                          <div>Doanh thu net: <span className="font-semibold text-blue-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.netRevenue)}</span></div>
+                                          <div>Đã trả: <span className="font-semibold text-gray-900">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.paidAmount)}</span></div>
+                                          <div>Còn nợ: <span className={`font-semibold ${summary.outstanding > 0 ? 'text-red-700' : 'text-green-700'}`}>{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.outstanding)}</span></div>
+                                      </div>
+                                  );
+                              })()}
+                          </div>
+                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                              <div className="text-xs font-semibold text-gray-500 uppercase">Khác</div>
+                              <div className="mt-2 text-sm text-gray-700">Nhân viên tạo: <span className="font-semibold text-gray-900">{getCreatorLabel(selectedDetailBooking)}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Ngày tạo: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.createdAt)}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Tags: <span className="font-semibold text-gray-900">{getBookingTags(selectedDetailBooking).length > 0 ? getBookingTags(selectedDetailBooking).join(', ') : '--'}</span></div>
+                              <div className="mt-1 text-sm text-gray-700">Ghi chú:</div>
+                              <div className="mt-1 rounded-lg bg-white border border-gray-200 p-3 text-sm text-gray-700 min-h-20 whitespace-pre-wrap">
+                                  {selectedDetailBooking.notes || 'Không có ghi chú'}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {historyModal.isOpen && selectedHistoryBooking && (
           <div className="fixed inset-0 bg-black/50 z-[105] flex items-center justify-center p-3 md:p-5" onClick={closeBookingHistory}>
@@ -1314,9 +1872,9 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               >
                   <div className="px-4 py-3 md:px-5 md:py-4 border-b border-gray-200 flex items-center justify-between gap-3">
                       <div>
-                          <h3 className="text-base md:text-lg font-bold text-gray-900">Lịch sử thao tác đơn #{selectedHistoryBooking.id}</h3>
+                          <h3 className="text-base md:text-lg font-bold text-gray-900">Lịch sử gần đây của đơn #{selectedHistoryBooking.id}</h3>
                           <p className="text-xs text-gray-500 mt-1">
-                              Hiển thị: Thời gian • Tên đăng nhập • Thao tác • Trước/Sau
+                              Đang lấy 80 log gần nhất. Hiển thị: Thời gian • Tên đăng nhập • Thao tác • Trước/Sau
                           </p>
                       </div>
                       <button

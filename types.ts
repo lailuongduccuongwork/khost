@@ -4,15 +4,13 @@ export enum RoomStatus {
   VACANT_CLEAN = 'VACANT_CLEAN',
   VACANT_DIRTY = 'VACANT_DIRTY',
   OCCUPIED = 'OCCUPIED',
-  MAINTENANCE = 'MAINTENANCE',
 }
 
 export enum BookingStatus {
-  PENDING = 'PENDING',
+  HOLD = 'HOLD',
   CONFIRMED = 'CONFIRMED',
   CHECKED_IN = 'CHECKED_IN',
   CHECKED_OUT = 'CHECKED_OUT',
-  CANCELLED = 'CANCELLED',
   DELETED = 'DELETED', // Soft delete status
 }
 

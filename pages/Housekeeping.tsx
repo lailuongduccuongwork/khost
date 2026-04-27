@@ -3,23 +3,29 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Room, Booking, BookingStatus, RoomStatus, Property, RoomType } from '../types';
 import { 
     Check, LogOut, LogIn, Zap, User, RotateCcw, 
-    Brush, Moon, ArrowRight, Building2, CheckCircle
+    Brush, Moon, ArrowRight, Building2, CheckCircle, CalendarDays, Search, X, Loader2, AlertTriangle
 } from 'lucide-react';
+import { isArchiveBucketRoom } from '../utils/roomBuckets';
+import { deriveBookingStatus, deriveRoomOperationalStatus, getActiveBookingForRoom } from '../utils/bookingState';
 
 interface HousekeepingProps {
   rooms: Room[];
   bookings: Booking[];
   roomTypes: RoomType[];
   properties: Property[];
+  currentProperty: Property;
   onRefresh: () => void;
   onUpdateStatus: (roomId: string, status: RoomStatus) => void;
+  onOpenRoomMap?: (room: Room) => void;
 }
 
 type FilterType = 'ALL' | 'DIRTY' | 'CLEAN' | 'OCCUPIED';
 
-const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, onRefresh, onUpdateStatus }) => {
+const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, currentProperty, onRefresh, onUpdateStatus, onOpenRoomMap }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [filter, setFilter] = useState<FilterType>('ALL');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFeedback, setStatusFeedback] = useState<{ roomId: string; state: 'saving' | 'saved'; message: string } | null>(null);
   
   // Cập nhật thời gian thực mỗi phút
   useEffect(() => {
@@ -27,13 +33,20 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
     return () => clearInterval(timer);
   }, []);
 
-  const handleAction = (roomId: string, newStatus: RoomStatus) => {
-      // Gọi DataService. DataService đã được nâng cấp để xử lý Optimistic Update
-      // và Locking, nên ở đây chỉ cần gọi hàm là đủ.
-      onUpdateStatus(roomId, newStatus);
-      
-      // Rung phản hồi (Haptic)
-      if (navigator.vibrate) navigator.vibrate(50);
+  const handleAction = async (roomId: string, newStatus: RoomStatus) => {
+      setStatusFeedback({ roomId, state: 'saving', message: 'Đang cập nhật...' });
+      try {
+          await Promise.resolve(onUpdateStatus(roomId, newStatus));
+          setStatusFeedback({ roomId, state: 'saved', message: newStatus === RoomStatus.VACANT_CLEAN ? 'Đã báo sạch' : 'Đã báo bẩn' });
+          if (navigator.vibrate) navigator.vibrate(50);
+          window.setTimeout(() => {
+              setStatusFeedback((current) => current?.roomId === roomId ? null : current);
+          }, 1800);
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không thể cập nhật trạng thái phòng.';
+          setStatusFeedback(null);
+          alert(message);
+      }
   };
 
   // --- HELPER FORMAT ---
@@ -54,17 +67,26 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
   const processedRooms = useMemo(() => {
     const nowMs = currentTime.getTime();
     const oneDayMs = 24 * 60 * 60 * 1000;
+    const scopedRooms = rooms.filter((room) => {
+        if (isArchiveBucketRoom(room)) return false;
+        if (currentProperty.id !== 'ALL' && room.propertyId !== currentProperty.id) return false;
+        return true;
+    });
+    const scopedRoomIds = new Set(scopedRooms.map((room) => room.id));
+    const scopedBookings = bookings.filter((booking) => scopedRoomIds.has(booking.roomId));
 
-    const list = rooms.map(room => {
+    const list = scopedRooms.map(room => {
+        const roomBookings = scopedBookings.filter((booking) => booking.roomId === room.id);
+        const effectiveRoomStatus = deriveRoomOperationalStatus(room, roomBookings, nowMs);
         // Booking Logic
-        const activeBooking = bookings.find(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_IN);
+        const activeBooking = getActiveBookingForRoom(roomBookings, room.id, nowMs);
         
-        const lastBooking = bookings
-            .filter(b => b.roomId === room.id && b.status === BookingStatus.CHECKED_OUT)
+        const lastBooking = roomBookings
+            .filter(b => deriveBookingStatus(b, nowMs) === BookingStatus.CHECKED_OUT)
             .sort((a, b) => new Date(b.checkOutDate).getTime() - new Date(a.checkOutDate).getTime())[0];
 
-        const nextBooking = bookings
-            .filter(b => b.roomId === room.id && b.status === BookingStatus.CONFIRMED && new Date(b.checkInDate).getTime() > nowMs)
+        const nextBooking = roomBookings
+            .filter(b => deriveBookingStatus(b, nowMs) === BookingStatus.CONFIRMED && new Date(b.checkInDate).getTime() > nowMs)
             .sort((a, b) => new Date(a.checkInDate).getTime() - new Date(b.checkInDate).getTime())[0];
 
         // Urgent Check
@@ -106,8 +128,12 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             }
         }
 
+        const hasStaleOccupiedStatus = room.status === RoomStatus.OCCUPIED && !activeBooking;
+
         return {
-            room,
+            room: { ...room, status: effectiveRoomStatus },
+            storedStatus: room.status,
+            hasStaleOccupiedStatus,
             activeBooking,
             lastOut: lastBooking ? lastBooking.checkOutDate : null,
             nextIn: nextBooking ? nextBooking.checkInDate : null,
@@ -135,19 +161,38 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         const numB = (b.room.number || '').toString();
         return numA.localeCompare(numB, 'vi', { numeric: true });
     });
-  }, [rooms, bookings, currentTime, properties]);
+  }, [rooms, bookings, currentTime, properties, currentProperty.id]);
 
   // --- FILTER ---
   const filteredList = processedRooms.filter(item => {
-      if (filter === 'ALL') return true;
-      if (filter === 'DIRTY') return item.room.status === RoomStatus.VACANT_DIRTY;
-      if (filter === 'CLEAN') return item.room.status === RoomStatus.VACANT_CLEAN;
-      if (filter === 'OCCUPIED') return item.activeBooking || item.room.status === RoomStatus.OCCUPIED;
-      return true;
+      if (filter === 'DIRTY' && item.room.status !== RoomStatus.VACANT_DIRTY) return false;
+      if (filter === 'CLEAN' && item.room.status !== RoomStatus.VACANT_CLEAN) return false;
+      if (filter === 'OCCUPIED' && !item.activeBooking && item.room.status !== RoomStatus.OCCUPIED) return false;
+
+      const term = searchTerm.trim().toLowerCase();
+      if (!term) return true;
+
+      const propertyName = properties.find((property) => property.id === item.room.propertyId)?.name?.toLowerCase() || '';
+      const roomTypeName = roomTypes.find((type) => type.id === item.room.typeId)?.name?.toLowerCase() || '';
+      const guestName = item.activeBooking?.guestName?.toLowerCase() || '';
+      const roomNumber = (item.room.number || '').toLowerCase();
+
+      return (
+          roomNumber.includes(term) ||
+          propertyName.includes(term) ||
+          roomTypeName.includes(term) ||
+          guestName.includes(term)
+      );
   });
 
   const nightShiftRooms = processedRooms.filter(r => r.nightEvent !== null);
   const countDirty = processedRooms.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
+  const branchLabel = currentProperty.id === 'ALL' ? 'Tất cả chi nhánh' : currentProperty.name;
+  const emptyReason = searchTerm.trim()
+      ? `Không có phòng khớp từ khóa "${searchTerm.trim()}".`
+      : filter !== 'ALL'
+          ? `Không có phòng nào trong bộ lọc ${filter === 'DIRTY' ? 'Cần dọn' : filter === 'CLEAN' ? 'Sẵn sàng' : 'Đang ở'} tại ${branchLabel}.`
+          : `Không có phòng nào tại ${branchLabel}.`;
 
   return (
     <div className="katka-liquid-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
@@ -160,12 +205,42 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             </h1>
             <div className="flex gap-2">
                 <span className="bg-orange-100 text-orange-800 text-sm font-black px-3 py-1 rounded-lg border border-orange-200 shadow-sm">
-                    CẦN DỌN: {countDirty}
+                    CẦN DỌN TẠI {branchLabel}: {countDirty}
                 </span>
             </div>
         </div>
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 font-black text-white border border-blue-700 shadow-sm">
+                <Building2 size={12} />
+                Buồng phòng của: {branchLabel}
+            </span>
+            <span className="text-gray-500">
+                Màn này đang tối ưu cho từng chi nhánh để buồng phòng thao tác nhanh và tránh nhầm phòng.
+            </span>
+        </div>
         
         {/* FILTERS */}
+        <div className="mb-3 relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+            <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Tìm theo số phòng, loại phòng, khách..."
+                className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-gray-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+            {searchTerm && (
+                <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                    title="Xóa tìm kiếm"
+                >
+                    <X size={14} />
+                </button>
+            )}
+        </div>
+
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
             <button onClick={() => setFilter('ALL')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='ALL' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'}`}>Tất cả</button>
             <button onClick={() => setFilter('DIRTY')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='DIRTY' ? 'bg-yellow-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Cần dọn ({countDirty})</button>
@@ -200,11 +275,14 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       {/* ROOM LIST */}
       <div className="p-2 space-y-3">
         {filteredList.length === 0 && (
-            <div className="text-center text-gray-400 py-10 italic">Không có phòng nào trong danh sách này</div>
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">
+                <div className="font-bold text-gray-700">Không có phòng nào trong danh sách này</div>
+                <div className="mt-1">{emptyReason}</div>
+            </div>
         )}
 
         {filteredList.map((item, index) => {
-            const { room, activeBooking, lastOut, nextIn, isUrgent, warningText, currentOccupied, nightEvent } = item;
+            const { room, activeBooking, lastOut, nextIn, isUrgent, warningText, currentOccupied, nightEvent, hasStaleOccupiedStatus } = item;
             const typeName = roomTypes.find(t => t.id === room.typeId)?.name || '';
             const prevRoom = filteredList[index - 1]?.room;
             const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
@@ -215,6 +293,18 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             let borderColor = "border-gray-200";
             let actionBtn = null;
             let infoContent = null;
+            const feedback = statusFeedback?.roomId === room.id ? statusFeedback : null;
+            const isSavingThisRoom = feedback?.state === 'saving';
+            const roomMapShortcut = (
+                <button
+                    type="button"
+                    onClick={() => onOpenRoomMap?.(room)}
+                    className="w-full border-t border-black/5 bg-white/80 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 hover:bg-blue-50 transition-colors inline-flex items-center justify-center gap-1"
+                >
+                    <CalendarDays size={12} />
+                    Xem lịch
+                </button>
+            );
 
             if (activeBooking) {
                 // === CASE 1: PHÒNG ĐANG Ở ===
@@ -224,6 +314,10 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                 
                 infoContent = (
                     <div className="flex flex-col justify-center h-full space-y-1.5 pl-1">
+                        <div className="flex items-center gap-1.5 text-[11px] font-black text-red-700 truncate">
+                            <User size={13} />
+                            {currentOccupied?.guestName || activeBooking.guestName || 'Khách lẻ'}
+                        </div>
                         <div className="flex items-center gap-2">
                             <LogOut size={16} className="text-red-500"/>
                             <div className="flex flex-col leading-none">
@@ -245,9 +339,12 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                 );
 
                 actionBtn = (
-                    <div className="w-full h-full bg-red-100 flex flex-col items-center justify-center text-red-400">
-                        <User size={28} />
-                        <span className="text-[10px] font-bold mt-1 uppercase">Đang ở</span>
+                    <div className="w-full h-full flex flex-col">
+                        <div className="flex-1 bg-red-100 flex flex-col items-center justify-center text-red-400">
+                            <User size={28} />
+                            <span className="text-[10px] font-bold mt-1 uppercase">Đang ở</span>
+                        </div>
+                        {roomMapShortcut}
                     </div>
                 );
 
@@ -260,12 +357,12 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     <div className="flex flex-col justify-center h-full space-y-1 pl-1">
                         <div className="flex items-center gap-2 text-gray-600">
                             <LogOut size={16} className="text-gray-400"/> 
-                            <span className="text-sm font-bold">{lastOut ? formatCompactDateTime(lastOut) : '---'}</span>
+                            <span className="text-sm font-bold">{lastOut ? formatCompactDateTime(lastOut) : 'Chưa có lịch trả gần nhất'}</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <LogIn size={16} className={nextIn ? "text-blue-600" : "text-gray-300"}/>
                             <span className={`text-sm font-bold ${nextIn ? 'text-blue-700' : 'text-gray-400 italic'}`}>
-                                {nextIn ? formatCompactDateTime(nextIn) : 'Chưa có khách'}
+                                {nextIn ? `Khách vào: ${formatCompactDateTime(nextIn)}` : 'Chưa có khách vào tiếp'}
                             </span>
                         </div>
                         {isUrgent && (
@@ -278,13 +375,17 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
                 // --- BIG ACTION BUTTON ---
                 actionBtn = (
-                    <button 
-                        onClick={() => handleAction(room.id, RoomStatus.VACANT_CLEAN)}
-                        className="w-full h-full bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner"
-                    >
-                        <Check size={32} strokeWidth={4} />
-                        <span className="text-[10px] font-black uppercase mt-1">SẠCH</span>
-                    </button>
+                    <div className="w-full h-full flex flex-col">
+                        <button 
+                            onClick={() => handleAction(room.id, RoomStatus.VACANT_CLEAN)}
+                            disabled={isSavingThisRoom}
+                            className="flex-1 bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner"
+                        >
+                            {isSavingThisRoom ? <Loader2 size={28} className="animate-spin" /> : <Check size={32} strokeWidth={4} />}
+                            <span className="text-[10px] font-black uppercase mt-1">{isSavingThisRoom ? 'Đang lưu' : 'SẠCH'}</span>
+                        </button>
+                        {roomMapShortcut}
+                    </div>
                 );
 
             } else {
@@ -301,21 +402,30 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                         <div className="flex items-center gap-2 mt-1">
                             <LogIn size={16} className={nextIn ? "text-blue-600" : "text-gray-300"}/>
                             <span className={`text-sm font-bold ${nextIn ? 'text-blue-700' : 'text-gray-400 italic'}`}>
-                                {nextIn ? formatCompactDateTime(nextIn) : 'Chưa có khách'}
+                                {nextIn ? `Khách vào: ${formatCompactDateTime(nextIn)}` : 'Chưa có khách vào tiếp'}
                             </span>
                         </div>
+                        {hasStaleOccupiedStatus && (
+                            <div className="text-amber-700 font-bold text-[11px] flex items-center gap-1 bg-amber-100 px-1.5 py-0.5 rounded">
+                                <AlertTriangle size={12} /> Trạng thái cũ đang lệch, có thể báo sạch/bẩn lại.
+                            </div>
+                        )}
                     </div>
                 );
 
                 // Nút Báo Bẩn (Để sửa sai hoặc dọn lại)
                 actionBtn = (
-                    <button 
-                        onClick={() => handleAction(room.id, RoomStatus.VACANT_DIRTY)}
-                        className="w-full h-full bg-gray-50 hover:bg-gray-100 text-gray-400 active:text-gray-600 flex flex-col items-center justify-center border-l border-gray-100 transition-colors"
-                    >
-                        <RotateCcw size={20} />
-                        <span className="text-[9px] font-bold mt-1">Báo bẩn</span>
-                    </button>
+                    <div className="w-full h-full flex flex-col">
+                        <button 
+                            onClick={() => handleAction(room.id, RoomStatus.VACANT_DIRTY)}
+                            disabled={isSavingThisRoom}
+                            className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-400 active:text-gray-600 flex flex-col items-center justify-center border-l border-gray-100 transition-colors"
+                        >
+                            {isSavingThisRoom ? <Loader2 size={20} className="animate-spin" /> : <RotateCcw size={20} />}
+                            <span className="text-[9px] font-bold mt-1">{isSavingThisRoom ? 'Đang lưu' : 'Báo bẩn'}</span>
+                        </button>
+                        {roomMapShortcut}
+                    </div>
                 );
             }
 
@@ -329,6 +439,11 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     )}
 
                     <div className={`flex min-h-[100px] rounded-xl overflow-hidden border-2 shadow-sm relative transition-all duration-300 ${cardBg} ${borderColor}`}>
+                        {feedback?.state === 'saved' && (
+                            <div className="absolute right-2 top-2 z-10 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-black text-white shadow">
+                                {feedback.message}
+                            </div>
+                        )}
                         {/* CỘT TRÁI (28%): Số phòng */}
                         <div className="w-[28%] flex flex-col items-center justify-center border-r border-black/5 p-1 relative bg-white/50">
                             {nightEvent && <Moon size={14} className="absolute top-1 left-1 text-indigo-600 fill-current" />}

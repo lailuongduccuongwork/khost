@@ -16,5 +16,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Mr1FKNmwmssT3MCz4We7BO
 1. Install dependencies:
    `npm install`
 2. Create `.env.local` from `.env.example` and fill in your Firebase Web App config
+   Keep `VITE_ENABLE_CLIENT_AUTOMATION=false` unless you intentionally want one dedicated client machine to run automation.
 3. Run the app:
    `npm run dev`

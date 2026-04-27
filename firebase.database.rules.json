@@ -50,6 +50,7 @@
           }
         },
         "rooms": {
+          ".indexOn": ["propertyId"],
           "$roomId": {
             ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $roomId && newData.child('tenantId').val() === $tenantId"
           }
@@ -65,8 +66,18 @@
           }
         },
         "bookings": {
+          ".indexOn": ["propertyId"],
           "$bookingId": {
             ".validate": "newData.hasChildren(['id', 'tenantId', 'propertyId', 'roomId', 'customerId', 'status', 'checkInDate', 'checkOutDate', 'createdAt', 'createdBy']) && newData.child('id').val() === $bookingId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "bookingIndexByPropertyDate": {
+          "$propertyId": {
+            "$dateKey": {
+              "$bookingId": {
+                ".validate": "newData.hasChildren(['id', 'tenantId', 'propertyId', 'roomId', 'customerId', 'status', 'checkInDate', 'checkOutDate', 'createdAt', 'createdBy']) && newData.child('id').val() === $bookingId && newData.child('tenantId').val() === $tenantId && newData.child('propertyId').val() === $propertyId"
+              }
+            }
           }
         },
         "customers": {

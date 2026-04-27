@@ -808,6 +808,19 @@ body {
   border-color: var(--katka-border);
 }
 
+.roommap-summary-bar {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.9));
+}
+
+.roommap-summary-pill {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.roommap-summary-range {
+  color: #475569;
+}
+
 .roommap-time-header-cell {
   min-height: 100%;
   box-sizing: border-box;
@@ -817,6 +830,21 @@ body {
   background-color: #1c2534;
   color: #eaf1ff;
   border-color: rgba(179, 191, 214, 0.25);
+}
+
+:root[data-theme='dark'] .roommap-summary-bar {
+  background: linear-gradient(180deg, #263247, #1b2433);
+  border-color: rgba(125, 150, 185, 0.24);
+}
+
+:root[data-theme='dark'] .roommap-summary-pill {
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(120, 142, 175, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme='dark'] .roommap-summary-range {
+  color: #d7e3f9;
 }
 
 :root[data-theme='dark'] .room-branch-header svg {

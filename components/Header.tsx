@@ -7,6 +7,7 @@ interface HeaderProps {
   user: User;
   properties: Property[];
   currentPropertyId: string;
+  allowAllSelection?: boolean;
   onPropertyChange: (id: string) => void;
   onMenuClick?: () => void;
   notifications?: AppNotification[];
@@ -22,6 +23,7 @@ const Header: React.FC<HeaderProps> = ({
   user,
   properties,
   currentPropertyId,
+  allowAllSelection = true,
   onPropertyChange,
   onMenuClick,
   notifications = [],
@@ -96,8 +98,9 @@ const Header: React.FC<HeaderProps> = ({
               onChange={(e) => onPropertyChange(e.target.value)}
               className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-0 w-full cursor-pointer truncate"
             >
-              <option value="ALL" className="font-bold">Toàn bộ chi nhánh ({allowedProperties.length})</option>
-              <hr />
+              {allowAllSelection && (
+                <option value="ALL" className="font-bold">Toàn bộ chi nhánh ({allowedProperties.length})</option>
+              )}
               {allowedProperties.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
