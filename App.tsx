@@ -1,14 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import Dashboard from './pages/Dashboard';
-import RoomMap from './pages/RoomMap';
-import Bookings from './pages/Bookings'; 
-import Management from './pages/Management';
-import Reports from './pages/Reports';
-import Performance from './pages/Performance';
-import Housekeeping from './pages/Housekeeping'; 
-import SuperAdmin from './pages/SuperAdmin'; 
 import { DataService } from './services/dataService';
 import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, RoomPolicyRule } from './types';
 import { deriveBookingStatus } from './utils/bookingState';
@@ -17,6 +9,22 @@ import { useBookingAlert, AppNotification } from './hooks/useBookingAlert';
 import { useDebtAlert } from './hooks/useDebtAlert'; 
 
 type ThemeMode = 'light' | 'dark';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const RoomMap = lazy(() => import('./pages/RoomMap'));
+const Bookings = lazy(() => import('./pages/Bookings'));
+const Management = lazy(() => import('./pages/Management'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Performance = lazy(() => import('./pages/Performance'));
+const Housekeeping = lazy(() => import('./pages/Housekeeping'));
+const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+
+const PageLoadingFallback = () => (
+  <div className="min-h-[360px] flex flex-col items-center justify-center gap-3 text-gray-500">
+    <Loader2 className="animate-spin text-blue-600" size={32} />
+    <p className="text-sm font-semibold">Đang tải màn hình...</p>
+  </div>
+);
 
 const safeStorageGet = (key: string): string | null => {
   try {
@@ -798,114 +806,115 @@ const App: React.FC = () => {
 
         <main className="flex-1 p-3 md:p-6">
           <div className="max-w-7xl mx-auto h-full">
-            
-            {isSuperAdminView && (
-                 <SuperAdmin 
-                    tenants={tenantList} 
-                    plans={planList} 
-                    systemUsers={systemUsers}
-                    onRefresh={manualRefresh} 
-                    onAccessTenant={handleAccessTenant}
-                 />
-            )}
+            <Suspense fallback={<PageLoadingFallback />}>
+              {isSuperAdminView && (
+                   <SuperAdmin
+                      tenants={tenantList}
+                      plans={planList}
+                      systemUsers={systemUsers}
+                      onRefresh={manualRefresh}
+                      onAccessTenant={handleAccessTenant}
+                   />
+              )}
 
-            {!isSuperAdminView && (
-                <>
-                    {currentPage === 'dashboard' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
-                        <Dashboard
-                            bookings={bookings}
-                            rooms={rooms}
-                            properties={properties}
-                            currentPropertyId={currentPropertyId}
-                        />
-                    )}
-                    
-                    {currentPage === 'bookings' && (
-                        <Bookings 
-                            bookings={bookings}
-                            rooms={rooms}
-                            roomTypes={roomTypes}
-                            properties={properties}
-                            tags={tags}
-                            users={users}
-                            customers={customers}
-                            onRefresh={manualRefresh}
-                            onCreateBooking={() => setCurrentPage('room-map')}
-                            onOpenRoomMapBooking={handleOpenRoomMapFromBooking}
-                            currentPropertyId={currentPropertyId}
-                            isScopeLoading={isBookingsScopeLoading}
-                            currentUser={effectiveUser}
-                        />
-                    )}
+              {!isSuperAdminView && (
+                  <>
+                      {currentPage === 'dashboard' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_DASHBOARD) && (
+                          <Dashboard
+                              bookings={bookings}
+                              rooms={rooms}
+                              properties={properties}
+                              currentPropertyId={currentPropertyId}
+                          />
+                      )}
 
-                    {currentPage === 'room-map' && (
-                        <RoomMap 
-                            rooms={rooms} 
-                            roomTypes={roomTypes} 
-                            roomPolicies={roomPolicies}
-                            bookings={bookings} 
-                            customers={customers}
-                            tags={tags}
-                            properties={properties}
-                            onRefresh={manualRefresh}
-                            onUpdateStatus={handleUpdateRoomStatus}
-                            currentProperty={currentPropertyObj}
-                            currentUser={effectiveUser}
-                            searchSeed={roomMapSearchSeed}
-                            searchSeedNonce={roomMapSearchNonce}
-                        />
-                    )}
+                      {currentPage === 'bookings' && (
+                          <Bookings
+                              bookings={bookings}
+                              rooms={rooms}
+                              roomTypes={roomTypes}
+                              properties={properties}
+                              tags={tags}
+                              users={users}
+                              customers={customers}
+                              onRefresh={manualRefresh}
+                              onCreateBooking={() => setCurrentPage('room-map')}
+                              onOpenRoomMapBooking={handleOpenRoomMapFromBooking}
+                              currentPropertyId={currentPropertyId}
+                              isScopeLoading={isBookingsScopeLoading}
+                              currentUser={effectiveUser}
+                          />
+                      )}
 
-                    {currentPage === 'housekeeping' && (
-                        <Housekeeping 
-                            rooms={rooms} 
-                            bookings={bookings} 
-                            roomTypes={roomTypes} 
-                            properties={properties}
-                            currentProperty={currentPropertyObj}
-                            onRefresh={manualRefresh}
-                            onUpdateStatus={handleUpdateRoomStatus}
-                            onOpenRoomMap={handleOpenRoomMapFromHousekeeping}
-                        />
-                    )}
+                      {currentPage === 'room-map' && (
+                          <RoomMap
+                              rooms={rooms}
+                              roomTypes={roomTypes}
+                              roomPolicies={roomPolicies}
+                              bookings={bookings}
+                              customers={customers}
+                              tags={tags}
+                              properties={properties}
+                              onRefresh={manualRefresh}
+                              onUpdateStatus={handleUpdateRoomStatus}
+                              currentProperty={currentPropertyObj}
+                              currentUser={effectiveUser}
+                              searchSeed={roomMapSearchSeed}
+                              searchSeedNonce={roomMapSearchNonce}
+                          />
+                      )}
 
-                    {currentPage === 'reports' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
-                        <Reports 
-                            bookings={bookings} 
-                            rooms={rooms} 
-                            users={users} 
-                            roomTypes={roomTypes} 
-                            properties={properties} 
-                            tags={tags}
-                            currentPropertyId={currentPropertyId}
-                            currentUser={effectiveUser} 
-                        />
-                    )}
+                      {currentPage === 'housekeeping' && (
+                          <Housekeeping
+                              rooms={rooms}
+                              bookings={bookings}
+                              roomTypes={roomTypes}
+                              properties={properties}
+                              currentProperty={currentPropertyObj}
+                              onRefresh={manualRefresh}
+                              onUpdateStatus={handleUpdateRoomStatus}
+                              onOpenRoomMap={handleOpenRoomMapFromHousekeeping}
+                          />
+                      )}
 
-                    {currentPage === 'performance' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
-                        <Performance
-                            bookings={bookings}
-                            rooms={rooms}
-                            properties={properties}
-                            users={users}
-                            currentUser={effectiveUser}
-                        />
-                    )}
-                    
-                    {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
-                        <Management 
-                            users={users} 
-                            rooms={rooms} 
-                            roomTypes={roomTypes} 
-                            roomPolicies={roomPolicies}
-                            properties={properties} 
-                            tags={tags}
-                            currentUser={effectiveUser}
-                            onRefresh={manualRefresh}
-                        />
-                    )}
-                </>
-            )}
+                      {currentPage === 'reports' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
+                          <Reports
+                              bookings={bookings}
+                              rooms={rooms}
+                              users={users}
+                              roomTypes={roomTypes}
+                              properties={properties}
+                              tags={tags}
+                              currentPropertyId={currentPropertyId}
+                              currentUser={effectiveUser}
+                          />
+                      )}
+
+                      {currentPage === 'performance' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
+                          <Performance
+                              bookings={bookings}
+                              rooms={rooms}
+                              properties={properties}
+                              users={users}
+                              currentUser={effectiveUser}
+                          />
+                      )}
+
+                      {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
+                          <Management
+                              users={users}
+                              rooms={rooms}
+                              roomTypes={roomTypes}
+                              roomPolicies={roomPolicies}
+                              properties={properties}
+                              tags={tags}
+                              currentUser={effectiveUser}
+                              onRefresh={manualRefresh}
+                          />
+                      )}
+                  </>
+              )}
+            </Suspense>
           </div>
         </main>
       </div>

@@ -76,6 +76,7 @@ let activeRealtimeUnsubscribers: Array<() => void> = [];
 const missingQueryIndexPaths = new Set<string>();
 let bookingIndexWriteEnabled = true;
 const AUDIT_COALESCE_WINDOW_MS = 1500;
+const BOOKING_INDEX_FALLBACK_DELAY_MS = 1200;
 
 const CACHE = {
     properties: [] as Property[],
@@ -119,6 +120,8 @@ interface AuditActor {
     fullName?: string;
     role?: UserRole | 'SYSTEM';
     tenantId?: string;
+    permissions?: string[];
+    allowedPropertyIds?: string[];
 }
 
 interface CollectionConfig<T = any> {
@@ -172,6 +175,143 @@ let currentAuditActor: AuditActor | null = null;
 const recentAuditEntries = new Map<string, { id: string; timestamp: number }>();
 const HOLD_CLEANUP_THROTTLE_MS = 10000;
 let lastHoldCleanupAttemptMs = 0;
+
+type BookingMutationMode = 'create' | 'update' | 'delete';
+
+const isSystemMutation = (source?: AuditSource) =>
+    source === 'SYSTEM' ||
+    currentAuditActor?.role === 'SYSTEM' ||
+    currentAuditActor?.role === UserRole.SUPER_ADMIN ||
+    activeTenantId === SYSTEM_TENANT_ID;
+
+const isTenantAdminActor = () =>
+    currentAuditActor?.role === UserRole.ADMIN || currentAuditActor?.role === UserRole.SUPER_ADMIN;
+
+const actorHasAnyPermission = (permissions: string[], source?: AuditSource) => {
+    if (!currentAuditActor || isSystemMutation(source) || isTenantAdminActor()) return true;
+    const actorPermissions = currentAuditActor.permissions || [];
+    return permissions.some((permission) => actorPermissions.includes(permission));
+};
+
+const assertActorHasAnyPermission = (permissions: string[], actionLabel: string, source?: AuditSource) => {
+    if (actorHasAnyPermission(permissions, source)) return;
+    throw new Error(`Bạn không có quyền ${actionLabel}.`);
+};
+
+const assertTenantWriteScope = (item: any, actionLabel: string, source?: AuditSource) => {
+    if (!item || isSystemMutation(source)) return;
+    if (!activeTenantId || activeTenantId === SYSTEM_TENANT_ID) return;
+    if (item.tenantId && item.tenantId !== activeTenantId) {
+        throw new Error(`Không thể ${actionLabel}: dữ liệu không thuộc tenant hiện tại.`);
+    }
+};
+
+const assertPropertyWriteScope = (propertyId: string | undefined | null, actionLabel: string, source?: AuditSource) => {
+    if (!propertyId || isSystemMutation(source) || isTenantAdminActor() || !currentAuditActor) return;
+    const allowedPropertyIds = currentAuditActor.allowedPropertyIds || [];
+    if (allowedPropertyIds.length === 0 || allowedPropertyIds.includes(propertyId)) return;
+    throw new Error(`Không thể ${actionLabel}: bạn không có quyền thao tác chi nhánh này.`);
+};
+
+const getNodeMutationPermissions = (node: string, mode: 'save' | 'delete') => {
+    switch (node) {
+        case 'properties':
+        case 'rooms':
+        case 'roomPolicies':
+        case 'roomTypes':
+        case 'tags':
+        case 'transactionCategories':
+            return [PERMISSIONS.MANAGE_ROOMS];
+        case 'customers':
+            return [
+                PERMISSIONS.MANAGE_BOOKINGS,
+                PERMISSIONS.CAN_ADD_BOOKING,
+                PERMISSIONS.CAN_EDIT_BOOKING,
+            ];
+        case 'users':
+            return [PERMISSIONS.ADMIN_SETTINGS];
+        case 'tenants':
+        case 'plans':
+            return [] as string[];
+        case 'bookings':
+            if (mode === 'delete') return [PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.CAN_DELETE_BOOKING];
+            return [
+                PERMISSIONS.MANAGE_BOOKINGS,
+                PERMISSIONS.CAN_ADD_BOOKING,
+                PERMISSIONS.CAN_EDIT_BOOKING,
+            ];
+        default:
+            return [] as string[];
+    }
+};
+
+const assertSystemAdminMutation = (actionLabel: string, source?: AuditSource) => {
+    if (!currentAuditActor || isSystemMutation(source)) return;
+    throw new Error(`Bạn không có quyền ${actionLabel}.`);
+};
+
+const assertNodeMutationAllowed = (
+    node: string,
+    mode: 'save' | 'delete',
+    item?: any,
+    source?: AuditSource
+) => {
+    if (node === 'tenants' || node === 'plans') {
+        assertSystemAdminMutation(mode === 'delete' ? `xóa ${node}` : `cập nhật ${node}`, source);
+        return;
+    }
+
+    const permissions = getNodeMutationPermissions(node, mode);
+    if (permissions.length > 0) {
+        assertActorHasAnyPermission(
+            permissions,
+            mode === 'delete' ? `xóa ${node}` : `cập nhật ${node}`,
+            source
+        );
+    }
+
+    assertTenantWriteScope(item, mode === 'delete' ? `xóa ${node}` : `cập nhật ${node}`, source);
+    assertPropertyWriteScope(item?.propertyId, mode === 'delete' ? `xóa ${node}` : `cập nhật ${node}`, source);
+};
+
+const assertRoomStatusMutationAllowed = (room: Room, source?: AuditSource) => {
+    if (
+        currentAuditActor?.role === UserRole.HOUSEKEEPING ||
+        actorHasAnyPermission(
+            [PERMISSIONS.MANAGE_ROOMS, PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.CAN_EDIT_BOOKING],
+            source
+        )
+    ) {
+        assertTenantWriteScope(room, 'cập nhật trạng thái phòng', source);
+        assertPropertyWriteScope(room.propertyId, 'cập nhật trạng thái phòng', source);
+        return;
+    }
+
+    throw new Error('Bạn không có quyền cập nhật trạng thái phòng.');
+};
+
+const assertBookingMutationAllowed = (mode: BookingMutationMode, booking: Booking, source?: AuditSource) => {
+    const permissionMap: Record<BookingMutationMode, string[]> = {
+        create: [PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.CAN_ADD_BOOKING],
+        update: [PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.CAN_EDIT_BOOKING],
+        delete: [PERMISSIONS.MANAGE_BOOKINGS, PERMISSIONS.CAN_DELETE_BOOKING],
+    };
+    const actionMap: Record<BookingMutationMode, string> = {
+        create: 'tạo đơn',
+        update: 'sửa đơn',
+        delete: 'xóa đơn',
+    };
+
+    assertActorHasAnyPermission(permissionMap[mode], actionMap[mode], source);
+    assertTenantWriteScope(booking, actionMap[mode], source);
+    assertPropertyWriteScope(booking.propertyId, actionMap[mode], source);
+};
+
+const assertResetBookingsAllowed = () => {
+    if (!currentAuditActor || isSystemMutation()) return;
+    if (isTenantAdminActor()) return;
+    throw new Error('Chỉ quản trị viên mới được xóa toàn bộ dữ liệu đặt phòng.');
+};
 
 const normalizeUserCredentialsForStorage = (user: User, existingUser?: User | null): User => {
     const hasNewPassword = typeof user.password === 'string' && user.password.trim().length > 0;
@@ -290,15 +430,26 @@ const getHistoryPath = (tenantId?: string | null) => {
 };
 
 const isFirebaseDebugEnabled = () => {
-    if (typeof window === 'undefined') return !!import.meta.env.DEV;
+    const envDebug = String(import.meta.env.VITE_FIREBASE_DEBUG || '').toLowerCase();
+    if (envDebug === '1' || envDebug === 'true') return true;
+    if (typeof window === 'undefined') return false;
     try {
-        if (import.meta.env.DEV) return true;
-        const hostname = window.location?.hostname || '';
-        if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
         if ((window as any).__KHOST_ENABLE_FIREBASE_DEBUG__ === true) return true;
         return window.localStorage?.getItem('k_host_firebase_debug') === '1';
     } catch {
-        return !!import.meta.env.DEV;
+        return false;
+    }
+};
+
+const isBookingIndexReadFallbackEnabled = () => {
+    const envValue = String(import.meta.env.VITE_BOOKING_INDEX_READ_FALLBACK || '').toLowerCase();
+    if (envValue === '1' || envValue === 'true') return true;
+    if (envValue === '0' || envValue === 'false') return false;
+    if (typeof window === 'undefined') return false;
+    try {
+        return window.localStorage?.getItem('k_host_booking_index_read_fallback') === '1';
+    } catch {
+        return false;
     }
 };
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
@@ -431,9 +582,11 @@ const trackedUpdateRootWithBookingIndexFallback = async (
 
         bookingIndexWriteEnabled = false;
         const fallbackUpdates = stripBookingIndexUpdates(updates);
-        console.warn(
-            `[Firebase Debug] Booking index write is not permitted by current rules. Falling back to booking-only updates until rules are updated.`
-        );
+        if (isFirebaseDebugEnabled()) {
+            console.warn(
+                `[Firebase Debug] Booking index write is not permitted by current rules. Falling back to booking-only updates until rules are updated.`
+            );
+        }
         return trackedUpdateRoot(fallbackUpdates, {
             ...meta,
             bookingIndexFallback: true,
@@ -893,6 +1046,8 @@ const resolveAuditActor = (
             fullName: knownUser.fullName,
             role: knownUser.role,
             tenantId: tenantId || knownUser.tenantId,
+            permissions: knownUser.permissions || [],
+            allowedPropertyIds: knownUser.allowedPropertyIds || [],
         };
     }
 
@@ -1107,7 +1262,7 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             if (!propertySnap.exists() || propertySnap.size === 0) {
                 trackedGet(`${basePath}/rooms`).then((roomSnap) => {
                     if (!roomSnap.exists()) {
-                        console.log(`Seeding initial data for ${tenantId}`);
+                        if (isFirebaseDebugEnabled()) console.log(`Seeding initial data for ${tenantId}`);
                         _seedTenantData(tenantId);
                     }
                 });
@@ -1166,9 +1321,11 @@ const _loadScopedCollectionByProperty = async <T extends { id?: string }>(
                 throw error;
             }
             missingQueryIndexPaths.add(path);
-            console.warn(
-                `[Firebase Debug] Missing index for ${path}. Falling back to full read until ".indexOn": "propertyId" is added to database rules.`
-            );
+            if (isFirebaseDebugEnabled()) {
+                console.warn(
+                    `[Firebase Debug] Missing index for ${path}. Falling back to full read until ".indexOn": "propertyId" is added to database rules.`
+                );
+            }
         }
     }
 
@@ -1333,9 +1490,11 @@ const subscribeScopedCollectionByProperty = <T extends { id?: string }>(
                 (error) => {
                     if (isMissingIndexError(error)) {
                         missingQueryIndexPaths.add(path);
-                        console.warn(
-                            `[Firebase Debug] Missing realtime index for ${path}. Falling back to full realtime read until ".indexOn": "propertyId" is added to database rules.`
-                        );
+                        if (isFirebaseDebugEnabled()) {
+                            console.warn(
+                                `[Firebase Debug] Missing realtime index for ${path}. Falling back to full realtime read until ".indexOn": "propertyId" is added to database rules.`
+                            );
+                        }
                         activateFallback();
                         return;
                     }
@@ -1461,11 +1620,13 @@ const _fetchOperationalBookingsForProperties = async (
     const lowerBoundMs = paddedStart.getTime();
     const upperBoundMs = paddedEnd.getTime();
 
-    const fallback = await _fetchBookingsForProperties(scopeIds);
-    fallback.forEach((booking) => {
-        if (!booking?.id) return;
-        unique.set(booking.id, booking);
-    });
+    if (isBookingIndexReadFallbackEnabled()) {
+        const fallback = await _fetchBookingsForProperties(scopeIds);
+        fallback.forEach((booking) => {
+            if (!booking?.id) return;
+            unique.set(booking.id, booking);
+        });
+    }
 
     return filterBookingsForRange(Array.from(unique.values()), lowerBoundMs, upperBoundMs);
 };
@@ -1529,19 +1690,8 @@ const _subscribeOperationalBookings = (
     const snapshotMap = new Map<string, any>();
     const expectedSnapshotCount = scopeIds.length * dayKeys.length;
     const seenSnapshotKeys = new Set<string>();
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
     let fallbackRows: Booking[] = [];
-
-    const fallbackUnsubscribe = subscribeScopedCollectionByProperty<Booking>(
-        'bookings',
-        'bookings',
-        scopeIds,
-        (rows) => {
-            fallbackRows = rows;
-            emitIndexRows();
-        },
-        errorCallback,
-        false
-    );
 
     const emitIndexRows = () => {
         const unique = new Map<string, Booking>();
@@ -1560,6 +1710,20 @@ const _subscribeOperationalBookings = (
         callback(filterBookingsForRange(Array.from(unique.values()), lowerBoundMs, upperBoundMs));
     };
 
+    const scheduleOneShotFallback = () => {
+        if (!isBookingIndexReadFallbackEnabled() || fallbackTimer) return;
+        fallbackTimer = setTimeout(() => {
+            _fetchBookingsForProperties(scopeIds)
+                .then((rows) => {
+                    fallbackRows = rows;
+                    emitIndexRows();
+                })
+                .catch((error) => {
+                    errorCallback?.(error);
+                });
+        }, BOOKING_INDEX_FALLBACK_DELAY_MS);
+    };
+
     const unsubscribes = scopeIds.flatMap((propertyId) =>
         dayKeys.map((dateKey) =>
             trackedOnValue(
@@ -1569,6 +1733,9 @@ const _subscribeOperationalBookings = (
                     seenSnapshotKeys.add(snapshotKey);
                     snapshotMap.set(snapshotKey, snap);
                     emitIndexRows();
+                    if (seenSnapshotKeys.size >= expectedSnapshotCount) {
+                        scheduleOneShotFallback();
+                    }
                 },
                 errorCallback
             )
@@ -1583,12 +1750,8 @@ const _subscribeOperationalBookings = (
                 console.warn('Cleanup operational booking subscription failed', error);
             }
         });
-        if (fallbackUnsubscribe) {
-            try {
-                fallbackUnsubscribe();
-            } catch (error) {
-                console.warn('Cleanup operational booking fallback subscription failed', error);
-            }
+        if (fallbackTimer) {
+            clearTimeout(fallbackTimer);
         }
     };
 };
@@ -1687,7 +1850,9 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
 
-    trackedUpdateRoot(updates, { source: 'seed-tenant', tenantId }).then(() => console.log('Seeding complete'));
+    trackedUpdateRoot(updates, { source: 'seed-tenant', tenantId }).then(() => {
+        if (isFirebaseDebugEnabled()) console.log('Seeding complete');
+    });
 };
 
 const _saveItem = (node: string, item: any) => {
@@ -1698,6 +1863,7 @@ const _saveItem = (node: string, item: any) => {
 
     const normalizedItem = removeUndefinedDeep(normalizeForNode(node, item, activeTenantId));
     if (!normalizedItem?.id) return;
+    assertNodeMutationAllowed(node, 'save', normalizedItem);
 
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
@@ -1725,6 +1891,8 @@ const _deleteItem = (node: string, id: string) => {
 
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
+    const itemBefore = Array.isArray(list) ? list.find((entry: any) => entry.id === id) : null;
+    assertNodeMutationAllowed(node, 'delete', itemBefore || { id });
     if (Array.isArray(list)) {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] = list.filter((entry: any) => entry.id !== id);
@@ -1745,6 +1913,7 @@ const _saveListAsMap = (node: string, list: any[]) => {
     const normalizedList = list
         .map((item) => removeUndefinedDeep(normalizeForNode(node, item, activeTenantId)))
         .filter((item) => item?.id);
+    normalizedList.forEach((item) => assertNodeMutationAllowed(node, 'save', item));
     const updates: Record<string, any> = {};
     const nextIds = new Set(normalizedList.map((item) => item.id));
 
@@ -1783,6 +1952,16 @@ const _deleteItems = (node: string, ids: string[]) => {
 
     const basePath = getBaseRef();
     if (!basePath) return;
+
+    // @ts-ignore
+    const currentList = CACHE[node as keyof typeof CACHE];
+    if (Array.isArray(currentList)) {
+        currentList
+            .filter((entry: any) => ids.includes(entry.id))
+            .forEach((entry: any) => assertNodeMutationAllowed(node, 'delete', entry));
+    } else {
+        ids.forEach((id) => assertNodeMutationAllowed(node, 'delete', { id }));
+    }
 
     const updates: Record<string, any> = {};
     ids.forEach((id) => {
@@ -1919,6 +2098,7 @@ const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: Ro
     if (!roomBefore) {
         throw new Error(`Không tìm thấy phòng ${roomId} để cập nhật trạng thái.`);
     }
+    assertRoomStatusMutationAllowed(roomBefore, options.source);
     if (roomBefore.status === status) return;
 
     const existedInCache = CACHE.rooms.some((room) => room.id === roomId);
@@ -2020,12 +2200,12 @@ const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
     _dataChangeCallback();
     await _syncRoomStatusesForRooms(
         nextBookings.filter((booking) => booking.status !== BookingStatus.DELETED).map((booking) => booking.roomId),
-        { source: options.source, suppressLog: true }
+        { source: options.source || 'SYSTEM', suppressLog: true }
     );
 };
 
 const _addBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
-    const { savedBooking } = await _saveBookingAtomic(booking, 'create');
+    const { savedBooking } = await _saveBookingAtomic(booking, 'create', options);
 
     if (savedBooking.status === BookingStatus.CHECKED_IN) {
         _updateRoomStatus(savedBooking.roomId, RoomStatus.OCCUPIED, {
@@ -2059,7 +2239,7 @@ const _addBooking = async (booking: Booking, options: BookingActionOptions = {})
 };
 
 const _updateBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
-    const { savedBooking, previousBooking } = await _saveBookingAtomic(booking, 'update');
+    const { savedBooking, previousBooking } = await _saveBookingAtomic(booking, 'update', options);
     const oldBooking = previousBooking || null;
 
     if (!oldBooking) {
@@ -2546,6 +2726,7 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         if (normalizedUpsertMap.has(normalizedBooking.id)) {
             throw new Error(`Trùng mã đơn ${normalizedBooking.id} trong cùng một lần lưu nhóm.`);
         }
+        assertBookingMutationAllowed(item.mode, normalizedBooking as Booking, source);
         normalizedUpsertMap.set(normalizedBooking.id, {
             booking: normalizedBooking as Booking,
             mode: item.mode,
@@ -2589,6 +2770,7 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         if (!existing || existing.status === BookingStatus.DELETED) {
             throw new Error(`Đơn ${deleteId} đã bị xóa hoặc không còn tồn tại.`);
         }
+        assertBookingMutationAllowed('delete', existing, source);
         deletedBefore.push(existing);
         nextMap.delete(deleteId);
     }
@@ -2602,6 +2784,9 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         }
         if (item.mode === 'update' && (!existing || existing.status === BookingStatus.DELETED)) {
             throw new Error(`Đơn ${nextBooking.id} đã bị xóa hoặc không còn tồn tại.`);
+        }
+        if (item.mode === 'update' && existing) {
+            assertBookingMutationAllowed('update', existing, source);
         }
 
         beforeById.set(nextBooking.id, existing || null);
@@ -2812,6 +2997,7 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
 
     const bookingsToDelete = CACHE.bookings.filter((booking) => ids.includes(booking.id));
     if (bookingsToDelete.length === 0) return;
+    bookingsToDelete.forEach((booking) => assertBookingMutationAllowed('delete', booking, options.source));
 
     const updates: Record<string, any> = {};
     bookingsToDelete.forEach((booking) => {
@@ -2873,6 +3059,7 @@ const _resetAllBookings = async () => {
     }
 
     await _assertOnlineForMutation('reset dữ liệu');
+    assertResetBookingsAllowed();
 
     const basePath = getBaseRef();
     if (!basePath) {
@@ -2942,6 +3129,7 @@ const _deleteBooking = async (id: string, staffId: string, options: BookingActio
     if (!deletedBooking || deletedBooking.status === BookingStatus.DELETED) {
         return false;
     }
+    assertBookingMutationAllowed('delete', deletedBooking, source);
 
     const deleteUpdates: Record<string, unknown> = {
         [`${basePath}/bookings/${id}`]: null,
@@ -3016,6 +3204,7 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
 
     const concreteDeletedBookings = deletedBookings.filter(Boolean) as Booking[];
     if (concreteDeletedBookings.length === 0) return [] as string[];
+    concreteDeletedBookings.forEach((booking) => assertBookingMutationAllowed('delete', booking, source));
 
     const updates: Record<string, unknown> = {};
     concreteDeletedBookings.forEach((booking) => {
@@ -3083,6 +3272,7 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
 
 const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
     if (!db) return;
+    assertNodeMutationAllowed('users', 'save', user);
 
     const targetTenantId =
         activeTenantId && activeTenantId !== SYSTEM_TENANT_ID ? activeTenantId : user.tenantId;
@@ -3121,6 +3311,7 @@ const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
 
 const _deleteUser = (id: string) => {
     if (!db) return;
+    assertNodeMutationAllowed('users', 'delete', resolveUserById(id) || { id });
 
     const user = resolveUserById(id);
     const targetTenantId = user?.tenantId && user.tenantId !== SYSTEM_TENANT_ID ? user.tenantId : activeTenantId;
@@ -3155,6 +3346,7 @@ const _deleteUser = (id: string) => {
 
 const _deleteTenant = (id: string) => {
     if (!db) return;
+    assertSystemAdminMutation('xóa tenant');
 
     const tenant = CACHE.tenants.find((item) => item.id === id);
     const updates: Record<string, any> = {
@@ -3178,6 +3370,7 @@ const _deleteTenant = (id: string) => {
 
 const _seedTenantAdminUser = (user: User) => {
     if (!db) return;
+    assertSystemAdminMutation('khởi tạo admin tenant');
     const normalizedUser = normalizeUserCredentialsForStorage(user);
 
     const updates: Record<string, any> = {
@@ -3482,12 +3675,14 @@ const _cleanupExpiredHoldBookings = async (options: BookingActionOptions = {}) =
 
 const _saveBookingAtomic = async (
     booking: Booking,
-    mode: 'create' | 'update'
+    mode: 'create' | 'update',
+    options: BookingActionOptions = {}
 ) => {
     if (!booking?.id) throw new Error('Booking không hợp lệ');
 
     const normalizedBooking = removeUndefinedDeep(normalizeForNode('bookings', booking, activeTenantId));
     if (!normalizedBooking?.id) throw new Error('Booking không hợp lệ');
+    assertBookingMutationAllowed(mode, normalizedBooking as Booking, options.source);
 
     const missingUpdateMessage = `Đơn ${normalizedBooking.id} đã bị xóa hoặc không còn tồn tại. Vui lòng tải lại dữ liệu.`;
 
@@ -3532,6 +3727,9 @@ const _saveBookingAtomic = async (
 
     if (mode === 'update' && (!previousBookingFromCommittedTxn || previousBookingFromCommittedTxn.status === BookingStatus.DELETED)) {
         throw new Error(missingUpdateMessage);
+    }
+    if (mode === 'update' && previousBookingFromCommittedTxn) {
+        assertBookingMutationAllowed('update', previousBookingFromCommittedTxn, options.source);
     }
 
     const scheduleChanged =
@@ -3616,6 +3814,8 @@ export const DataService = {
                   fullName: user.fullName,
                   role: user.role,
                   tenantId: user.tenantId,
+                  permissions: user.permissions || [],
+                  allowedPropertyIds: user.allowedPropertyIds || [],
               }
             : null;
     },
@@ -3639,6 +3839,8 @@ export const DataService = {
                 fullName: user.fullName,
                 role: user.role,
                 tenantId,
+                permissions: user.permissions || [],
+                allowedPropertyIds: user.allowedPropertyIds || [],
             },
         });
     },
@@ -3663,6 +3865,8 @@ export const DataService = {
                 fullName: user.fullName,
                 role: user.role,
                 tenantId: tenantId || undefined,
+                permissions: user.permissions || [],
+                allowedPropertyIds: user.allowedPropertyIds || [],
             },
         });
     },
