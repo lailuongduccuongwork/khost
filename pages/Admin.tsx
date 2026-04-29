@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { User, UserRole, Property, PERMISSIONS } from '../types';
 import { Trash2, UserPlus, AlertTriangle } from 'lucide-react';
 import { DataService } from '../services/dataService';
@@ -322,17 +323,35 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
         </table>
       </div>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white p-6 md:p-7 rounded-2xl w-full max-w-2xl shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-5">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
-                {formError && (
-                    <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                        {formError}
+      {showModal && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4 md:p-6">
+            <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl animate-fade-in max-h-[calc(100dvh-32px)] overflow-hidden flex flex-col">
+                <div className="shrink-0 border-b border-gray-100 px-5 py-4 md:px-7">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 className="text-xl font-bold text-gray-900">{editingUserId ? 'Chỉnh sửa tài khoản' : 'Thêm nhân viên mới'}</h3>
+                            <p className="mt-1 text-sm text-gray-500">Thiết lập tài khoản, vai trò, quyền thao tác và chi nhánh được truy cập.</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setShowModal(false)}
+                            disabled={isSaving}
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-900 disabled:opacity-50"
+                            aria-label="Đóng popup nhân viên"
+                        >
+                            ×
+                        </button>
                     </div>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7">
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-5 md:px-7">
+                    {formError && (
+                        <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                            {formError}
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7">
                     <div className="space-y-4">
                         <h4 className="font-bold text-gray-700 border-b pb-2">Thông tin cơ bản</h4>
                         <div>
@@ -443,15 +462,17 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
                         </div>
                     </div>
                 </div>
+                </div>
 
-                <div className="flex justify-end gap-3 mt-8 pt-4 border-t">
+                <div className="shrink-0 flex justify-end gap-3 border-t border-gray-100 bg-white px-5 py-4 md:px-7">
                     <button onClick={() => setShowModal(false)} disabled={isSaving} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium disabled:opacity-50">Hủy</button>
                     <button onClick={handleSaveUser} disabled={isSaving} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium shadow-sm disabled:opacity-60">
                         {isSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {showDeleteConfirm && userToDelete && (
