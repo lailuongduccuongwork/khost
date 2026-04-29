@@ -177,6 +177,16 @@ const HOLD_CLEANUP_THROTTLE_MS = 10000;
 let lastHoldCleanupAttemptMs = 0;
 
 type BookingMutationMode = 'create' | 'update' | 'delete';
+type ManagementCascadeDeleteKind = 'property' | 'roomType' | 'room';
+
+interface ManagementCascadeDeleteImpact {
+    kind: ManagementCascadeDeleteKind;
+    targetId: string;
+    rooms: number;
+    roomTypes: number;
+    bookings: number;
+    roomPolicies: number;
+}
 
 const isSystemMutation = (source?: AuditSource) =>
     source === 'SYSTEM' ||
@@ -3270,6 +3280,230 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
     return concreteDeletedBookings.map((booking) => booking.id);
 };
 
+const getRoomTypePropertyId = (roomType: RoomType) => (roomType as RoomType & { propertyId?: string }).propertyId;
+
+const getManagementCascadeDeleteImpact = (
+    kind: ManagementCascadeDeleteKind,
+    targetId: string
+): ManagementCascadeDeleteImpact => {
+    const impactedRoomIds = new Set<string>();
+    const impactedRoomTypeIds = new Set<string>();
+
+    if (kind === 'property') {
+        CACHE.rooms
+            .filter((room) => room.propertyId === targetId)
+            .forEach((room) => {
+                impactedRoomIds.add(room.id);
+            });
+        CACHE.roomTypes
+            .filter((roomType) => getRoomTypePropertyId(roomType) === targetId)
+            .forEach((roomType) => impactedRoomTypeIds.add(roomType.id));
+    }
+
+    if (kind === 'roomType') {
+        impactedRoomTypeIds.add(targetId);
+        CACHE.rooms
+            .filter((room) => room.typeId === targetId)
+            .forEach((room) => impactedRoomIds.add(room.id));
+    }
+
+    if (kind === 'room') {
+        impactedRoomIds.add(targetId);
+    }
+
+    const impactedBookings = CACHE.bookings.filter((booking) => {
+        if (kind === 'property' && booking.propertyId === targetId) return true;
+        return impactedRoomIds.has(booking.roomId);
+    });
+
+    const impactedPolicies = CACHE.roomPolicies.filter((policy) => {
+        const policyPropertyIds = policy.propertyIds || [];
+        const policyRoomTypeIds = policy.roomTypeIds || [];
+        const policyRoomIds = policy.roomIds || [];
+
+        if (kind === 'property' && policyPropertyIds.includes(targetId)) return true;
+        if (policyRoomIds.some((roomId) => impactedRoomIds.has(roomId))) return true;
+        if (policyRoomTypeIds.some((roomTypeId) => impactedRoomTypeIds.has(roomTypeId))) return true;
+        return false;
+    });
+
+    return {
+        kind,
+        targetId,
+        rooms: kind === 'room' ? (CACHE.rooms.some((room) => room.id === targetId) ? 1 : 0) : impactedRoomIds.size,
+        roomTypes:
+            kind === 'roomType'
+                ? (CACHE.roomTypes.some((roomType) => roomType.id === targetId) ? 1 : 0)
+                : impactedRoomTypeIds.size,
+        bookings: impactedBookings.length,
+        roomPolicies: impactedPolicies.length,
+    };
+};
+
+const _cascadeDeleteManagementItem = async (
+    kind: ManagementCascadeDeleteKind,
+    targetId: string,
+    staffId?: string
+) => {
+    if (!activeTenantId || !db || !targetId) {
+        throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    }
+
+    await _assertOnlineForMutation('xóa dữ liệu cài đặt');
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        throw new Error('Không xác định được tenant hiện tại.');
+    }
+
+    const target =
+        kind === 'property'
+            ? CACHE.properties.find((property) => property.id === targetId)
+            : kind === 'roomType'
+              ? CACHE.roomTypes.find((roomType) => roomType.id === targetId)
+              : CACHE.rooms.find((room) => room.id === targetId);
+
+    if (!target) {
+        throw new Error('Dữ liệu cần xóa không còn tồn tại. Vui lòng tải lại trang.');
+    }
+
+    const impactedRoomIds = new Set<string>();
+    const impactedRoomTypeIds = new Set<string>();
+
+    if (kind === 'property') {
+        assertNodeMutationAllowed('properties', 'delete', target);
+        CACHE.rooms
+            .filter((room) => room.propertyId === targetId)
+            .forEach((room) => {
+                assertNodeMutationAllowed('rooms', 'delete', room);
+                impactedRoomIds.add(room.id);
+            });
+        CACHE.roomTypes
+            .filter((roomType) => getRoomTypePropertyId(roomType) === targetId)
+            .forEach((roomType) => {
+                assertNodeMutationAllowed('roomTypes', 'delete', roomType);
+                impactedRoomTypeIds.add(roomType.id);
+            });
+    }
+
+    if (kind === 'roomType') {
+        assertNodeMutationAllowed('roomTypes', 'delete', target);
+        impactedRoomTypeIds.add(targetId);
+        CACHE.rooms
+            .filter((room) => room.typeId === targetId)
+            .forEach((room) => {
+                assertNodeMutationAllowed('rooms', 'delete', room);
+                impactedRoomIds.add(room.id);
+            });
+    }
+
+    if (kind === 'room') {
+        assertNodeMutationAllowed('rooms', 'delete', target);
+        impactedRoomIds.add(targetId);
+    }
+
+    const impactedBookings = CACHE.bookings.filter((booking) => {
+        if (kind === 'property' && booking.propertyId === targetId) return true;
+        return impactedRoomIds.has(booking.roomId);
+    });
+    impactedBookings.forEach((booking) => assertBookingMutationAllowed('delete', booking));
+
+    const impactedPolicyIds = new Set<string>();
+    CACHE.roomPolicies.forEach((policy) => {
+        const policyPropertyIds = policy.propertyIds || [];
+        const policyRoomTypeIds = policy.roomTypeIds || [];
+        const policyRoomIds = policy.roomIds || [];
+        if (kind === 'property' && policyPropertyIds.includes(targetId)) impactedPolicyIds.add(policy.id);
+        if (policyRoomIds.some((roomId) => impactedRoomIds.has(roomId))) impactedPolicyIds.add(policy.id);
+        if (policyRoomTypeIds.some((roomTypeId) => impactedRoomTypeIds.has(roomTypeId))) impactedPolicyIds.add(policy.id);
+    });
+    CACHE.roomPolicies
+        .filter((policy) => impactedPolicyIds.has(policy.id))
+        .forEach((policy) => assertNodeMutationAllowed('roomPolicies', 'delete', policy));
+
+    const updates: Record<string, unknown> = {};
+
+    if (kind === 'property') updates[`${basePath}/properties/${targetId}`] = null;
+    if (kind === 'roomType') updates[`${basePath}/roomTypes/${targetId}`] = null;
+    if (kind === 'room') updates[`${basePath}/rooms/${targetId}`] = null;
+
+    impactedRoomIds.forEach((roomId) => {
+        updates[`${basePath}/rooms/${roomId}`] = null;
+    });
+    impactedRoomTypeIds.forEach((roomTypeId) => {
+        updates[`${basePath}/roomTypes/${roomTypeId}`] = null;
+    });
+    impactedPolicyIds.forEach((policyId) => {
+        updates[`${basePath}/roomPolicies/${policyId}`] = null;
+    });
+    impactedBookings.forEach((booking) => {
+        updates[`${basePath}/bookings/${booking.id}`] = null;
+        Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
+    });
+
+    await trackedUpdateRootWithBookingIndexFallback(updates, {
+        operation: 'cascade-delete-management-item',
+        kind,
+        targetId,
+        roomCount: impactedRoomIds.size,
+        roomTypeCount: impactedRoomTypeIds.size,
+        bookingCount: impactedBookings.length,
+        roomPolicyCount: impactedPolicyIds.size,
+    });
+
+    CACHE.properties = kind === 'property' ? CACHE.properties.filter((property) => property.id !== targetId) : CACHE.properties;
+    CACHE.roomTypes = CACHE.roomTypes.filter((roomType) => !impactedRoomTypeIds.has(roomType.id));
+    CACHE.rooms = CACHE.rooms.filter((room) => !impactedRoomIds.has(room.id));
+    CACHE.roomPolicies = CACHE.roomPolicies.filter((policy) => !impactedPolicyIds.has(policy.id));
+    const impactedBookingIds = new Set(impactedBookings.map((booking) => booking.id));
+    CACHE.bookings = CACHE.bookings.filter((booking) => !impactedBookingIds.has(booking.id));
+    _dataChangeCallback();
+
+    const impact: ManagementCascadeDeleteImpact = {
+        kind,
+        targetId,
+        rooms: impactedRoomIds.size,
+        roomTypes: impactedRoomTypeIds.size,
+        bookings: impactedBookings.length,
+        roomPolicies: impactedPolicyIds.size,
+    };
+    const config =
+        kind === 'property'
+            ? COLLECTION_CONFIGS.properties
+            : kind === 'roomType'
+              ? COLLECTION_CONFIGS.roomTypes
+              : COLLECTION_CONFIGS.rooms;
+
+    _recordHistory({
+        action: 'DELETE',
+        entityType: config.entityType,
+        entityId: targetId,
+        entityLabel: config.getLabel(target as any),
+        description: `Xóa dây chuyền ${config.label} ${config.getLabel(target as any)}`,
+        before: target,
+        metadata: {
+            ...buildNodeMetadata(kind === 'property' ? 'properties' : kind === 'roomType' ? 'roomTypes' : 'rooms', target),
+            cascadeImpact: impact,
+        },
+        staffId,
+    });
+
+    if (impactedBookings.length > 0) {
+        _recordHistory({
+            action: 'BULK_DELETE',
+            entityType: 'BOOKING',
+            description: `Xóa dây chuyền ${impactedBookings.length} đơn liên quan tới ${config.getLabel(target as any)}`,
+            metadata: {
+                bookingIds: impactedBookings.map((booking) => booking.id),
+                cascadeSource: { kind, targetId },
+            },
+            staffId,
+        });
+    }
+
+    return impact;
+};
+
 const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
     if (!db) return;
     assertNodeMutationAllowed('users', 'save', user);
@@ -3484,16 +3718,12 @@ const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
         }
 
         if (policy.mode === 'HOURLY_ONLY') {
-            // Chặn mọi đơn bao trùm full khung 14h -> 12h hôm sau
-            // (bao gồm cả check-in sớm hoặc check-out muộn).
-            const coversDailyWindow = windows.some(
-                (window) => startMs <= window.startMs && endMs >= window.endMs
-            );
-            if (!coversDailyWindow) continue;
+            const durationHours = (endMs - startMs) / (1000 * 60 * 60);
+            if (durationHours <= 12) continue;
 
             return {
                 valid: false,
-                reason: `Phòng ${room.number} chỉ nhận khách giờ trong khung này, không nhận đơn 14h-12h.`,
+                reason: `Phòng ${room.number} chỉ nhận khách giờ trong khung này, tổng thời gian lưu trú không được vượt quá 12 tiếng.`,
                 policyMode: policy.mode,
             };
         }
@@ -4158,6 +4388,15 @@ export const DataService = {
             });
         });
     },
+    getManagementCascadeDeleteImpact: (
+        kind: ManagementCascadeDeleteKind,
+        targetId: string
+    ) => getManagementCascadeDeleteImpact(kind, targetId),
+    cascadeDeleteManagementItem: (
+        kind: ManagementCascadeDeleteKind,
+        targetId: string,
+        staffId?: string
+    ) => _cascadeDeleteManagementItem(kind, targetId, staffId),
 
     deleteBookingsByBatchId: async (batchId: string, staffId: string) => {
         const toDelete = CACHE.bookings.filter((booking) => booking.importBatchId === batchId);

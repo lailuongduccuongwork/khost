@@ -19,6 +19,23 @@ interface ManagementProps {
 }
 
 type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'ADVANCED';
+type CascadeDeleteKind = 'property' | 'roomType' | 'room';
+type NewRoomTypeDraft = { propertyId: string; name: string } | null;
+type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
+
+interface DangerousDeleteModalState {
+    isOpen: boolean;
+    kind: CascadeDeleteKind;
+    id: string;
+    name: string;
+    title: string;
+    impact: {
+        rooms: number;
+        roomTypes: number;
+        bookings: number;
+        roomPolicies: number;
+    };
+}
 
 // --- SUB-COMPONENT: INLINE INPUT (Đã được tối ưu UI/UX để không bị khuất chữ) ---
 const InlineInput = ({ 
@@ -60,8 +77,20 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isMobileTabPickerOpen, setIsMobileTabPickerOpen] = useState(false);
   
-  // Modal xóa chung
-  const [deleteModal, setDeleteModal] = useState<{isOpen: boolean, title: string, onConfirm: () => void}>({ isOpen: false, title: '', onConfirm: () => {} });
+  // Modal xóa nguy hiểm: bắt buộc gõ XÓA để tránh xóa dây chuyền nhầm dữ liệu thật.
+  const [deleteModal, setDeleteModal] = useState<DangerousDeleteModalState | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
+  const [draftTags, setDraftTags] = useState<Tag[]>(tags);
+  const [draftCategories, setDraftCategories] = useState<TransactionCategory[]>(DataService.getTransactionCategories());
+  const [collapsedPropertyIds, setCollapsedPropertyIds] = useState<string[]>([]);
+  const [newRoomTypeDraft, setNewRoomTypeDraft] = useState<NewRoomTypeDraft>(null);
+  const [newRoomDraft, setNewRoomDraft] = useState<NewRoomDraft>(null);
+  const [roomManagementSearch, setRoomManagementSearch] = useState('');
+  const [managementRooms, setManagementRooms] = useState<Room[]>(rooms);
+  const [managementRoomTypes, setManagementRoomTypes] = useState<RoomType[]>(roomTypes);
 
   // --- DRAG & DROP STATE ---
   const [draggedPropIdx, setDraggedPropIdx] = useState<number | null>(null);
@@ -88,6 +117,109 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   ];
   const activeTabMeta = managementTabs.find(tab => tab.id === activeTab) || managementTabs[0];
   const ActiveTabIcon = activeTabMeta.icon;
+  const managementPropertyIds = useMemo(
+      () => properties.map(prop => prop.id).filter(Boolean).sort(),
+      [properties]
+  );
+
+  useEffect(() => {
+      setDraftTags(tags);
+  }, [tags]);
+
+  useEffect(() => {
+      setDraftCategories(DataService.getTransactionCategories());
+  }, [activeTab, tags]);
+
+  useEffect(() => {
+      setManagementRooms(rooms);
+  }, [rooms]);
+
+  useEffect(() => {
+      if (activeTab !== 'ROOM_MANAGEMENT') return;
+      if (managementPropertyIds.length === 0) {
+          setManagementRooms([]);
+          return;
+      }
+
+      let cancelled = false;
+      DataService.loadRoomsForPropertiesView(managementPropertyIds)
+          .then((loadedRooms) => {
+              if (!cancelled) setManagementRooms(loadedRooms);
+          })
+          .catch((error) => {
+              console.error('Failed to load full room list for room management', error);
+          });
+
+      return () => {
+          cancelled = true;
+      };
+  }, [activeTab, managementPropertyIds]);
+
+  useEffect(() => {
+      setManagementRoomTypes(roomTypes);
+  }, [roomTypes]);
+
+  const runSaveAction = async (actionLabel: string, action: () => Promise<unknown> | unknown) => {
+      try {
+          setSaveStatus(`Đang lưu ${actionLabel}...`);
+          await Promise.resolve(action());
+          setSaveStatus(`Đã lưu ${actionLabel}.`);
+          window.setTimeout(() => setSaveStatus(''), 2200);
+          onRefresh();
+          return true;
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không rõ lỗi.';
+          setSaveStatus(`Lỗi lưu ${actionLabel}: ${message}`);
+          return false;
+      }
+  };
+
+  const normalizeName = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+
+  const getRoomTypePropertyId = (type: RoomType) => (type as RoomType & { propertyId?: string }).propertyId;
+
+  // --- HÀM HỖ TRỢ LỌC DỮ LIỆU THÔNG MINH ---
+  const getTypesInProp = (propId: string) => {
+      return managementRoomTypes.filter(t => {
+          const explicitPropId = (t as any).propertyId;
+          const hasRoomsHere = managementRooms.some(r => r.typeId === t.id && r.propertyId === propId);
+          if (hasRoomsHere) return true;
+          if (explicitPropId === propId) return true;
+          const isOrphan = !explicitPropId && !managementRooms.some(r => r.typeId === t.id);
+          if (isOrphan && properties.length === 1 && properties[0]?.id === propId) return true;
+          return false;
+      }).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+  };
+
+  const propertyHasDuplicateName = (name: string, excludeId?: string) =>
+      properties.some(prop => prop.id !== excludeId && normalizeName(prop.name) === normalizeName(name));
+
+  const roomTypeHasDuplicateName = (propertyId: string, name: string, excludeId?: string) => {
+      const scopedTypes = getTypesInProp(propertyId);
+      return scopedTypes.some(type => type.id !== excludeId && normalizeName(type.name) === normalizeName(name));
+  };
+
+  const roomHasDuplicateNumber = (propertyId: string, number: string, excludeId?: string) =>
+      managementRooms.some(room => room.id !== excludeId && room.propertyId === propertyId && normalizeName(room.number) === normalizeName(number));
+
+  const getRoomTypeName = (typeId?: string) =>
+      managementRoomTypes.find(type => type.id === typeId)?.name || '';
+
+  const propertyMatchesRoomManagementSearch = (prop: Property) => {
+      const query = normalizeName(roomManagementSearch);
+      if (!query) return true;
+      if (normalizeName(prop.name).includes(query)) return true;
+      const propRooms = managementRooms.filter(room => room.propertyId === prop.id);
+      if (propRooms.some(room => normalizeName(room.number).includes(query))) return true;
+      return getTypesInProp(prop.id).some(type => normalizeName(type.name).includes(query));
+  };
+
+  useEffect(() => {
+      setNewRoomTypeDraft(null);
+      setNewRoomDraft(null);
+      setEditingId(null);
+      setDraggedRoom(null);
+  }, [activeTab, roomManagementSearch]);
 
   const toggleArrayValue = (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
       setter(prev => prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]);
@@ -179,29 +311,52 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       setPolicyRoomIds([]);
   };
 
-  // --- HÀM HỖ TRỢ LỌC DỮ LIỆU THÔNG MINH ---
-  const getTypesInProp = (propId: string) => {
-      return roomTypes.filter(t => {
-          const explicitPropId = (t as any).propertyId;
-          if (explicitPropId === propId) return true;
-          const hasRoomsHere = rooms.some(r => r.typeId === t.id && r.propertyId === propId);
-          if (hasRoomsHere) return true;
-          const isOrphan = !explicitPropId && !rooms.some(r => r.typeId === t.id);
-          if (isOrphan && properties[0]?.id === propId) return true;
-          return false;
-      }).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+  // --- HÀM HỖ TRỢ XÓA ---
+  const confirmDelete = (kind: CascadeDeleteKind, id: string, name: string) => {
+      try {
+          const impact = DataService.getManagementCascadeDeleteImpact(kind, id);
+          setDeleteConfirmText('');
+          setDeleteError('');
+          setDeleteModal({
+              isOpen: true,
+              kind,
+              id,
+              name,
+              title: `Xoá ${name}?`,
+              impact,
+          });
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không thể kiểm tra dữ liệu liên quan.';
+          alert(message);
+      }
   };
 
-  // --- HÀM HỖ TRỢ XÓA ---
-  const confirmDelete = (type: string, id: string, name: string) => {
-      setDeleteModal({
-          isOpen: true,
-          title: `Xoá ${name}?`,
-          onConfirm: () => {
-              DataService.deleteItems(type, [id]);
-              setDeleteModal({ isOpen: false, title: '', onConfirm: () => {} });
-          }
-      });
+  const closeDeleteModal = () => {
+      if (isDeleting) return;
+      setDeleteModal(null);
+      setDeleteConfirmText('');
+      setDeleteError('');
+  };
+
+  const handleConfirmCascadeDelete = async () => {
+      if (!deleteModal || deleteConfirmText.trim() !== 'XÓA') return;
+      setIsDeleting(true);
+      setDeleteError('');
+      try {
+          await DataService.cascadeDeleteManagementItem(deleteModal.kind, deleteModal.id, currentUser.id);
+          setManagementRooms(DataService.getRooms());
+          setManagementRoomTypes(DataService.getRoomTypes());
+          setDeleteModal(null);
+          setDeleteConfirmText('');
+          setSaveStatus(`Đã xóa ${deleteModal.name} và dữ liệu liên quan.`);
+          window.setTimeout(() => setSaveStatus(''), 2600);
+          onRefresh();
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Không thể xóa dữ liệu.';
+          setDeleteError(message);
+      } finally {
+          setIsDeleting(false);
+      }
   };
 
   // --- HÀM SẮP XẾP CHI NHÁNH ---
@@ -224,56 +379,95 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
 
   // --- HÀM SẮP XẾP SỐ PHÒNG TRONG CHI NHÁNH ---
   const handleSortRoomsAZ = (propId: string, isAZ: boolean) => {
-      let roomsInProp = rooms.filter(r => r.propertyId === propId);
+      let roomsInProp = managementRooms.filter(r => r.propertyId === propId);
       roomsInProp.sort((a, b) => {
           const cmp = String(a.number || '').localeCompare(String(b.number || ''), 'vi', { numeric: true });
           return isAZ ? cmp : -cmp;
       });
       const updatedRooms = roomsInProp.map((item, i) => ({ ...item, sortOrder: i }));
-      const finalRooms = rooms.map(r => updatedRooms.find(u => u.id === r.id) || r);
-      DataService.saveRooms(finalRooms);
+      const finalRooms = managementRooms.map(r => updatedRooms.find(u => u.id === r.id) || r);
+      setManagementRooms(finalRooms);
+      runSaveAction('thứ tự phòng', () => DataService.saveRooms(finalRooms));
   };
 
   const handleDropRoom = (propId: string, dropIdx: number) => {
       if (!draggedRoom || draggedRoom.propId !== propId || draggedRoom.idx === dropIdx) return;
-      let roomsInProp = rooms.filter(r => r.propertyId === propId).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+      let roomsInProp = managementRooms.filter(r => r.propertyId === propId).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
       
       const newList = [...roomsInProp];
       const [removed] = newList.splice(draggedRoom.idx, 1);
       newList.splice(dropIdx, 0, removed);
       
       const updatedRooms = newList.map((item, i) => ({ ...item, sortOrder: i }));
-      const finalRooms = rooms.map(r => updatedRooms.find(u => u.id === r.id) || r);
-      DataService.saveRooms(finalRooms);
+      const finalRooms = managementRooms.map(r => updatedRooms.find(u => u.id === r.id) || r);
+      setManagementRooms(finalRooms);
+      runSaveAction('thứ tự phòng', () => DataService.saveRooms(finalRooms));
       setDraggedRoom(null);
   };
 
   // --- HANDLERS: THÊM MỚI ---
   const handleAddProperty = () => {
-      const newProp: Property = { id: `p_${Date.now()}`, name: 'Chi nhánh mới', address: 'Địa chỉ...', sortOrder: properties.length };
+      const baseName = 'Chi nhánh mới';
+      const suffix = properties.filter(prop => prop.name.startsWith(baseName)).length;
+      const name = suffix > 0 ? `${baseName} ${suffix + 1}` : baseName;
+      const newProp: Property = { id: `p_${Date.now()}`, name, address: 'Địa chỉ...', sortOrder: properties.length };
       DataService.saveProperties([...properties, newProp]);
       setEditingId(newProp.id);
   };
 
   const handleAddRoomType = (propertyId: string) => {
-      const newType: RoomType = { id: `rt_${Date.now()}`, name: 'Hạng phòng mới', price: 0, capacity: 2, sortOrder: 999 };
-      (newType as any).propertyId = propertyId;
-      DataService.saveRoomTypes([...roomTypes, newType]);
-      setEditingId(newType.id);
+      setNewRoomTypeDraft({ propertyId, name: '' });
+      setNewRoomDraft(null);
   };
 
   const handleAddRoom = (propertyId: string, fallbackTypeId: string) => {
-      const newRoom: Room = { id: `r_${Date.now()}`, number: 'Mới', typeId: fallbackTypeId, propertyId: propertyId, status: RoomStatus.VACANT_CLEAN, floor: 1, sortOrder: 999 };
-      DataService.saveRooms([...rooms, newRoom]);
-      setEditingId(newRoom.id);
+      setNewRoomDraft({ propertyId, number: '', typeId: fallbackTypeId });
+      setNewRoomTypeDraft(null);
+  };
+
+  const handleSaveNewRoomType = () => {
+      if (!newRoomTypeDraft) return;
+      const name = newRoomTypeDraft.name.trim();
+      if (!name) return alert('Tên hạng phòng không được để trống.');
+      if (roomTypeHasDuplicateName(newRoomTypeDraft.propertyId, name)) return alert('Tên hạng phòng đã tồn tại trong chi nhánh này.');
+      const newType: RoomType = { id: `rt_${Date.now()}`, name, price: 0, capacity: 2, sortOrder: 999 };
+      (newType as any).propertyId = newRoomTypeDraft.propertyId;
+      const nextRoomTypes = [...managementRoomTypes, newType];
+      setManagementRoomTypes(nextRoomTypes);
+      runSaveAction('hạng phòng mới', () => DataService.saveRoomTypes(nextRoomTypes));
+      setNewRoomTypeDraft(null);
+  };
+
+  const handleSaveNewRoom = () => {
+      if (!newRoomDraft) return;
+      const number = newRoomDraft.number.trim();
+      if (!number) return alert('Số phòng không được để trống.');
+      if (!newRoomDraft.typeId) return alert('Vui lòng chọn hạng phòng.');
+      if (roomHasDuplicateNumber(newRoomDraft.propertyId, number)) return alert('Số phòng đã tồn tại trong chi nhánh này.');
+      const newRoom: Room = {
+          id: `r_${Date.now()}`,
+          number,
+          typeId: newRoomDraft.typeId,
+          propertyId: newRoomDraft.propertyId,
+          status: RoomStatus.VACANT_CLEAN,
+          floor: 1,
+          sortOrder: 999,
+      };
+      const nextRooms = [...managementRooms, newRoom];
+      setManagementRooms(nextRooms);
+      runSaveAction('phòng mới', () => DataService.saveRooms(nextRooms));
+      setNewRoomDraft(null);
   };
 
   const handleRoomTypeChange = (roomId: string, newTypeId: string) => {
-      DataService.saveRooms(rooms.map(r => r.id === roomId ? {...r, typeId: newTypeId} : r));
+      const nextRooms = managementRooms.map(r => r.id === roomId ? {...r, typeId: newTypeId} : r);
+      setManagementRooms(nextRooms);
+      runSaveAction('hạng phòng của phòng', () => DataService.saveRooms(nextRooms));
   };
 
   const handleCreateRoomPolicy = () => {
       if (!policyStartDate) return alert('Vui lòng chọn ngày bắt đầu.');
+      if (policyEndDate && policyEndDate < policyStartDate) return alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
       if (policyRecurrence === 'WEEKLY' && policyWeekdays.length === 0) return alert('Vui lòng chọn ít nhất 1 ngày trong tuần.');
       if (policyRoomIds.length === 0 && policyPropertyIds.length === 0 && policyRoomTypeIds.length === 0) {
           return alert('Vui lòng chọn phòng hoặc chọn theo chi nhánh/hạng phòng để áp dụng hàng loạt.');
@@ -288,8 +482,6 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           endDate: policyEndDate || undefined,
           recurrence: policyRecurrence,
           weekdays: policyRecurrence === 'WEEKLY' ? [...policyWeekdays].sort((a, b) => a - b) : [],
-          checkInHour: 14,
-          checkOutHour: 12,
           propertyIds: [...policyPropertyIds],
           roomTypeIds: [...policyRoomTypeIds],
           roomIds: [...policyRoomIds],
@@ -297,11 +489,9 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           createdBy: currentUser.id,
       };
 
-      DataService.saveRoomPolicies([...roomPolicies, newPolicy]);
+      runSaveAction('chính sách phòng', () => DataService.saveRoomPolicies([...roomPolicies, newPolicy]));
       setActiveTab('ROOM_POLICIES');
       resetPolicyForm();
-      alert('Đã lưu chính sách phòng thành công.');
-      onRefresh();
   };
 
   const applyBulkPolicyState = (active: boolean) => {
@@ -316,6 +506,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
 
   const deleteSelectedPolicies = () => {
       if (selectedPolicyIds.length === 0) return;
+      if (!window.confirm(`Xóa ${selectedPolicyIds.length} chính sách phòng đã chọn? Hành động này không thể hoàn tác.`)) return;
       DataService.deleteItems('roomPolicies', selectedPolicyIds);
       setSelectedPolicyIds([]);
       onRefresh();
@@ -391,6 +582,17 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                   </div>
               )}
           </div>
+          {saveStatus && (
+              <div className={`mb-3 rounded-xl border px-4 py-2 text-sm font-semibold ${
+                  saveStatus.startsWith('Lỗi')
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : saveStatus.startsWith('Đang')
+                        ? 'border-blue-200 bg-blue-50 text-blue-700'
+                        : 'border-green-200 bg-green-50 text-green-700'
+              }`}>
+                  {saveStatus}
+              </div>
+          )}
           
           {/* TAB 1: CHI NHÁNH */}
           {activeTab === 'PROPERTIES' && (
@@ -435,7 +637,13 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                       <td className="px-4 py-4 text-center cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-600"><GripVertical size={18} className="mx-auto" /></td>
                                       <td className="px-6 py-4">
                                           {editingId === prop.id ? (
-                                              <InlineInput value={prop.name} autoSelect onSave={(v) => { DataService.saveProperties(properties.map(p => p.id === prop.id ? {...p, name: v} : p)); setEditingId(null); }} onCancel={() => setEditingId(null)} />
+                                              <InlineInput value={prop.name} autoSelect onSave={(v) => {
+                                                  const name = v.trim();
+                                                  if (!name) return alert('Tên chi nhánh không được để trống.');
+                                                  if (propertyHasDuplicateName(name, prop.id)) return alert('Tên chi nhánh đã tồn tại.');
+                                                  runSaveAction('chi nhánh', () => DataService.saveProperties(properties.map(p => p.id === prop.id ? {...p, name} : p)));
+                                                  setEditingId(null);
+                                              }} onCancel={() => setEditingId(null)} />
                                           ) : <span className="font-semibold text-gray-800">{prop.name}</span>}
                                       </td>
                                       <td className="px-6 py-4 text-gray-600">
@@ -446,7 +654,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                       <td className="px-6 py-4 flex items-center justify-center gap-2">
                                           <button onClick={() => setEditingId(editingId === prop.id ? null : prop.id)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg" title="Sửa tên"><Edit2 size={16} /></button>
                                           <button onClick={() => setEditingId(editingId === prop.id + '_addr' ? null : prop.id + '_addr')} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="Sửa địa chỉ"><Building2 size={16} /></button>
-                                          <button onClick={() => confirmDelete('properties', prop.id, `Chi nhánh ${prop.name}`)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                                          <button onClick={() => confirmDelete('property', prop.id, `Chi nhánh ${prop.name}`)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
                                       </td>
                                   </tr>
                               ))}
@@ -465,47 +673,140 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                               <h2 className="text-xl font-bold text-gray-800">Phân bổ Hạng phòng & Số phòng</h2>
                               <p className="text-sm text-gray-500 mt-1 flex items-center gap-1"><Info size={14}/> Kéo thả số phòng để sắp xếp vị trí hiển thị trên Sơ đồ phòng.</p>
                           </div>
+                          <div className="flex w-full md:w-96 gap-2">
+                              <input
+                                  type="text"
+                                  value={roomManagementSearch}
+                                  onChange={(e) => setRoomManagementSearch(e.target.value)}
+                                  placeholder="Tìm chi nhánh, hạng, số phòng..."
+                                  className="min-w-0 flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                              />
+                              {roomManagementSearch && (
+                                  <button
+                                      onClick={() => setRoomManagementSearch('')}
+                                      className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50"
+                                  >
+                                      Xóa
+                                  </button>
+                              )}
+                          </div>
                       </div>
                       
                       <div className="p-4 md:p-6 space-y-8 bg-gray-50/30">
                           {properties.length === 0 && <div className="text-center py-8 text-gray-500 font-medium">Bạn cần tạo Chi nhánh trước nhé!</div>}
                           
-                          {[...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).map(prop => {
+                          {properties.length > 0 && [...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).filter(propertyMatchesRoomManagementSearch).length === 0 && (
+                              <div className="text-center py-10 text-gray-500 font-semibold bg-white border border-dashed border-gray-200 rounded-2xl">
+                                  Không tìm thấy chi nhánh, hạng phòng hoặc số phòng phù hợp.
+                              </div>
+                          )}
+
+                          {[...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).filter(propertyMatchesRoomManagementSearch).map(prop => {
                               const typesInProp = getTypesInProp(prop.id);
-                              const roomsInProp = rooms.filter(r => r.propertyId === prop.id).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+                              const roomsInProp = managementRooms.filter(r => r.propertyId === prop.id).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+                              const isCollapsed = collapsedPropertyIds.includes(prop.id);
+                              const query = normalizeName(roomManagementSearch);
+                              const propertyNameMatches = query && normalizeName(prop.name).includes(query);
+                              const displayedTypesInProp = !query || propertyNameMatches
+                                  ? typesInProp
+                                  : typesInProp.filter(type => {
+                                      if (normalizeName(type.name).includes(query)) return true;
+                                      return roomsInProp.some(room => room.typeId === type.id && normalizeName(room.number).includes(query));
+                                  });
+                              const displayedRoomsInProp = !query || propertyNameMatches
+                                  ? roomsInProp
+                                  : roomsInProp.filter(room =>
+                                      normalizeName(room.number).includes(query) ||
+                                      normalizeName(getRoomTypeName(room.typeId)).includes(query)
+                                  );
+                              const isSearchActive = Boolean(query);
 
                               return (
-                                  <div key={prop.id} className="bg-white border border-blue-200 rounded-2xl shadow-sm overflow-hidden">
+                                  <div key={prop.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                                       {/* --- LEVEL 1: CHI NHÁNH --- */}
-                                      <div className="bg-blue-600 px-5 py-3 flex justify-between items-center text-white">
-                                          <h3 className="font-bold flex items-center gap-2 text-lg"><Building2 size={20}/> {prop.name}</h3>
+                                      <div className="bg-slate-900 px-5 py-3 flex flex-col gap-3 md:flex-row md:justify-between md:items-center text-white">
+                                          <div>
+                                              <h3 className="font-bold flex items-center gap-2 text-lg"><Building2 size={20}/> {prop.name}</h3>
+                                              <div className="mt-1 text-xs font-bold text-slate-300">
+                                                  {typesInProp.length} hạng phòng • {roomsInProp.length} phòng
+                                                  {isSearchActive && ` • đang hiện ${displayedTypesInProp.length} hạng, ${displayedRoomsInProp.length} phòng`}
+                                              </div>
+                                          </div>
+                                          <button
+                                              onClick={() => setCollapsedPropertyIds(prev => prev.includes(prop.id) ? prev.filter(id => id !== prop.id) : [...prev, prop.id])}
+                                              className="self-start md:self-auto rounded-lg bg-white/15 px-3 py-1.5 text-sm font-bold text-white hover:bg-white/25 flex items-center gap-1"
+                                          >
+                                              {isCollapsed ? 'Mở rộng' : 'Thu gọn'}
+                                              <ChevronDown size={16} className={`transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
+                                          </button>
                                       </div>
 
+                                      {isCollapsed && (
+                                          <div className="px-5 py-4 bg-slate-50 text-sm font-semibold text-slate-600">
+                                              Chi nhánh đang thu gọn. Bấm Mở rộng để sửa hạng phòng và số phòng.
+                                          </div>
+                                      )}
+
                                       {/* --- PHẦN 1: CÁC HẠNG PHÒNG (TỐI GIẢN) --- */}
-                                      <div className="p-4 md:p-5 border-b border-gray-100 bg-gray-50/50">
+                                      {!isCollapsed && <div className="p-4 md:p-5 border-b border-gray-100 bg-gray-50/50">
                                           <div className="flex justify-between items-center mb-3">
                                               <h4 className="font-bold text-gray-700 flex items-center gap-2"><BedDouble size={18}/> Các Hạng phòng lựa chọn</h4>
                                               <button onClick={() => handleAddRoomType(prop.id)} className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 hover:bg-blue-50 transition-colors shadow-sm">
                                                   <Plus size={16}/> Thêm Hạng phòng
                                               </button>
                                           </div>
+
+                                          {newRoomTypeDraft?.propertyId === prop.id && (
+                                              <div className="mb-3 rounded-xl border-2 border-blue-200 bg-white p-3 shadow-sm">
+                                                  <div className="text-xs font-bold uppercase tracking-wide text-blue-600 mb-2">Hạng phòng mới</div>
+                                                  <div className="flex flex-col md:flex-row gap-2">
+                                                      <input
+                                                          value={newRoomTypeDraft.name}
+                                                          onChange={(e) => setNewRoomTypeDraft({ ...newRoomTypeDraft, name: e.target.value })}
+                                                          onKeyDown={(e) => {
+                                                              if (e.key === 'Enter') handleSaveNewRoomType();
+                                                              if (e.key === 'Escape') setNewRoomTypeDraft(null);
+                                                          }}
+                                                          autoFocus
+                                                          placeholder="Nhập tên hạng phòng"
+                                                          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
+                                                      />
+                                                      <button onClick={handleSaveNewRoomType} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">Lưu hạng</button>
+                                                      <button onClick={() => setNewRoomTypeDraft(null)} className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold hover:bg-gray-200">Hủy</button>
+                                                  </div>
+                                              </div>
+                                          )}
                                           
-                                          {typesInProp.length === 0 ? (
-                                              <div className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">Hãy thêm ít nhất 1 hạng phòng để có thể gán cho các phòng nhé!</div>
+                                          {displayedTypesInProp.length === 0 ? (
+                                              <div className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                                                  {isSearchActive ? 'Không có hạng phòng phù hợp với từ khóa tìm kiếm.' : 'Hãy thêm ít nhất 1 hạng phòng để có thể gán cho các phòng nhé!'}
+                                              </div>
                                           ) : (
                                               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                                  {typesInProp.map(type => (
-                                                      <div key={type.id} className="bg-white border border-gray-200 px-3 py-2.5 rounded-xl shadow-sm flex items-center justify-between relative group hover:border-blue-300 transition-colors min-h-[3rem]">
+                                                  {displayedTypesInProp.map(type => (
+                                                      <div key={type.id} className="bg-white border border-gray-200 px-3 py-2.5 rounded-xl shadow-sm flex items-center justify-between relative hover:border-blue-300 transition-colors min-h-[3rem]">
                                                           {editingId === type.id ? (
                                                               <div className="w-full flex-1 -ml-1">
-                                                                  <InlineInput value={type.name} autoSelect onSave={(v) => { DataService.saveRoomTypes(roomTypes.map(t => t.id === type.id ? {...t, name: v} : t)); setEditingId(null); }} onCancel={() => setEditingId(null)} />
+                                                                  <InlineInput value={type.name} autoSelect onSave={(v) => {
+                                                                      const name = v.trim();
+                                                                      const propertyId = getRoomTypePropertyId(type) || prop.id;
+                                                                      if (!name) return alert('Tên hạng phòng không được để trống.');
+                                                                      if (roomTypeHasDuplicateName(propertyId, name, type.id)) return alert('Tên hạng phòng đã tồn tại trong chi nhánh này.');
+                                                                      const nextRoomTypes = managementRoomTypes.map(t => t.id === type.id ? {...t, name} : t);
+                                                                      setManagementRoomTypes(nextRoomTypes);
+                                                                      runSaveAction('hạng phòng', () => DataService.saveRoomTypes(nextRoomTypes));
+                                                                      setEditingId(null);
+                                                                  }} onCancel={() => setEditingId(null)} />
                                                               </div>
                                                           ) : (
                                                               <>
-                                                                  <span className="font-bold text-gray-800 break-words pr-12 line-clamp-1">{type.name}</span>
-                                                                  <div className="flex gap-1 absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                  <div className="min-w-0 pr-12">
+                                                                      <span className="font-bold text-gray-800 break-words line-clamp-1" title={type.name}>{type.name}</span>
+                                                                      <div className="mt-1 text-[11px] font-bold text-gray-400">{roomsInProp.filter(room => room.typeId === type.id).length} phòng</div>
+                                                                  </div>
+                                                                  <div className="flex gap-1 absolute right-2">
                                                                       <button onClick={() => setEditingId(type.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Đổi tên hạng"><Edit2 size={16}/></button>
-                                                                      <button onClick={() => confirmDelete('roomTypes', type.id, `Hạng ${type.name}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa hạng"><Trash2 size={16}/></button>
+                                                                      <button onClick={() => confirmDelete('roomType', type.id, `Hạng ${type.name}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa hạng"><Trash2 size={16}/></button>
                                                                   </div>
                                                               </>
                                                           )}
@@ -513,14 +814,14 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                   ))}
                                               </div>
                                           )}
-                                      </div>
+                                      </div>}
 
                                       {/* --- PHẦN 2: DANH SÁCH SỐ PHÒNG (KÉO THẢ SẮP XẾP) --- */}
-                                      <div className="p-4 md:p-5">
+                                      {!isCollapsed && <div className="p-4 md:p-5">
                                           <div className="flex justify-between items-center mb-4">
                                               <h4 className="font-bold text-gray-700 flex items-center gap-2"><Key size={18}/> Danh sách Số phòng</h4>
                                               <div className="flex items-center gap-2">
-                                                  {roomsInProp.length > 1 && (
+                                                  {roomsInProp.length > 1 && !isSearchActive && (
                                                       <div className="flex bg-gray-100 border border-gray-200 rounded-lg overflow-hidden">
                                                           <button onClick={() => handleSortRoomsAZ(prop.id, true)} className="px-3 py-1.5 hover:bg-gray-200 text-gray-600 text-xs font-bold border-r border-gray-200 flex items-center gap-1">A-Z</button>
                                                           <button onClick={() => handleSortRoomsAZ(prop.id, false)} className="px-3 py-1.5 hover:bg-gray-200 text-gray-600 text-xs font-bold flex items-center gap-1">Z-A</button>
@@ -537,19 +838,49 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                   </button>
                                               </div>
                                           </div>
+
+                                          {newRoomDraft?.propertyId === prop.id && (
+                                              <div className="mb-4 rounded-xl border-2 border-blue-200 bg-white p-3 shadow-sm">
+                                                  <div className="text-xs font-bold uppercase tracking-wide text-blue-600 mb-2">Phòng mới</div>
+                                                  <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr_auto_auto] gap-2">
+                                                      <input
+                                                          value={newRoomDraft.number}
+                                                          onChange={(e) => setNewRoomDraft({ ...newRoomDraft, number: e.target.value })}
+                                                          onKeyDown={(e) => {
+                                                              if (e.key === 'Enter') handleSaveNewRoom();
+                                                              if (e.key === 'Escape') setNewRoomDraft(null);
+                                                          }}
+                                                          autoFocus
+                                                          placeholder="Nhập số phòng"
+                                                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
+                                                      />
+                                                      <select
+                                                          value={newRoomDraft.typeId}
+                                                          onChange={(e) => setNewRoomDraft({ ...newRoomDraft, typeId: e.target.value })}
+                                                          className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
+                                                      >
+                                                          {typesInProp.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}
+                                                      </select>
+                                                      <button onClick={handleSaveNewRoom} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">Lưu phòng</button>
+                                                      <button onClick={() => setNewRoomDraft(null)} className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold hover:bg-gray-200">Hủy</button>
+                                                  </div>
+                                              </div>
+                                          )}
                                           
-                                          {roomsInProp.length === 0 ? (
-                                              <div className="text-center text-gray-400 py-6 border-2 border-dashed border-gray-200 rounded-xl">Chưa có phòng nào. Bấm "Thêm Phòng" để tạo.</div>
+                                          {displayedRoomsInProp.length === 0 ? (
+                                              <div className="text-center text-gray-400 py-6 border-2 border-dashed border-gray-200 rounded-xl">
+                                                  {isSearchActive ? 'Không có phòng phù hợp với từ khóa tìm kiếm.' : 'Chưa có phòng nào. Bấm "Thêm Phòng" để tạo.'}
+                                              </div>
                                           ) : (
                                               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-                                                  {roomsInProp.map((room, rIdx) => (
+                                                  {displayedRoomsInProp.map((room, rIdx) => (
                                                       <div 
                                                           key={room.id}
-                                                          draggable={editingId !== room.id}
+                                                          draggable={editingId !== room.id && !isSearchActive}
                                                           onDragStart={(e) => { e.stopPropagation(); setDraggedRoom({ propId: prop.id, idx: rIdx }); }}
                                                           onDragOver={(e) => e.preventDefault()}
                                                           onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropRoom(prop.id, rIdx); }}
-                                                          className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all group ${draggedRoom?.idx === rIdx && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${editingId !== room.id ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : 'shadow-md border-blue-500 ring-2 ring-blue-300'}`}
+                                                          className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all ${draggedRoom?.idx === rIdx && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${editingId !== room.id && !isSearchActive ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : editingId === room.id ? 'shadow-md border-blue-500 ring-2 ring-blue-300' : 'hover:border-slate-300'}`}
                                                       >
                                                           {/* Khi bấm sửa số phòng, khung nhập liệu sẽ chiếm toàn bộ card để không bị đẩy lệch */}
                                                           {editingId === room.id ? (
@@ -557,38 +888,52 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                                   <InlineInput 
                                                                     value={room.number} 
                                                                     autoSelect 
-                                                                    onSave={(v) => { DataService.saveRooms(rooms.map(r => r.id === room.id ? {...r, number: v} : r)); setEditingId(null); }} 
+                                                                    onSave={(v) => {
+                                                                        const number = v.trim();
+                                                                        if (!number) return alert('Số phòng không được để trống.');
+                                                                        if (roomHasDuplicateNumber(room.propertyId, number, room.id)) return alert('Số phòng đã tồn tại trong chi nhánh này.');
+                                                                        const nextRooms = managementRooms.map(r => r.id === room.id ? {...r, number} : r);
+                                                                        setManagementRooms(nextRooms);
+                                                                        runSaveAction('phòng', () => DataService.saveRooms(nextRooms));
+                                                                        setEditingId(null);
+                                                                    }}
                                                                     onCancel={() => setEditingId(null)} 
                                                                   />
                                                               </div>
                                                           ) : (
                                                               <>
                                                                   <div className="flex items-center justify-between">
-                                                                      <GripVertical size={16} className="text-gray-300 group-hover:text-blue-500 shrink-0" />
+                                                                      <GripVertical size={16} className="text-gray-300 shrink-0" />
                                                                       <span className="font-black text-gray-800 text-base leading-tight flex-1 text-center px-1 break-words whitespace-normal">{room.number}</span>
-                                                                      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                                                      <div className="flex items-center shrink-0">
                                                                           <button onClick={() => setEditingId(room.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Đổi tên"><Edit2 size={15}/></button>
-                                                                          <button onClick={() => confirmDelete('rooms', room.id, `Phòng ${room.number}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa"><X size={17}/></button>
+                                                                          <button onClick={() => confirmDelete('room', room.id, `Phòng ${room.number}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa"><X size={17}/></button>
                                                                       </div>
                                                                   </div>
                                                                   
                                                                   <select 
-                                                                      className={`w-full text-xs font-semibold p-1.5 rounded-md border outline-none cursor-pointer ${!typesInProp.some(t => t.id === room.typeId) ? 'bg-red-50 text-red-600 border-red-200' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-white focus:border-blue-500'}`}
+                                                                      className={`w-full min-h-[2.25rem] text-sm font-semibold p-2 rounded-lg border outline-none cursor-pointer ${!typesInProp.some(t => t.id === room.typeId) ? 'bg-red-50 text-red-600 border-red-200' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-white focus:border-blue-500'}`}
                                                                       value={room.typeId || ''}
                                                                       onChange={(e) => handleRoomTypeChange(room.id, e.target.value)}
+                                                                      title={getRoomTypeName(room.typeId) || 'Hạng phòng không hợp lệ'}
                                                                   >
                                                                       {!typesInProp.some(t => t.id === room.typeId) && <option value={room.typeId} className="hidden">--- Chọn hạng phòng ---</option>}
                                                                       {typesInProp.map(t => (
                                                                           <option key={t.id} value={t.id}>{t.name}</option>
                                                                       ))}
                                                                   </select>
+                                                                  <div className={`text-[11px] font-bold ${!typesInProp.some(t => t.id === room.typeId) ? 'text-red-600' : 'text-gray-400'}`}>
+                                                                      {!typesInProp.some(t => t.id === room.typeId)
+                                                                          ? 'Hạng phòng này không còn tồn tại, hãy chọn lại.'
+                                                                          : `Hạng: ${getRoomTypeName(room.typeId)}`}
+                                                                  </div>
                                                               </>
                                                           )}
                                                       </div>
                                                   ))}
                                               </div>
                                           )}
-                                      </div>
+                                      </div>}
                                   </div>
                               )
                           })}
@@ -618,7 +963,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                       className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
                                   >
                                       <option value="LOCKED">Khóa phòng (chặn nhận khách)</option>
-                                      <option value="HOURLY_ONLY">Chỉ nhận khách giờ</option>
+                                      <option value="HOURLY_ONLY">Chỉ nhận khách giờ (tối đa 12 tiếng)</option>
                                   </select>
                               </label>
 
@@ -890,7 +1235,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                               <td className="px-4 py-3 text-xs font-semibold text-gray-700">
                                                   <div>{policy.startDate} → {policy.endDate || 'Không giới hạn'}</div>
                                                   {policy.recurrence === 'WEEKLY' && <div className="text-blue-600 mt-0.5">Lặp: {weekdayLabel || '--'}</div>}
-                                                  <div className="text-gray-500 mt-0.5">14:00 → 12:00 hôm sau</div>
+                                                  {policy.mode === 'HOURLY_ONLY' && <div className="text-gray-500 mt-0.5">Tối đa 12 tiếng/lượt lưu trú</div>}
                                               </td>
                                               <td className="px-4 py-3 text-xs font-semibold text-gray-700">{policyTargetSummary(policy)}</td>
                                               <td className="px-4 py-3 text-xs text-gray-600 max-w-[260px] truncate" title={policy.reason || '--'}>
@@ -913,6 +1258,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                       </button>
                                                       <button
                                                           onClick={() => {
+                                                              if (!window.confirm('Xóa chính sách phòng này? Hành động này không thể hoàn tác.')) return;
                                                               DataService.deleteItems('roomPolicies', [policy.id]);
                                                               setSelectedPolicyIds(prev => prev.filter(id => id !== policy.id));
                                                               onRefresh();
@@ -943,7 +1289,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           {/* TAB 4: PHÂN QUYỀN (SỬ DỤNG LẠI COMPONENT ADMIN) */}
           {activeTab === 'ADMIN' && (
               <div className="bg-white border border-gray-200 rounded-2xl shadow-sm animate-fade-in">
-                 <Admin users={users} properties={properties} onRefresh={onRefresh} />
+                 <Admin users={users} properties={properties} currentUser={currentUser} onRefresh={onRefresh} />
               </div>
           )}
 
@@ -954,16 +1300,20 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                   <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                        <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
                             <h2 className="font-bold text-gray-800 flex items-center gap-2"><TagIcon size={18} className="text-blue-600"/> Thẻ phân loại (Tags)</h2>
-                            <button onClick={() => DataService.saveTags([...tags, { id: `t_${Date.now()}`, name: 'Thẻ mới', color: '#3b82f6' }])} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm thẻ</button>
+                            <div className="flex gap-2">
+                                <button onClick={() => setDraftTags([...draftTags, { id: `t_${Date.now()}`, name: 'Thẻ mới', color: '#3b82f6' }])} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm thẻ</button>
+                                <button onClick={() => runSaveAction('thẻ', () => DataService.saveTags(draftTags.map(tag => ({ ...tag, name: tag.name.trim() || 'Chưa đặt tên' }))))} className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700">Lưu</button>
+                            </div>
                        </div>
                        <div className="p-5 space-y-3">
-                            {tags.map(tag => (
+                            {draftTags.map(tag => (
                                 <div key={tag.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                    <input type="color" value={tag.color} onChange={(e) => DataService.saveTags(tags.map(t => t.id === tag.id ? {...t, color: e.target.value} : t))} className="w-8 h-8 rounded cursor-pointer border-none" />
-                                    <input type="text" value={tag.name} onChange={(e) => DataService.saveTags(tags.map(t => t.id === tag.id ? {...t, name: e.target.value} : t))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
-                                    <button onClick={() => confirmDelete('tags', tag.id, `Thẻ ${tag.name}`)} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
+                                    <input type="color" value={tag.color} onChange={(e) => setDraftTags(draftTags.map(t => t.id === tag.id ? {...t, color: e.target.value} : t))} className="w-8 h-8 rounded cursor-pointer border-none" />
+                                    <input type="text" value={tag.name} onChange={(e) => setDraftTags(draftTags.map(t => t.id === tag.id ? {...t, name: e.target.value} : t))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
+                                    <button onClick={() => setDraftTags(draftTags.filter(t => t.id !== tag.id))} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
                                 </div>
                             ))}
+                            {draftTags.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có thẻ nào.</div>}
                        </div>
                   </div>
 
@@ -971,23 +1321,27 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                   <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                        <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
                             <h2 className="font-bold text-gray-800 flex items-center gap-2"><DollarSign size={18} className="text-green-600"/> Danh mục Thu / Chi</h2>
-                            <button onClick={() => DataService.saveTransactionCategories([...DataService.getTransactionCategories(), { id: `cat_${Date.now()}`, name: 'Danh mục mới', type: 'EXPENSE' }])} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm danh mục</button>
+                            <div className="flex gap-2">
+                                <button onClick={() => setDraftCategories([...draftCategories, { id: `cat_${Date.now()}`, name: 'Danh mục mới', type: 'EXPENSE' }])} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm danh mục</button>
+                                <button onClick={() => runSaveAction('danh mục thu chi', () => DataService.saveTransactionCategories(draftCategories.map(cat => ({ ...cat, name: cat.name.trim() || 'Chưa đặt tên' }))))} className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700">Lưu</button>
+                            </div>
                        </div>
                        <div className="p-5 space-y-3">
-                            {DataService.getTransactionCategories().map(cat => (
+                            {draftCategories.map(cat => (
                                 <div key={cat.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
                                     <select 
                                         className={`text-xs font-bold px-2 py-1 rounded-md outline-none border-none ${cat.type === 'REVENUE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
                                         value={cat.type}
-                                        onChange={(e) => DataService.saveTransactionCategories(DataService.getTransactionCategories().map(c => c.id === cat.id ? {...c, type: e.target.value as 'REVENUE'|'EXPENSE'} : c))}
+                                        onChange={(e) => setDraftCategories(draftCategories.map(c => c.id === cat.id ? {...c, type: e.target.value as 'REVENUE'|'EXPENSE'} : c))}
                                     >
                                         <option value="REVENUE">THU</option>
                                         <option value="EXPENSE">CHI</option>
                                     </select>
-                                    <input type="text" value={cat.name} onChange={(e) => DataService.saveTransactionCategories(DataService.getTransactionCategories().map(c => c.id === cat.id ? {...c, name: e.target.value} : c))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
-                                    <button onClick={() => confirmDelete('transactionCategories', cat.id, `Danh mục ${cat.name}`)} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
+                                    <input type="text" value={cat.name} onChange={(e) => setDraftCategories(draftCategories.map(c => c.id === cat.id ? {...c, name: e.target.value} : c))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
+                                    <button onClick={() => setDraftCategories(draftCategories.filter(c => c.id !== cat.id))} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
                                 </div>
                             ))}
+                            {draftCategories.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có danh mục nào.</div>}
                        </div>
                   </div>
               </div>
@@ -996,17 +1350,58 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       </div>
 
       {/* --- MODAL XÁC NHẬN XÓA CHUNG --- */}
-      {deleteModal.isOpen && (
+      {deleteModal?.isOpen && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
                   <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
                       <AlertTriangle size={32} />
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{deleteModal.title}</h3>
-                  <p className="text-gray-500 text-sm mb-6">Hành động này không thể hoàn tác. Bạn chắc chắn chứ?</p>
+                  <h3 className="text-lg font-bold text-gray-900 mb-2 text-center">{deleteModal.title}</h3>
+                  <p className="text-gray-600 text-sm mb-4 text-center">
+                      Nếu xóa, toàn bộ dữ liệu liên quan sẽ bị xóa vĩnh viễn và không thể hoàn tác.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm mb-4">
+                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                          <div className="text-xs text-red-500 font-bold uppercase">Phòng</div>
+                          <div className="text-lg font-black text-red-700">{deleteModal.impact.rooms}</div>
+                      </div>
+                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                          <div className="text-xs text-red-500 font-bold uppercase">Hạng phòng</div>
+                          <div className="text-lg font-black text-red-700">{deleteModal.impact.roomTypes}</div>
+                      </div>
+                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                          <div className="text-xs text-red-500 font-bold uppercase">Booking</div>
+                          <div className="text-lg font-black text-red-700">{deleteModal.impact.bookings}</div>
+                      </div>
+                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                          <div className="text-xs text-red-500 font-bold uppercase">Chính sách</div>
+                          <div className="text-lg font-black text-red-700">{deleteModal.impact.roomPolicies}</div>
+                      </div>
+                  </div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                      Gõ đúng <span className="text-red-600">XÓA</span> để xác nhận
+                  </label>
+                  <input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      className="w-full border-2 border-red-200 rounded-lg px-3 py-2 font-bold text-gray-900 outline-none focus:border-red-500"
+                      placeholder="XÓA"
+                      autoFocus
+                  />
+                  {deleteError && (
+                      <div className="mt-3 rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+                          {deleteError}
+                      </div>
+                  )}
                   <div className="flex gap-3">
-                      <button onClick={() => setDeleteModal({...deleteModal, isOpen: false})} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 transition-colors">Huỷ bỏ</button>
-                      <button onClick={deleteModal.onConfirm} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 shadow-lg shadow-red-200 transition-colors">Xác nhận xoá</button>
+                      <button onClick={closeDeleteModal} disabled={isDeleting} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-60">Huỷ bỏ</button>
+                      <button
+                          onClick={handleConfirmCascadeDelete}
+                          disabled={deleteConfirmText.trim() !== 'XÓA' || isDeleting}
+                          className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 shadow-lg shadow-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                          {isDeleting ? 'Đang xoá...' : 'Xóa vĩnh viễn'}
+                      </button>
                   </div>
               </div>
           </div>

@@ -387,7 +387,11 @@ const App: React.FC = () => {
     }
 
     const targetPropertyIds =
-      currentPropertyId && currentPropertyId !== 'ALL' ? [currentPropertyId] : visiblePropertyIds;
+      currentPage === 'management'
+        ? visiblePropertyIds
+        : currentPropertyId && currentPropertyId !== 'ALL'
+          ? [currentPropertyId]
+          : visiblePropertyIds;
 
     if (targetPropertyIds.length === 0) {
       setRooms([]);

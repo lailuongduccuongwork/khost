@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog, RoomPolicyRule } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Printer, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, User as UserIcon, Edit2, Building2, Loader2, LogIn, LogOut } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, User as UserIcon, Edit2, Building2, Loader2, LogIn, LogOut } from 'lucide-react';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import { deriveBookingStatus, deriveRoomOperationalStatus, getActiveBookingForRoom } from '../utils/bookingState';
 
@@ -1500,7 +1500,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           checkIn.toISOString(),
           checkOut.toISOString()
       );
-      if (!validate.valid && validate.policyMode !== 'HOURLY_ONLY') {
+      if (!validate.valid) {
           alert(`🚫 Không thể tạo đơn!\nLý do: ${validate.reason}`);
           setDragStart(null);
           setDragEnd(null);
@@ -1846,14 +1846,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
          const selectedTags = tags.filter(t => bookingMeta.tags.includes(t.id));
          const receiptFees = bookingMeta.extraFees.filter(f => f.type === 'REVENUE');
          const receiptTotal = bookingMeta.totalPrice + extraRevenue;
+         const receiptBookingCodes = upserts.map(item => item.booking.id).filter(Boolean);
+         const primaryBranchName = receiptRooms[0]?.branchName || currentProperty.name || 'K-Host';
+         const receiptIssuer = (currentUser.fullName || currentUser.username || 'K-Host').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'K-Host';
 
          setReceiptData({
              guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '', notes: bookingMeta.notes,
-             tags: selectedTags, total: receiptTotal, paid: bookingMeta.paidAmount, rooms: receiptRooms, extraFees: receiptFees, roomPrice: bookingMeta.totalPrice 
+             tags: selectedTags, total: receiptTotal, paid: bookingMeta.paidAmount, rooms: receiptRooms, extraFees: receiptFees, roomPrice: bookingMeta.totalPrice,
+             bookingCode: receiptBookingCodes[0] || '--',
+             roomCount: receiptRooms.length,
+             branchName: primaryBranchName,
+             issuedAt: new Date().toISOString(),
+             issuedBy: receiptIssuer,
+             mode: isEditMode ? 'UPDATE' : 'CREATE'
          });
 
          setShowModal(false);
-         setShowTicketModal(!isEditMode);
+         setShowTicketModal(true);
      } catch (e) {
          console.error(e);
          const message = e instanceof Error ? e.message : 'Không thể lưu đơn đặt phòng.';
@@ -3274,117 +3283,150 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           document.body
       )}
 
-      {showTicketModal && receiptData && (
-          <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4">
-               <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full animate-fade-in relative">
-                   <button onClick={() => setShowTicketModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1"><X size={20}/></button>
-                   
-                   <div id="print-area">
-                        <div className="text-center mb-6">
-                            <h2 className="text-xl font-bold uppercase text-gray-900">Xác Nhận Đặt Phòng</h2>
-                            <div className="w-20 h-1 bg-gray-200 mx-auto mt-2"></div>
+      {showTicketModal && receiptData && createPortal(
+          <div className="fixed inset-0 bg-black/45 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-3 md:p-6">
+               <div className="bg-white rounded-[28px] shadow-[0_24px_80px_rgba(15,23,42,0.24)] max-w-3xl w-full h-auto max-h-[calc(100dvh-48px)] animate-fade-in relative overflow-hidden flex flex-col">
+                   <button onClick={() => setShowTicketModal(false)} className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-900"><X size={18}/></button>
+
+                   <div className="shrink-0 bg-white px-5 py-4 pr-14 md:px-7 md:py-5">
+                       <div className="flex items-start justify-between gap-4">
+                           <div className="min-w-0">
+                               <div className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">K-Host · {receiptData.branchName}</div>
+                               <h2 className="mt-1 text-xl md:text-2xl font-black tracking-tight text-gray-950">Phiếu xác nhận đặt phòng</h2>
+                               <div className="mt-1.5 space-y-0.5 text-[12px] font-medium leading-relaxed text-gray-500">
+                                   <div>Mã đơn: <span className="font-semibold text-gray-800">{receiptData.bookingCode}</span> · Tạo lúc: <span className="font-semibold text-gray-800">{formatStandardDateTime(receiptData.issuedAt)}</span></div>
+                                   <div>Người tạo: <span className="font-semibold text-gray-800">{receiptData.issuedBy}</span> · Số phòng: <span className="font-semibold text-gray-800">{receiptData.roomCount || receiptData.rooms.length}</span></div>
+                                </div>
+                            </div>
                         </div>
+                   </div>
 
-                        <div className="text-sm text-gray-800 space-y-3">
-                            <div className="grid grid-cols-3 gap-2">
-                                <span className="font-bold text-gray-500">Khách hàng:</span>
-                                <span className="col-span-2 font-semibold">{receiptData.guestName}</span>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                                <span className="font-bold text-gray-500">Số điện thoại:</span>
-                                <span className="col-span-2">{receiptData.guestPhone || '--'}</span>
-                            </div>
-
-                            <div className="border-t border-dashed border-gray-300 my-4 py-3 space-y-4">
-                                {receiptData.rooms.map((room: any, idx: number) => (
-                                    <div key={idx} className="pb-3 border-b border-dashed border-gray-200 last:border-0 last:pb-0">
-                                        <div className="flex justify-between items-center mb-1">
-                                            <span className="font-bold text-blue-600 text-base">{room.roomNumber}</span>
-                                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600">{room.typeName}</span>
+                   <div id="print-area" className="bg-white overflow-y-auto flex-1 min-h-0 overscroll-contain">
+                        <div className="px-5 pb-5 md:px-7 md:pb-7 text-sm text-gray-800">
+                            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px] md:items-start">
+                                <div className="space-y-3">
+                                    <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                        <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-400">
+                                            <UserIcon size={14} />
+                                            Thông tin khách
                                         </div>
-                                        <div className="text-xs text-gray-500 mb-2 italic">Chi nhánh: {room.branchName}</div>
-                                        
-                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                                            <span className="text-gray-500">Nhận phòng:</span>
-                                            <span className="font-medium">{formatStandardDateTime(room.checkIn)}</span>
-                                            <span className="text-gray-500">Trả phòng:</span>
-                                            <span className="font-medium">{formatStandardDateTime(room.checkOut)}</span>
+                                        <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-2">
+                                            <span className="font-semibold text-gray-500">Khách hàng</span>
+                                            <span className="font-bold text-gray-950">{receiptData.guestName}</span>
+                                            <span className="font-semibold text-gray-500">Số điện thoại</span>
+                                            <span>{receiptData.guestPhone || '--'}</span>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
+                                    </section>
 
-                            <div className="border-t border-dashed border-gray-300 py-2">
-                                <div className="flex justify-between items-center">
-                                    <span className="font-bold text-xs uppercase text-gray-500">Tổng tiền phòng</span>
-                                    <span className="font-bold text-gray-900">{formatNumber(receiptData.roomPrice)}</span>
-                                </div>
-                            </div>
+                                    <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                        <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-400">
+                                            <Building2 size={14} />
+                                            Thông tin phòng
+                                        </div>
+                                        <div className="space-y-2.5">
+                                            {receiptData.rooms.map((room: any, idx: number) => (
+                                                <div key={idx} className="rounded-[18px] bg-white p-3 shadow-[0_6px_20px_rgba(37,99,235,0.08)]">
+                                                    <div className="mb-2 flex items-start justify-between gap-3">
+                                                        <div className="flex min-w-0 items-center gap-2">
+                                                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                                                                <Building2 size={16} />
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <div className="truncate font-black text-blue-700 text-base">Phòng {room.roomNumber} - {room.typeName}</div>
+                                                                <div className="text-xs font-semibold text-gray-500">Chi nhánh: {room.branchName}</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
 
-                            {receiptData.extraFees && receiptData.extraFees.length > 0 && (
-                                <div className="border-t border-dashed border-gray-300 py-2 mb-2">
-                                    <h5 className="font-bold text-xs uppercase text-gray-500 mb-2">Dịch vụ & Phụ thu</h5>
-                                    <div className="space-y-1">
-                                        {receiptData.extraFees.map((f: ExtraFee) => (
-                                            <div key={f.id} className="flex justify-between text-xs">
-                                                <span>{f.name}</span>
-                                                <span className={f.type === 'REVENUE' ? 'text-gray-800' : 'text-red-500'}>
-                                                    {f.type === 'REVENUE' ? '' : '-'}{formatNumber(f.amount)}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="bg-gray-50 p-3 rounded-lg space-y-2 border border-gray-100">
-                                <div className="flex justify-between items-center">
-                                    <span className="font-bold text-gray-600">Tổng bill:</span>
-                                    <span className="font-bold text-lg text-gray-900">{formatNumber(receiptData.total)} đ</span>
-                                </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="font-bold text-gray-600">Đã thanh toán:</span>
-                                    <span className="font-bold text-blue-600">{formatNumber(receiptData.paid)} đ</span>
-                                </div>
-                                <div className="border-t border-gray-200 pt-2 flex justify-between items-center">
-                                    <span className="font-bold text-gray-600">Còn lại:</span>
-                                    <span className={`font-bold ${receiptData.total - receiptData.paid > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                        {formatNumber(receiptData.total - receiptData.paid)} đ
-                                    </span>
-                                </div>
-                            </div>
-
-                            {(receiptData.tags?.length > 0 || receiptData.notes) && (
-                                <div className="pt-2 space-y-2">
-                                    {receiptData.tags.length > 0 && (
-                                        <div className="flex gap-1 flex-wrap">
-                                            {receiptData.tags.map((t: Tag) => (
-                                                <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold" style={{backgroundColor: t.color}}>
-                                                    {t.name}
-                                                </span>
+                                                    <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs text-gray-700">
+                                                        <span className="text-gray-500">Nhận phòng</span>
+                                                        <span className="font-semibold">{formatStandardDateTime(room.checkIn)}</span>
+                                                        <span className="text-gray-500">Trả phòng</span>
+                                                        <span className="font-semibold">{formatStandardDateTime(room.checkOut)}</span>
+                                                    </div>
+                                                </div>
                                             ))}
                                         </div>
-                                    )}
-                                    {receiptData.notes && (
-                                        <div className="text-xs text-gray-500 italic bg-gray-50 p-2 rounded border border-gray-100">
-                                            {receiptData.notes}
-                                        </div>
-                                    )}
+                                    </section>
                                 </div>
-                            )}
 
-                            <div className="mt-6 no-print">
-                                <button 
-                                    onClick={() => window.print()} 
-                                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"
-                                >
-                                    <Printer size={20}/> In phiếu xác nhận
-                                </button>
+                                <aside className="space-y-3">
+                                    <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                        <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-400">
+                                            <Wallet size={14} />
+                                            Thanh toán
+                                        </div>
+                                        <div className="space-y-2 font-semibold tabular-nums">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-gray-600">Tổng bill</span>
+                                                <span className="text-lg font-black text-gray-950">{formatNumber(receiptData.total)} đ</span>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-gray-600">Đã thanh toán</span>
+                                                <span className="font-black text-blue-600">{formatNumber(receiptData.paid)} đ</span>
+                                            </div>
+                                            <div className="border-t border-gray-200/80 pt-2 flex justify-between items-center">
+                                                <span className="text-gray-600">Còn lại</span>
+                                                <span className={`font-black ${receiptData.total - receiptData.paid > 0 ? 'text-orange-700' : 'text-emerald-600'}`}>
+                                                    {formatNumber(receiptData.total - receiptData.paid)} đ
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    {receiptData.extraFees && receiptData.extraFees.length > 0 && (
+                                        <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                            <h5 className="font-bold text-xs uppercase text-gray-400 mb-2">Dịch vụ & Phụ thu</h5>
+                                            <div className="space-y-1.5">
+                                                {receiptData.extraFees.map((f: ExtraFee) => (
+                                                    <div key={f.id} className="flex justify-between gap-3 text-xs">
+                                                        <span className="text-gray-700">{f.name}</span>
+                                                        <span className={`shrink-0 font-semibold tabular-nums ${f.type === 'REVENUE' ? 'text-gray-900' : 'text-orange-700'}`}>
+                                                            {f.type === 'REVENUE' ? '' : '-'}{formatNumber(f.amount)} đ
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </section>
+                                    )}
+
+                                    {(receiptData.tags?.length > 0 || receiptData.notes) && (
+                                        <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                            <div className="space-y-2">
+                                                {receiptData.tags.length > 0 && (
+                                                    <div>
+                                                        <div className="mb-1 text-[11px] font-bold uppercase text-gray-400">Tag</div>
+                                                        <div className="flex gap-1 flex-wrap">
+                                                            {receiptData.tags.map((t: Tag) => (
+                                                                <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full text-white font-bold" style={{backgroundColor: t.color}}>
+                                                                    {t.name}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {receiptData.notes && (
+                                                    <div>
+                                                        <div className="mb-1 text-[11px] font-bold uppercase text-gray-400">Ghi chú</div>
+                                                        <div className="rounded-2xl bg-white p-2 text-xs italic text-gray-500 shadow-[0_4px_16px_rgba(15,23,42,0.04)]">
+                                                            {receiptData.notes}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </section>
+                                    )}
+                                </aside>
+                            </div>
+
+                            <div className="mt-4 border-t border-dashed border-gray-200 pt-4 text-center text-xs font-semibold text-gray-500">
+                                Vui lòng kiểm tra lại thông tin đặt phòng. Cảm ơn quý khách.
                             </div>
                         </div>
                    </div>
                </div>
-          </div>
+          </div>,
+          document.body
       )}
     </div>
   );
