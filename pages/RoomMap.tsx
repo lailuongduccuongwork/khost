@@ -1214,6 +1214,26 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           : addDays(timeSlots[0], gridColumns).getTime();
   }, [timeSlots, timelineMode, gridColumns, viewEnd]);
 
+  const currentTimeLeftPercent = useMemo(() => {
+      const startMs = viewportStartMs;
+      const endMs = viewportEndMs;
+      const currentMs = now.getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+      if (currentMs < startMs || currentMs > endMs) return null;
+      return ((currentMs - startMs) / (endMs - startMs)) * 100;
+  }, [now, viewportStartMs, viewportEndMs]);
+
+  const renderCurrentTimeLine = (extraClassName = '') => {
+      if (currentTimeLeftPercent === null) return null;
+      return (
+          <div
+              className={`pointer-events-none absolute top-0 bottom-0 z-[35] w-px border-l border-dashed border-blue-500/80 ${extraClassName}`}
+              style={{ left: `${currentTimeLeftPercent}%` }}
+              aria-hidden="true"
+          />
+      );
+  };
+
   const roomPolicyWindowsByRoom = useMemo(() => {
       const map = new Map<string, RoomPolicyWindow[]>();
       if (roomPolicies.length === 0 || sortedRooms.length === 0) return map;
@@ -1237,6 +1257,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const getPolicyWindowAtPoint = (roomId: string, timeMs: number) => {
       const windows = roomPolicyWindowsByRoom.get(roomId) || [];
       return windows.find((window) => timeMs >= window.startMs && timeMs < window.endMs) || null;
+  };
+
+  const getHourlyOnlyViolation = (roomId: string, checkIn: Date, checkOut: Date) => {
+      const durationHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
+      if (durationHours <= 12) return null;
+
+      const windows = roomPolicyWindowsByRoom.get(roomId) || [];
+      const overlapsHourlyWindow = windows.some((window) =>
+          window.mode === 'HOURLY_ONLY' &&
+          window.endMs > checkIn.getTime() &&
+          window.startMs < checkOut.getTime()
+      );
+      if (!overlapsHourlyWindow) return null;
+
+      const room = rooms.find((item) => item.id === roomId);
+      return `Phòng ${room?.number || roomId} chỉ nhận khách giờ trong khung này, tổng thời gian lưu trú không được vượt quá 12 tiếng.`;
   };
 
   const handleNavigate = (direction: 'PREV' | 'NEXT') => {
@@ -1494,6 +1530,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           setDragEnd(null);
           return;
       }
+      const hourlyOnlyViolation = getHourlyOnlyViolation(dragStart.roomId, checkIn, checkOut);
+      if (hourlyOnlyViolation) {
+          alert(`🚫 Không thể tạo đơn!\nLý do: ${hourlyOnlyViolation}`);
+          setDragStart(null);
+          setDragEnd(null);
+          return;
+      }
       const validate = await DataService.validateRoomAvailabilityRemote(
           draggedRoom.propertyId,
           dragStart.roomId,
@@ -1599,6 +1642,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       
       const isSameTime = timelineMode === 'DAY' ? oldIn.getTime() === newCheckIn.getTime() : oldIn.toDateString() === newCheckIn.toDateString();
       if (booking.roomId === targetRoomId && isSameTime) return;
+
+      const hourlyOnlyViolation = getHourlyOnlyViolation(targetRoomId, newCheckIn, newCheckOut);
+      if (hourlyOnlyViolation) return alert(`🚫 Không thể chuyển phòng!\nLý do: ${hourlyOnlyViolation}`);
 
       const validate = await DataService.validateRoomAvailabilityRemote(
           targetRoom.propertyId,
@@ -1947,7 +1993,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
   const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
-  const roomColumnWidthClass = 'w-[168px] md:w-[220px]';
+  const roomColumnWidthClass = 'w-[112px] md:w-[148px]';
 
   return (
     <div className="katka-liquid-page h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
@@ -2075,48 +2121,30 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                     </button>
                  )}
           </div>
-       </div>
+      </div>
 
       {/* MAIN CONTENT */}
       <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col relative z-0">
-          <div className="roommap-summary-bar border-b border-gray-100 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2 text-[11px] md:text-xs">
-                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 font-bold text-slate-600 shadow-sm">
-                      Phòng hiện tại
+          <div className="roommap-summary-bar border-b border-gray-100 px-3 py-1.5">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar whitespace-nowrap text-[11px] md:text-xs text-slate-600">
+                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 font-bold text-slate-700">
+                      {getRoomMapFilterLabel(filters.status)}
                   </span>
-                  <span className="roommap-summary-pill inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold text-red-700 shadow-sm">
-                      <UserIcon size={12} />
-                      Đang ở: {roomTrustSummary.occupied}
+                  <span className="inline-flex shrink-0 items-center gap-1 font-bold text-red-700">
+                      <span className="h-2 w-2 rounded-full bg-red-500"></span>Ở {roomTrustSummary.occupied}
                   </span>
-                  <span className="roommap-summary-pill inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold text-yellow-700 shadow-sm">
-                      <AlertTriangle size={12} />
-                      Chưa dọn: {roomTrustSummary.dirty}
+                  <span className="inline-flex shrink-0 items-center gap-1 font-bold text-yellow-700">
+                      <span className="h-2 w-2 rounded-full bg-yellow-400"></span>Dọn {roomTrustSummary.dirty}
                   </span>
-                  <span className="roommap-summary-pill inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold text-green-700 shadow-sm">
-                      <CheckCircle size={12} />
-                      Sẵn sàng: {roomTrustSummary.clean}
+                  <span className="inline-flex shrink-0 items-center gap-1 font-bold text-green-700">
+                      <span className="h-2 w-2 rounded-full bg-green-500"></span>Sẵn sàng {roomTrustSummary.clean}
                   </span>
-                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 font-bold text-slate-600 shadow-sm">
-                      Booking trong khung
+                  <span className="h-4 w-px shrink-0 bg-slate-200"></span>
+                  <span className="inline-flex shrink-0 items-center gap-1 font-bold text-blue-700">
+                      <span className="h-2 w-2 rounded-full bg-blue-500"></span>Vào {roomTrustSummary.arriving}
                   </span>
-                  <span className="roommap-summary-pill inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold text-blue-700 shadow-sm">
-                      <LogIn size={12} />
-                      Sắp vào: {roomTrustSummary.arriving}
-                  </span>
-                  <span className="roommap-summary-pill inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold text-orange-700 shadow-sm">
-                      <LogOut size={12} />
-                      Sắp ra: {roomTrustSummary.departing}
-                  </span>
-                  <span className="roommap-summary-range font-semibold">
-                      Khung đang xem: {dateRangeLabel}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-600 shadow-sm">
-                      Bộ lọc: {getRoomMapFilterLabel(filters.status)}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-600 shadow-sm">
-                      <span className="h-2.5 w-2.5 rounded-sm bg-green-500"></span>Đã thanh toán
-                      <span className="ml-1 h-2.5 w-2.5 rounded-sm bg-red-500"></span>Còn nợ
-                      <span className="ml-1 h-2.5 w-2.5 rounded-sm bg-amber-500"></span>Giữ chỗ
+                  <span className="inline-flex shrink-0 items-center gap-1 font-bold text-orange-700">
+                      <span className="h-2 w-2 rounded-full bg-orange-500"></span>Ra {roomTrustSummary.departing}
                   </span>
               </div>
           </div>
@@ -2148,7 +2176,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                      
                      <div className={`sticky top-0 z-[40] bg-gray-50 border-b flex shadow-sm ring-1 ring-gray-200 ${timelineMode === 'WEEK' ? 'h-16 md:h-14' : 'h-14'}`}>
                          <div className={`${roomColumnWidthClass} flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-[50] shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base`}>Phòng</div>
-                         <div className="flex-1 grid" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
+                         <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
+                             {renderCurrentTimeLine()}
                              {timeSlots.map((slot, i) => {
                                  const isCurrent = isCurrentTimeSlot(slot);
                                  return (
@@ -2246,6 +2275,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                     
                                      <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                                          {timeSlots.map((slot) => renderGridCell(room, slot))}
+                                         {renderCurrentTimeLine()}
 
                                          {(roomPolicyWindowsByRoom.get(room.id) || []).map((policyWindow, policyIdx) => {
                                              const bStart = policyWindow.startMs;

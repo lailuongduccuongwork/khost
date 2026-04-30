@@ -465,7 +465,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       runSaveAction('hạng phòng của phòng', () => DataService.saveRooms(nextRooms));
   };
 
-  const handleCreateRoomPolicy = () => {
+  const handleCreateRoomPolicy = async () => {
       if (!policyStartDate) return alert('Vui lòng chọn ngày bắt đầu.');
       if (policyEndDate && policyEndDate < policyStartDate) return alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
       if (policyRecurrence === 'WEEKLY' && policyWeekdays.length === 0) return alert('Vui lòng chọn ít nhất 1 ngày trong tuần.');
@@ -489,7 +489,8 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           createdBy: currentUser.id,
       };
 
-      runSaveAction('chính sách phòng', () => DataService.saveRoomPolicies([...roomPolicies, newPolicy]));
+      const saved = await runSaveAction('chính sách phòng', () => DataService.saveRoomPolicies([...roomPolicies, newPolicy]));
+      if (!saved) return;
       setActiveTab('ROOM_POLICIES');
       resetPolicyForm();
   };

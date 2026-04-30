@@ -1381,6 +1381,19 @@ const _loadBookingsForPropertiesView = async (propertyIds?: string[]) => {
     return _loadScopedCollectionByProperty<Booking>('bookings', 'bookings', propertyIds, false);
 };
 
+const _refreshRoomPoliciesRemote = async () => {
+    if (!_ensureFirebase()) return CACHE.roomPolicies;
+
+    const basePath = getBaseRef();
+    if (!basePath) return CACHE.roomPolicies;
+
+    const snap = await trackedGet(`${basePath}/roomPolicies`);
+    const rows = snapshotToArray<RoomPolicyRule>(snap)
+        .map((item) => normalizeForNode('roomPolicies', item, activeTenantId) as RoomPolicyRule);
+    CACHE.roomPolicies = rows;
+    return rows;
+};
+
 const _fetchBookingsForProperties = async (propertyIds?: string[]) => {
     if (!_ensureFirebase()) return [] as Booking[];
 
@@ -1776,6 +1789,7 @@ const _validateRoomAvailabilityRemote = async (
     const startMs = new Date(start).getTime();
     const endMs = new Date(end).getTime();
 
+    await _refreshRoomPoliciesRemote();
     const policyCheck = _validateRoomPolicy(roomId, start, end);
     if (!policyCheck.valid) {
         return {
@@ -1914,7 +1928,7 @@ const _deleteItem = (node: string, id: string) => {
     });
 };
 
-const _saveListAsMap = (node: string, list: any[]) => {
+const _saveListAsMap = async (node: string, list: any[]) => {
     if (!activeTenantId || !db) return;
 
     const basePath = getBaseRef();
@@ -1952,9 +1966,12 @@ const _saveListAsMap = (node: string, list: any[]) => {
         }
     });
 
-    return trackedUpdateRoot(updates, { node, operation: 'bulk-save' }).catch((error: any) => {
+    try {
+        await trackedUpdateRoot(updates, { node, operation: 'bulk-save' });
+    } catch (error) {
         console.error(`Bulk save ${node} failed`, error);
-    });
+        throw error;
+    }
 };
 
 const _deleteItems = (node: string, ids: string[]) => {
@@ -2077,14 +2094,14 @@ const _auditCollectionMutation = (node: AuditedNode, previousList: any[], nextLi
     });
 };
 
-const _saveAuditedList = (node: AuditedNode, list: any[]) => {
+const _saveAuditedList = async (node: AuditedNode, list: any[]) => {
     const previousList = cloneData(
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] || []
     ) as any[];
     const normalizedList = list.map((item) => normalizeForNode(node, item, activeTenantId));
 
-    _saveListAsMap(node, list);
+    await _saveListAsMap(node, list);
     _auditCollectionMutation(node, previousList, normalizedList);
 };
 
@@ -2774,6 +2791,8 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
     remotePropertyBookings.forEach((booking) => {
         nextMap.set(booking.id, booking);
     });
+
+    await _refreshRoomPoliciesRemote();
 
     for (const deleteId of deleteIds) {
         const existing = nextMap.get(deleteId) || remoteExistingById.get(deleteId) || null;
@@ -3970,6 +3989,7 @@ const _saveBookingAtomic = async (
         previousBookingFromCommittedTxn.checkOutDate !== normalizedBooking.checkOutDate;
 
     if (scheduleChanged) {
+        await _refreshRoomPoliciesRemote();
         const policyCheck = _validateRoomPolicy(
             normalizedBooking.roomId,
             normalizedBooking.checkInDate,
