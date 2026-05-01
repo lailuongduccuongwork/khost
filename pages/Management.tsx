@@ -22,6 +22,7 @@ type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'A
 type CascadeDeleteKind = 'property' | 'roomType' | 'room';
 type NewRoomTypeDraft = { propertyId: string; name: string } | null;
 type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
+type EditRoomModalState = { roomId: string; number: string; typeId: string } | null;
 
 interface DangerousDeleteModalState {
     isOpen: boolean;
@@ -88,6 +89,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [collapsedPropertyIds, setCollapsedPropertyIds] = useState<string[]>([]);
   const [newRoomTypeDraft, setNewRoomTypeDraft] = useState<NewRoomTypeDraft>(null);
   const [newRoomDraft, setNewRoomDraft] = useState<NewRoomDraft>(null);
+  const [editRoomModal, setEditRoomModal] = useState<EditRoomModalState>(null);
   const [roomManagementSearch, setRoomManagementSearch] = useState('');
   const [managementRooms, setManagementRooms] = useState<Room[]>(rooms);
   const [managementRoomTypes, setManagementRoomTypes] = useState<RoomType[]>(roomTypes);
@@ -465,6 +467,36 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       runSaveAction('hạng phòng của phòng', () => DataService.saveRooms(nextRooms));
   };
 
+  const openEditRoomModal = (room: Room) => {
+      setEditingId(null);
+      setEditRoomModal({ roomId: room.id, number: room.number || '', typeId: room.typeId || '' });
+  };
+
+  const closeEditRoomModal = () => {
+      setEditRoomModal(null);
+  };
+
+  const handleSaveEditRoomModal = () => {
+      if (!editRoomModal) return;
+      const room = managementRooms.find(item => item.id === editRoomModal.roomId);
+      if (!room) {
+          setEditRoomModal(null);
+          return alert('Không tìm thấy phòng để cập nhật.');
+      }
+
+      const number = editRoomModal.number.trim();
+      if (!number) return alert('Số phòng không được để trống.');
+      if (!editRoomModal.typeId) return alert('Vui lòng chọn hạng phòng.');
+      if (roomHasDuplicateNumber(room.propertyId, number, room.id)) return alert('Số phòng đã tồn tại trong chi nhánh này.');
+
+      const nextRooms = managementRooms.map(item =>
+          item.id === room.id ? { ...item, number, typeId: editRoomModal.typeId } : item
+      );
+      setManagementRooms(nextRooms);
+      runSaveAction('phòng', () => DataService.saveRooms(nextRooms));
+      setEditRoomModal(null);
+  };
+
   const handleCreateRoomPolicy = async () => {
       if (!policyStartDate) return alert('Vui lòng chọn ngày bắt đầu.');
       if (policyEndDate && policyEndDate < policyStartDate) return alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
@@ -542,6 +574,11 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           </div>
       );
   };
+
+  const editingRoom = editRoomModal
+      ? managementRooms.find(room => room.id === editRoomModal.roomId) || null
+      : null;
+  const editingRoomTypes = editingRoom ? getTypesInProp(editingRoom.propertyId) : [];
 
   return (
     <div className="katka-liquid-page flex flex-col md:flex-row gap-6 animate-fade-in">
@@ -748,17 +785,31 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                           </div>
                                       )}
 
-                                      {/* --- PHẦN 1: CÁC HẠNG PHÒNG (TỐI GIẢN) --- */}
-                                      {!isCollapsed && <div className="p-4 md:p-5 border-b border-gray-100 bg-gray-50/50">
-                                          <div className="flex justify-between items-center mb-3">
-                                              <h4 className="font-bold text-gray-700 flex items-center gap-2"><BedDouble size={18}/> Các Hạng phòng lựa chọn</h4>
-                                              <button onClick={() => handleAddRoomType(prop.id)} className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 hover:bg-blue-50 transition-colors shadow-sm">
-                                                  <Plus size={16}/> Thêm Hạng phòng
-                                              </button>
+                                      {!isCollapsed && <div className="p-4 md:p-5 bg-gray-50/40">
+                                          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                              <div>
+                                                  <h4 className="font-bold text-gray-800 flex items-center gap-2">
+                                                      <BedDouble size={18}/> Hạng phòng & phòng trực thuộc
+                                                  </h4>
+                                                  <p className="mt-1 text-xs font-medium text-gray-500">
+                                                      Mỗi hạng phòng hiển thị các phòng đang thuộc hạng đó. Phòng có thể đổi hạng bằng dropdown trong card.
+                                                  </p>
+                                              </div>
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                  {roomsInProp.length > 1 && !isSearchActive && (
+                                                      <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
+                                                          <button onClick={() => handleSortRoomsAZ(prop.id, true)} className="px-3 py-1.5 hover:bg-gray-50 text-gray-600 text-xs font-bold border-r border-gray-200">A-Z</button>
+                                                          <button onClick={() => handleSortRoomsAZ(prop.id, false)} className="px-3 py-1.5 hover:bg-gray-50 text-gray-600 text-xs font-bold">Z-A</button>
+                                                      </div>
+                                                  )}
+                                                  <button onClick={() => handleAddRoomType(prop.id)} className="bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 hover:bg-blue-50 transition-colors shadow-sm">
+                                                      <Plus size={16}/> Thêm hạng
+                                                  </button>
+                                              </div>
                                           </div>
 
                                           {newRoomTypeDraft?.propertyId === prop.id && (
-                                              <div className="mb-3 rounded-xl border-2 border-blue-200 bg-white p-3 shadow-sm">
+                                              <div className="mb-4 rounded-xl border-2 border-blue-200 bg-white p-3 shadow-sm">
                                                   <div className="text-xs font-bold uppercase tracking-wide text-blue-600 mb-2">Hạng phòng mới</div>
                                                   <div className="flex flex-col md:flex-row gap-2">
                                                       <input
@@ -777,68 +828,6 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                   </div>
                                               </div>
                                           )}
-                                          
-                                          {displayedTypesInProp.length === 0 ? (
-                                              <div className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
-                                                  {isSearchActive ? 'Không có hạng phòng phù hợp với từ khóa tìm kiếm.' : 'Hãy thêm ít nhất 1 hạng phòng để có thể gán cho các phòng nhé!'}
-                                              </div>
-                                          ) : (
-                                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                                  {displayedTypesInProp.map(type => (
-                                                      <div key={type.id} className="bg-white border border-gray-200 px-3 py-2.5 rounded-xl shadow-sm flex items-center justify-between relative hover:border-blue-300 transition-colors min-h-[3rem]">
-                                                          {editingId === type.id ? (
-                                                              <div className="w-full flex-1 -ml-1">
-                                                                  <InlineInput value={type.name} autoSelect onSave={(v) => {
-                                                                      const name = v.trim();
-                                                                      const propertyId = getRoomTypePropertyId(type) || prop.id;
-                                                                      if (!name) return alert('Tên hạng phòng không được để trống.');
-                                                                      if (roomTypeHasDuplicateName(propertyId, name, type.id)) return alert('Tên hạng phòng đã tồn tại trong chi nhánh này.');
-                                                                      const nextRoomTypes = managementRoomTypes.map(t => t.id === type.id ? {...t, name} : t);
-                                                                      setManagementRoomTypes(nextRoomTypes);
-                                                                      runSaveAction('hạng phòng', () => DataService.saveRoomTypes(nextRoomTypes));
-                                                                      setEditingId(null);
-                                                                  }} onCancel={() => setEditingId(null)} />
-                                                              </div>
-                                                          ) : (
-                                                              <>
-                                                                  <div className="min-w-0 pr-12">
-                                                                      <span className="font-bold text-gray-800 break-words line-clamp-1" title={type.name}>{type.name}</span>
-                                                                      <div className="mt-1 text-[11px] font-bold text-gray-400">{roomsInProp.filter(room => room.typeId === type.id).length} phòng</div>
-                                                                  </div>
-                                                                  <div className="flex gap-1 absolute right-2">
-                                                                      <button onClick={() => setEditingId(type.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Đổi tên hạng"><Edit2 size={16}/></button>
-                                                                      <button onClick={() => confirmDelete('roomType', type.id, `Hạng ${type.name}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa hạng"><Trash2 size={16}/></button>
-                                                                  </div>
-                                                              </>
-                                                          )}
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                          )}
-                                      </div>}
-
-                                      {/* --- PHẦN 2: DANH SÁCH SỐ PHÒNG (KÉO THẢ SẮP XẾP) --- */}
-                                      {!isCollapsed && <div className="p-4 md:p-5">
-                                          <div className="flex justify-between items-center mb-4">
-                                              <h4 className="font-bold text-gray-700 flex items-center gap-2"><Key size={18}/> Danh sách Số phòng</h4>
-                                              <div className="flex items-center gap-2">
-                                                  {roomsInProp.length > 1 && !isSearchActive && (
-                                                      <div className="flex bg-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-                                                          <button onClick={() => handleSortRoomsAZ(prop.id, true)} className="px-3 py-1.5 hover:bg-gray-200 text-gray-600 text-xs font-bold border-r border-gray-200 flex items-center gap-1">A-Z</button>
-                                                          <button onClick={() => handleSortRoomsAZ(prop.id, false)} className="px-3 py-1.5 hover:bg-gray-200 text-gray-600 text-xs font-bold flex items-center gap-1">Z-A</button>
-                                                      </div>
-                                                  )}
-                                                  <button 
-                                                    onClick={() => {
-                                                        if(typesInProp.length === 0) return alert('Hãy tạo ít nhất 1 Hạng phòng trước!');
-                                                        handleAddRoom(prop.id, typesInProp[0].id);
-                                                    }} 
-                                                    className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1 hover:bg-blue-200 transition-colors"
-                                                  >
-                                                      <Plus size={16}/> Thêm Phòng
-                                                  </button>
-                                              </div>
-                                          </div>
 
                                           {newRoomDraft?.propertyId === prop.id && (
                                               <div className="mb-4 rounded-xl border-2 border-blue-200 bg-white p-3 shadow-sm">
@@ -867,71 +856,95 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                   </div>
                                               </div>
                                           )}
-                                          
-                                          {displayedRoomsInProp.length === 0 ? (
-                                              <div className="text-center text-gray-400 py-6 border-2 border-dashed border-gray-200 rounded-xl">
-                                                  {isSearchActive ? 'Không có phòng phù hợp với từ khóa tìm kiếm.' : 'Chưa có phòng nào. Bấm "Thêm Phòng" để tạo.'}
+
+                                          {displayedTypesInProp.length === 0 ? (
+                                              <div className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                                                  {isSearchActive ? 'Không có hạng phòng phù hợp với từ khóa tìm kiếm.' : 'Hãy thêm ít nhất 1 hạng phòng để có thể gán cho các phòng nhé!'}
                                               </div>
                                           ) : (
-                                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-                                                  {displayedRoomsInProp.map((room, rIdx) => (
-                                                      <div 
-                                                          key={room.id}
-                                                          draggable={editingId !== room.id && !isSearchActive}
-                                                          onDragStart={(e) => { e.stopPropagation(); setDraggedRoom({ propId: prop.id, idx: rIdx }); }}
-                                                          onDragOver={(e) => e.preventDefault()}
-                                                          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropRoom(prop.id, rIdx); }}
-                                                          className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all ${draggedRoom?.idx === rIdx && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${editingId !== room.id && !isSearchActive ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : editingId === room.id ? 'shadow-md border-blue-500 ring-2 ring-blue-300' : 'hover:border-slate-300'}`}
-                                                      >
-                                                          {/* Khi bấm sửa số phòng, khung nhập liệu sẽ chiếm toàn bộ card để không bị đẩy lệch */}
-                                                          {editingId === room.id ? (
-                                                              <div className="w-full">
-                                                                  <InlineInput 
-                                                                    value={room.number} 
-                                                                    autoSelect 
-                                                                    onSave={(v) => {
-                                                                        const number = v.trim();
-                                                                        if (!number) return alert('Số phòng không được để trống.');
-                                                                        if (roomHasDuplicateNumber(room.propertyId, number, room.id)) return alert('Số phòng đã tồn tại trong chi nhánh này.');
-                                                                        const nextRooms = managementRooms.map(r => r.id === room.id ? {...r, number} : r);
-                                                                        setManagementRooms(nextRooms);
-                                                                        runSaveAction('phòng', () => DataService.saveRooms(nextRooms));
-                                                                        setEditingId(null);
-                                                                    }}
-                                                                    onCancel={() => setEditingId(null)} 
-                                                                  />
+                                              <div className="space-y-4">
+                                                  {displayedTypesInProp.map(type => {
+                                                      const roomsOfType = displayedRoomsInProp.filter(room => room.typeId === type.id);
+                                                      return (
+                                                          <section key={type.id} className="rounded-2xl border border-slate-200 bg-white p-3 md:p-4 shadow-sm">
+                                                              <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                                                  <div className="min-w-0">
+                                                                      {editingId === type.id ? (
+                                                                          <InlineInput value={type.name} autoSelect onSave={(v) => {
+                                                                              const name = v.trim();
+                                                                              const propertyId = getRoomTypePropertyId(type) || prop.id;
+                                                                              if (!name) return alert('Tên hạng phòng không được để trống.');
+                                                                              if (roomTypeHasDuplicateName(propertyId, name, type.id)) return alert('Tên hạng phòng đã tồn tại trong chi nhánh này.');
+                                                                              const nextRoomTypes = managementRoomTypes.map(t => t.id === type.id ? {...t, name} : t);
+                                                                              setManagementRoomTypes(nextRoomTypes);
+                                                                              runSaveAction('hạng phòng', () => DataService.saveRoomTypes(nextRoomTypes));
+                                                                              setEditingId(null);
+                                                                          }} onCancel={() => setEditingId(null)} />
+                                                                      ) : (
+                                                                          <>
+                                                                              <h5 className="truncate text-base font-black text-gray-800" title={type.name}>{type.name}</h5>
+                                                                              <div className="mt-0.5 text-xs font-bold text-gray-400">{roomsInProp.filter(room => room.typeId === type.id).length} phòng</div>
+                                                                          </>
+                                                                      )}
+                                                                  </div>
+                                                                  <div className="flex flex-wrap items-center gap-1.5">
+                                                                      <button
+                                                                          onClick={() => handleAddRoom(prop.id, type.id)}
+                                                                          className="rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 inline-flex items-center gap-1"
+                                                                      >
+                                                                          <Plus size={14}/> Thêm phòng
+                                                                      </button>
+                                                                      <button onClick={() => setEditingId(type.id)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg" title="Đổi tên hạng"><Edit2 size={16}/></button>
+                                                                      <button onClick={() => confirmDelete('roomType', type.id, `Hạng ${type.name}`)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="Xóa hạng"><Trash2 size={16}/></button>
+                                                                  </div>
                                                               </div>
-                                                          ) : (
-                                                              <>
-                                                                  <div className="flex items-center justify-between">
-                                                                      <GripVertical size={16} className="text-gray-300 shrink-0" />
-                                                                      <span className="font-black text-gray-800 text-base leading-tight flex-1 text-center px-1 break-words whitespace-normal">{room.number}</span>
-                                                                      <div className="flex items-center shrink-0">
-                                                                          <button onClick={() => setEditingId(room.id)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Đổi tên"><Edit2 size={15}/></button>
-                                                                          <button onClick={() => confirmDelete('room', room.id, `Phòng ${room.number}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa"><X size={17}/></button>
-                                                                      </div>
+
+                                                              {roomsOfType.length === 0 ? (
+                                                                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-sm font-semibold text-gray-400">
+                                                                      {isSearchActive ? 'Không có phòng thuộc hạng này khớp từ khóa.' : 'Chưa có phòng nào trong hạng này.'}
                                                                   </div>
-                                                                  
-                                                                  <select 
-                                                                      className={`w-full min-h-[2.25rem] text-sm font-semibold p-2 rounded-lg border outline-none cursor-pointer ${!typesInProp.some(t => t.id === room.typeId) ? 'bg-red-50 text-red-600 border-red-200' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-white focus:border-blue-500'}`}
-                                                                      value={room.typeId || ''}
-                                                                      onChange={(e) => handleRoomTypeChange(room.id, e.target.value)}
-                                                                      title={getRoomTypeName(room.typeId) || 'Hạng phòng không hợp lệ'}
-                                                                  >
-                                                                      {!typesInProp.some(t => t.id === room.typeId) && <option value={room.typeId} className="hidden">--- Chọn hạng phòng ---</option>}
-                                                                      {typesInProp.map(t => (
-                                                                          <option key={t.id} value={t.id}>{t.name}</option>
-                                                                      ))}
-                                                                  </select>
-                                                                  <div className={`text-[11px] font-bold ${!typesInProp.some(t => t.id === room.typeId) ? 'text-red-600' : 'text-gray-400'}`}>
-                                                                      {!typesInProp.some(t => t.id === room.typeId)
-                                                                          ? 'Hạng phòng này không còn tồn tại, hãy chọn lại.'
-                                                                          : `Hạng: ${getRoomTypeName(room.typeId)}`}
+                                                              ) : (
+                                                                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+                                                                      {roomsOfType.map((room) => {
+                                                                          const roomIndexInProp = roomsInProp.findIndex(item => item.id === room.id);
+                                                                          const safeDropIndex = roomIndexInProp >= 0 ? roomIndexInProp : 0;
+                                                                          return (
+                                                                              <div
+                                                                                  key={room.id}
+                                                                                  draggable={!isSearchActive}
+                                                                                  onDragStart={(e) => { e.stopPropagation(); setDraggedRoom({ propId: prop.id, idx: safeDropIndex }); }}
+                                                                                  onDragOver={(e) => e.preventDefault()}
+                                                                                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropRoom(prop.id, safeDropIndex); }}
+                                                                                  className={`flex flex-col gap-2 border border-slate-200 bg-white rounded-xl p-2 transition-all ${draggedRoom?.idx === safeDropIndex && draggedRoom?.propId === prop.id ? 'opacity-30 scale-95 border-dashed border-blue-400' : ''} ${!isSearchActive ? 'cursor-grab active:cursor-grabbing hover:border-blue-400 hover:shadow-md' : 'hover:border-slate-300'}`}
+                                                                              >
+                                                                                  <div className="flex items-center justify-between">
+                                                                                      <GripVertical size={16} className="text-gray-300 shrink-0" />
+                                                                                      <span className="font-black text-gray-800 text-base leading-tight flex-1 text-center px-1 break-words whitespace-normal">{room.number}</span>
+                                                                                      <div className="flex items-center shrink-0">
+                                                                                          <button onClick={() => openEditRoomModal(room)} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Sửa phòng"><Edit2 size={15}/></button>
+                                                                                          <button onClick={() => confirmDelete('room', room.id, `Phòng ${room.number}`)} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Xóa"><X size={17}/></button>
+                                                                                      </div>
+                                                                                  </div>
+
+                                                                                  <select
+                                                                                      className={`w-full min-h-[2.25rem] text-sm font-semibold p-2 rounded-lg border outline-none cursor-pointer ${!typesInProp.some(t => t.id === room.typeId) ? 'bg-red-50 text-red-600 border-red-200' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-white focus:border-blue-500'}`}
+                                                                                      value={room.typeId || ''}
+                                                                                      onChange={(e) => handleRoomTypeChange(room.id, e.target.value)}
+                                                                                      title={getRoomTypeName(room.typeId) || 'Hạng phòng không hợp lệ'}
+                                                                                  >
+                                                                                      {!typesInProp.some(t => t.id === room.typeId) && <option value={room.typeId} className="hidden">--- Chọn hạng phòng ---</option>}
+                                                                                      {typesInProp.map(t => (
+                                                                                          <option key={t.id} value={t.id}>{t.name}</option>
+                                                                                      ))}
+                                                                                  </select>
+                                                                              </div>
+                                                                          );
+                                                                      })}
                                                                   </div>
-                                                              </>
-                                                          )}
-                                                      </div>
-                                                  ))}
+                                                              )}
+                                                          </section>
+                                                      );
+                                                  })}
                                               </div>
                                           )}
                                       </div>}
@@ -1349,6 +1362,66 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           )}
 
       </div>
+
+      {editRoomModal && editingRoom && (
+          <div className="fixed inset-0 bg-black/45 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+                  <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
+                      <div>
+                          <h3 className="text-lg font-black text-gray-900">Sửa phòng</h3>
+                          <p className="text-sm font-medium text-gray-500 mt-0.5">
+                              Cập nhật số phòng và hạng phòng cho chi nhánh {properties.find(prop => prop.id === editingRoom.propertyId)?.name || editingRoom.propertyId}.
+                          </p>
+                      </div>
+                      <button onClick={closeEditRoomModal} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+                          <X size={18} />
+                      </button>
+                  </div>
+
+                  <div className="p-5 space-y-4">
+                      <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Số phòng</span>
+                          <input
+                              value={editRoomModal.number}
+                              onChange={(e) => setEditRoomModal(prev => prev ? { ...prev, number: e.target.value } : prev)}
+                              onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveEditRoomModal();
+                                  if (e.key === 'Escape') closeEditRoomModal();
+                              }}
+                              autoFocus
+                              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-base font-black text-gray-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                              placeholder="Ví dụ: 301 LK"
+                          />
+                      </label>
+
+                      <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Hạng phòng</span>
+                          <select
+                              value={editRoomModal.typeId}
+                              onChange={(e) => setEditRoomModal(prev => prev ? { ...prev, typeId: e.target.value } : prev)}
+                              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-bold text-gray-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                          >
+                              {!editingRoomTypes.some(type => type.id === editRoomModal.typeId) && (
+                                  <option value={editRoomModal.typeId}>Hạng hiện tại không còn tồn tại</option>
+                              )}
+                              {editingRoomTypes.map(type => (
+                                  <option key={type.id} value={type.id}>{type.name}</option>
+                              ))}
+                          </select>
+                      </label>
+                  </div>
+
+                  <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex gap-3">
+                      <button onClick={closeEditRoomModal} className="flex-1 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 font-bold hover:bg-gray-50">
+                          Hủy
+                      </button>
+                      <button onClick={handleSaveEditRoomModal} className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-100">
+                          Lưu phòng
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* --- MODAL XÁC NHẬN XÓA CHUNG --- */}
       {deleteModal?.isOpen && (
