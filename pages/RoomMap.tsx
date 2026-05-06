@@ -383,7 +383,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   // DRAG & DROP CHO ĐƠN ĐÃ CÓ
   const [movingBookingId, setMovingBookingId] = useState<string | null>(null);
   const [isDraggingBooking, setIsDraggingBooking] = useState(false); 
-  const [dragBookingAnchorSlots, setDragBookingAnchorSlots] = useState(0);
   const [hoveredDrop, setHoveredDrop] = useState<{roomId: string, time: Date} | null>(null);
 
   const [moveConfirmModal, setMoveConfirmModal] = useState<{
@@ -1555,56 +1554,18 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   // --- TÍNH NĂNG DRAG TO MOVE EXISTING BOOKING ---
-  const getAnchorAdjustedTargetDate = (targetDate: Date) => {
-      const unitMs = timelineMode === 'DAY' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      return new Date(targetDate.getTime() - dragBookingAnchorSlots * unitMs);
-  };
-
   const handleBookingDragStart = (
       e: React.DragEvent<HTMLDivElement>,
       bookingId: string,
-      bookingStartMs: number,
-      bookingEndMs: number,
-      viewportStartMs: number,
-      viewportEndMs: number
+      _bookingStartMs: number,
+      _bookingEndMs: number,
+      _viewportStartMs: number,
+      _viewportEndMs: number
   ) => {
       if (!canEdit) return;
       e.stopPropagation();
       e.dataTransfer.setData('text/plain', bookingId);
       e.dataTransfer.effectAllowed = 'move';
-
-      const unitMs = timelineMode === 'DAY' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      const visibleStartMs = Math.max(bookingStartMs, viewportStartMs);
-      const visibleEndMs = Math.min(bookingEndMs, viewportEndMs);
-      const visibleDurationMs = Math.max(1, visibleEndMs - visibleStartMs);
-      const bookingDurationMs = Math.max(1, bookingEndMs - bookingStartMs);
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      const clampedX = Math.max(0, Math.min(e.clientX - rect.left, rect.width || 1));
-      const ratio = rect.width > 0 ? Math.min(0.999999, clampedX / rect.width) : 0;
-      const pointerTimeMs = visibleStartMs + ratio * visibleDurationMs;
-
-      let rawOffsetSlots = 0;
-      let maxOffsetSlots = 0;
-
-      if (timelineMode === 'DAY') {
-          const bookingDurationSlots = Math.max(1, Math.ceil(bookingDurationMs / unitMs));
-          rawOffsetSlots = Math.floor((pointerTimeMs - bookingStartMs) / unitMs);
-          maxOffsetSlots = bookingDurationSlots - 1;
-      } else {
-          const dayMs = 24 * 60 * 60 * 1000;
-          const bookingStartDayMs = startOfDay(new Date(bookingStartMs)).getTime();
-          const bookingEndInclusiveMs = Math.max(bookingStartMs, bookingEndMs - 1);
-          const bookingEndDayMs = startOfDay(new Date(bookingEndInclusiveMs)).getTime();
-          const bookingSpanDays = Math.max(1, Math.floor((bookingEndDayMs - bookingStartDayMs) / dayMs) + 1);
-          const pointerDayMs = startOfDay(new Date(pointerTimeMs)).getTime();
-
-          rawOffsetSlots = Math.floor((pointerDayMs - bookingStartDayMs) / dayMs);
-          maxOffsetSlots = bookingSpanDays - 1;
-      }
-
-      const boundedOffsetSlots = Math.max(0, Math.min(rawOffsetSlots, maxOffsetSlots));
-      setDragBookingAnchorSlots(boundedOffsetSlots);
 
       setMovingBookingId(bookingId);
       // Giúp thẻ đang kéo xuyên thấu để chạm tới lưới bên dưới
@@ -1614,13 +1575,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const handleBookingDragEnd = () => {
       setMovingBookingId(null);
       setIsDraggingBooking(false); 
-      setDragBookingAnchorSlots(0);
       setHoveredDrop(null);
   };
 
-  const handleBookingDrop = async (e: React.DragEvent, targetRoomId: string, targetDate: Date) => {
+  const handleBookingDrop = async (e: React.DragEvent, targetRoomId: string, _targetDate: Date) => {
       e.preventDefault(); e.stopPropagation(); 
-      setMovingBookingId(null); setIsDraggingBooking(false); setHoveredDrop(null); setDragBookingAnchorSlots(0);
+      setMovingBookingId(null); setIsDraggingBooking(false); setHoveredDrop(null);
 
       const bookingId = e.dataTransfer.getData('text/plain') || movingBookingId;
       if (!bookingId) return;
@@ -1631,31 +1591,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
       const oldIn = new Date(booking.checkInDate);
       const oldOut = new Date(booking.checkOutDate);
-      const durationMs = oldOut.getTime() - oldIn.getTime();
 
-      const adjustedTargetDate = getAnchorAdjustedTargetDate(targetDate);
-      const newCheckIn = new Date(adjustedTargetDate);
-      if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0); 
-      else newCheckIn.setHours(14, 0, 0, 0); 
-      
-      const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
-      
-      const isSameTime = timelineMode === 'DAY' ? oldIn.getTime() === newCheckIn.getTime() : oldIn.toDateString() === newCheckIn.toDateString();
-      if (booking.roomId === targetRoomId && isSameTime) return;
+      if (booking.roomId === targetRoomId) return;
 
-      const hourlyOnlyViolation = getHourlyOnlyViolation(targetRoomId, newCheckIn, newCheckOut);
+      const hourlyOnlyViolation = getHourlyOnlyViolation(targetRoomId, oldIn, oldOut);
       if (hourlyOnlyViolation) return alert(`🚫 Không thể chuyển phòng!\nLý do: ${hourlyOnlyViolation}`);
 
       const validate = await DataService.validateRoomAvailabilityRemote(
           targetRoom.propertyId,
           targetRoomId,
-          newCheckIn.toISOString(),
-          newCheckOut.toISOString(),
+          oldIn.toISOString(),
+          oldOut.toISOString(),
           booking.id
       );
       if (!validate.valid) return alert(`🚫 Không thể chuyển phòng!\nLý do: ${validate.reason}`);
 
-      setMoveConfirmModal({ isOpen: true, booking, newRoom: targetRoom, newCheckIn, newCheckOut });
+      setMoveConfirmModal({ isOpen: true, booking, newRoom: targetRoom, newCheckIn: oldIn, newCheckOut: oldOut });
   };
 
   const confirmAndSaveMove = async () => {
@@ -2335,21 +2286,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                              return <div className="absolute top-[10%] h-[80%] bg-blue-400 opacity-50 border-2 border-blue-600 border-dashed rounded-md pointer-events-none z-[15]" style={{left: `${left}%`, width: `${width}%`}}></div>;
                                          })()}
 
-                                         {/* 2. Bóng mờ cho KÉO THẢ ĐỔI PHÒNG (Từ 14h đến 12h) */}
+                                         {/* 2. Bóng mờ cho KÉO THẢ ĐỔI PHÒNG: chỉ đổi phòng, giữ nguyên thời gian cũ */}
                                          {hoveredDrop?.roomId === room.id && movingBookingId && (() => {
                                              const movingBooking = roomMapBookings.find(b => b.id === movingBookingId);
                                              if (!movingBooking) return null;
                                              const oldIn = new Date(movingBooking.checkInDate);
                                              const oldOut = new Date(movingBooking.checkOutDate);
-                                             const durationMs = oldOut.getTime() - oldIn.getTime();
-                                             const adjustedHoverTime = getAnchorAdjustedTargetDate(hoveredDrop.time);
-                                             const newCheckIn = new Date(adjustedHoverTime);
-                                             if (timelineMode === 'DAY') newCheckIn.setMinutes(0, 0, 0);
-                                             else newCheckIn.setHours(14, 0, 0, 0);
-                                             const newCheckOut = new Date(newCheckIn.getTime() + durationMs);
-                                             
-                                             const bStart = newCheckIn.getTime();
-                                             const bEnd = newCheckOut.getTime();
+                                             const bStart = oldIn.getTime();
+                                             const bEnd = oldOut.getTime();
                                              if (bEnd <= viewportStartMs || bStart >= viewportEndMs) return null;
                                              const left = (Math.max(0, bStart - viewportStartMs) / (viewportEndMs - viewportStartMs)) * 100;
                                              const width = ((Math.min(bEnd, viewportEndMs) - Math.max(bStart, viewportStartMs)) / (viewportEndMs - viewportStartMs)) * 100;
@@ -2867,7 +2811,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       <div className="w-16 h-16 bg-white/20 text-white rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner">
                           <CheckCircle size={32} />
                       </div>
-                      <h3 className="text-xl font-bold text-white">Xác nhận chuyển lịch</h3>
+                      <h3 className="text-xl font-bold text-white">Xác nhận đổi phòng</h3>
                   </div>
                   
                   <div className="p-6">
@@ -2881,11 +2825,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                               <span className="text-lg font-black text-blue-700">{moveConfirmModal.newRoom?.number}</span>
                           </div>
                           <div className="flex justify-between items-center text-sm">
-                              <span className="text-gray-500 font-medium">Nhận phòng mới:</span>
+                              <span className="text-gray-500 font-medium">Nhận phòng:</span>
                               <span className="font-bold text-gray-800">{formatStandardDateTime(moveConfirmModal.newCheckIn)}</span>
                           </div>
                           <div className="flex justify-between items-center text-sm">
-                              <span className="text-gray-500 font-medium">Trả phòng mới:</span>
+                              <span className="text-gray-500 font-medium">Trả phòng:</span>
                               <span className="font-bold text-gray-800">{formatStandardDateTime(moveConfirmModal.newCheckOut)}</span>
                           </div>
                       </div>
