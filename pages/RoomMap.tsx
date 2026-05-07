@@ -1416,6 +1416,37 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       setHoldTargetRoomId(null);
   };
 
+  const BOOKING_CREATE_BUFFER_MS = 30 * 60 * 1000;
+
+  const getSuggestedCalendarCheckIn = (roomId: string, day: Date, defaultCheckIn: Date, defaultCheckOut: Date) => {
+      const defaultCheckInMs = defaultCheckIn.getTime();
+      const defaultCheckOutMs = defaultCheckOut.getTime();
+      let latestBlockingCheckOutMs = defaultCheckInMs;
+
+      activeRoomMapBookings.forEach((booking) => {
+          if (booking.roomId !== roomId) return;
+          const bookingStartMs = new Date(booking.checkInDate).getTime();
+          const bookingEndMs = new Date(booking.checkOutDate).getTime();
+          if (!Number.isFinite(bookingStartMs) || !Number.isFinite(bookingEndMs)) return;
+          if (bookingStartMs >= defaultCheckOutMs) return;
+          if (bookingEndMs <= defaultCheckInMs) return;
+          latestBlockingCheckOutMs = Math.max(latestBlockingCheckOutMs, bookingEndMs);
+      });
+
+      if (latestBlockingCheckOutMs <= defaultCheckInMs) return defaultCheckIn;
+
+      const suggestedCheckIn = new Date(latestBlockingCheckOutMs + BOOKING_CREATE_BUFFER_MS);
+      if (
+          suggestedCheckIn.getFullYear() !== day.getFullYear() ||
+          suggestedCheckIn.getMonth() !== day.getMonth() ||
+          suggestedCheckIn.getDate() !== day.getDate()
+      ) {
+          return defaultCheckIn;
+      }
+
+      return suggestedCheckIn;
+  };
+
   const holdTargetRoom = useMemo(() => {
       if (!holdTargetRoomId) return null;
       return rooms.find((room) => room.id === holdTargetRoomId) || null;
@@ -1511,11 +1542,17 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       if (timelineMode === 'DAY') {
           checkIn = new Date(start); checkOut = addHours(end, 1); 
       } else {
-          checkIn = new Date(start); checkIn.setHours(14, 0, 0, 0);
+          const defaultCheckIn = new Date(start);
+          defaultCheckIn.setHours(14, 0, 0, 0);
           checkOut = new Date(end);
           if (start.getTime() === end.getTime()) checkOut = addDays(checkOut, 1);
           else checkOut = addDays(checkOut, 1);
           checkOut.setHours(12, 0, 0, 0);
+          checkIn = getSuggestedCalendarCheckIn(dragStart.roomId, start, defaultCheckIn, checkOut);
+          if (checkIn.getTime() >= checkOut.getTime()) {
+              checkOut = addDays(new Date(checkIn), 1);
+              checkOut.setHours(12, 0, 0, 0);
+          }
       }
       
       const toLocalISO = (d: Date) => {
@@ -1529,24 +1566,26 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           setDragEnd(null);
           return;
       }
-      const hourlyOnlyViolation = getHourlyOnlyViolation(dragStart.roomId, checkIn, checkOut);
-      if (hourlyOnlyViolation) {
-          alert(`🚫 Không thể tạo đơn!\nLý do: ${hourlyOnlyViolation}`);
-          setDragStart(null);
-          setDragEnd(null);
-          return;
-      }
-      const validate = await DataService.validateRoomAvailabilityRemote(
-          draggedRoom.propertyId,
-          dragStart.roomId,
-          checkIn.toISOString(),
-          checkOut.toISOString()
-      );
-      if (!validate.valid) {
-          alert(`🚫 Không thể tạo đơn!\nLý do: ${validate.reason}`);
-          setDragStart(null);
-          setDragEnd(null);
-          return;
+      if (timelineMode === 'DAY') {
+          const hourlyOnlyViolation = getHourlyOnlyViolation(dragStart.roomId, checkIn, checkOut);
+          if (hourlyOnlyViolation) {
+              alert(`🚫 Không thể tạo đơn!\nLý do: ${hourlyOnlyViolation}`);
+              setDragStart(null);
+              setDragEnd(null);
+              return;
+          }
+          const validate = await DataService.validateRoomAvailabilityRemote(
+              draggedRoom.propertyId,
+              dragStart.roomId,
+              checkIn.toISOString(),
+              checkOut.toISOString()
+          );
+          if (!validate.valid) {
+              alert(`🚫 Không thể tạo đơn!\nLý do: ${validate.reason}`);
+              setDragStart(null);
+              setDragEnd(null);
+              return;
+          }
       }
 
       openModal(null, false, dragStart.roomId, {start: toLocalISO(checkIn), end: toLocalISO(checkOut)});
