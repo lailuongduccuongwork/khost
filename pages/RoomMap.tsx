@@ -191,6 +191,25 @@ const isActiveRoomMapBooking = (booking: Booking, nowMs = Date.now()) => {
     return true;
 };
 
+type CustomerSuggestion = {
+    key: string;
+    name: string;
+    phone: string;
+    normalizedName: string;
+    normalizedPhone: string;
+    sourcePriority: number;
+};
+
+const normalizeCustomerSearchText = (value?: string) => {
+    return (value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+};
+
+const normalizeCustomerPhone = (value?: string) => (value || '').replace(/\D/g, '');
+
 const getRoomMapFilterLabel = (status: string) => {
     if (status === 'ARRIVING') return 'Nhận trong khung';
     if (status === 'DEPARTING') return 'Trả trong khung';
@@ -397,6 +416,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [roomStatusOverrides, setRoomStatusOverrides] = useState<Record<string, RoomStatus>>({});
 
   const [receiptData, setReceiptData] = useState<any | null>(null);
+  const [customerSuggestionField, setCustomerSuggestionField] = useState<'name' | 'phone' | null>(null);
+  const customerSuggestionBlurTimerRef = useRef<number | null>(null);
   const [bookingMeta, setBookingMeta] = useState<{
       id?: string; groupId?: string; guestName: string; guestPhone: string;
       totalPrice: number; paidAmount: number; notes: string; status: BookingStatus;
@@ -556,6 +577,104 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       const nowMs = now.getTime();
       return roomMapBookings.filter((booking) => isActiveRoomMapBooking(booking, nowMs));
   }, [roomMapBookings, now]);
+
+  const customerSuggestions = useMemo<CustomerSuggestion[]>(() => {
+      const map = new Map<string, CustomerSuggestion>();
+
+      const addSuggestion = (name?: string, phone?: string, sourcePriority = 2) => {
+          const cleanName = (name || '').trim();
+          const cleanPhone = (phone || '').trim();
+          const normalizedName = normalizeCustomerSearchText(cleanName);
+          const normalizedPhone = normalizeCustomerPhone(cleanPhone);
+          if (!normalizedName && !normalizedPhone) return;
+
+          const key = normalizedPhone ? `phone:${normalizedPhone}` : `name:${normalizedName}`;
+          const current = map.get(key);
+          if (current && current.sourcePriority <= sourcePriority) return;
+
+          map.set(key, {
+              key,
+              name: cleanName || 'Khách chưa lưu tên',
+              phone: cleanPhone,
+              normalizedName,
+              normalizedPhone,
+              sourcePriority,
+          });
+      };
+
+      const seenBookingIds = new Set<string>();
+      const suggestionBookingSources = [_incomingBookings, modalAvailabilityBookings, activeRoomMapBookings];
+
+      customers.forEach((customer) => addSuggestion(customer.name, customer.phone, 1));
+      suggestionBookingSources.forEach((source) => {
+          source.forEach((booking) => {
+              if (seenBookingIds.has(booking.id)) return;
+              seenBookingIds.add(booking.id);
+              if (!isActiveRoomMapBooking(booking, now.getTime())) return;
+              addSuggestion(booking.guestName, booking.guestPhone, 2);
+          });
+      });
+
+      return Array.from(map.values()).sort((left, right) => {
+          if (left.sourcePriority !== right.sourcePriority) return left.sourcePriority - right.sourcePriority;
+          return left.name.localeCompare(right.name, 'vi');
+      });
+  }, [_incomingBookings, activeRoomMapBookings, customers, modalAvailabilityBookings, now]);
+
+  const nameCustomerSuggestions = useMemo(() => {
+      const query = normalizeCustomerSearchText(bookingMeta.guestName);
+      if (customerSuggestionField !== 'name' || query.length < 2) return [];
+
+      return customerSuggestions
+          .filter((suggestion) => suggestion.normalizedName.includes(query) || suggestion.normalizedPhone.includes(query))
+          .slice(0, 5);
+  }, [bookingMeta.guestName, customerSuggestionField, customerSuggestions]);
+
+  const phoneCustomerSuggestions = useMemo(() => {
+      const query = normalizeCustomerPhone(bookingMeta.guestPhone);
+      if (customerSuggestionField !== 'phone' || query.length < 3) return [];
+
+      return customerSuggestions
+          .filter((suggestion) => suggestion.normalizedPhone.includes(query))
+          .slice(0, 5);
+  }, [bookingMeta.guestPhone, customerSuggestionField, customerSuggestions]);
+
+  const clearCustomerSuggestionBlurTimer = () => {
+      if (customerSuggestionBlurTimerRef.current) {
+          window.clearTimeout(customerSuggestionBlurTimerRef.current);
+          customerSuggestionBlurTimerRef.current = null;
+      }
+  };
+
+  const handleCustomerSuggestionFocus = (field: 'name' | 'phone') => {
+      clearCustomerSuggestionBlurTimer();
+      setCustomerSuggestionField(field);
+  };
+
+  const handleCustomerSuggestionBlur = () => {
+      clearCustomerSuggestionBlurTimer();
+      customerSuggestionBlurTimerRef.current = window.setTimeout(() => {
+          setCustomerSuggestionField(null);
+      }, 120);
+  };
+
+  const handleSelectCustomerSuggestion = (suggestion: CustomerSuggestion) => {
+      clearCustomerSuggestionBlurTimer();
+      setBookingMeta((prev) => ({
+          ...prev,
+          guestName: suggestion.name,
+          guestPhone: suggestion.phone,
+      }));
+      setCustomerSuggestionField(null);
+  };
+
+  useEffect(() => {
+      if (!showModal) setCustomerSuggestionField(null);
+  }, [showModal]);
+
+  useEffect(() => {
+      return () => clearCustomerSuggestionBlurTimer();
+  }, []);
 
   const orphanRoomMapBookings = useMemo(() => {
       return activeRoomMapBookings.filter((booking) => {
@@ -1984,6 +2103,31 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
   const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
   const roomColumnWidthClass = 'w-[112px] md:w-[148px]';
+  const renderCustomerSuggestionList = (suggestions: CustomerSuggestion[]) => {
+      if (suggestions.length === 0) return null;
+
+      return (
+          <div className="absolute left-2 right-2 top-full z-[150] mt-1 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-xl">
+              {suggestions.map((suggestion) => (
+                  <button
+                      key={suggestion.key}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-blue-50"
+                      onMouseDown={(event) => {
+                          event.preventDefault();
+                          handleSelectCustomerSuggestion(suggestion);
+                      }}
+                  >
+                      <span className="min-w-0">
+                          <span className="block truncate text-sm font-bold text-gray-900">{suggestion.name}</span>
+                          <span className="block truncate text-xs font-semibold text-gray-400">{suggestion.phone || 'Chưa có SĐT'}</span>
+                      </span>
+                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-600">Chọn</span>
+                  </button>
+              ))}
+          </div>
+      );
+  };
 
   return (
     <div className="katka-liquid-page h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
@@ -2965,13 +3109,39 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Thông tin cơ bản</p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2.5">
-                          <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                          <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
-                              <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập tên khách..." value={bookingMeta.guestName} onChange={e => setBookingMeta({...bookingMeta, guestName: e.target.value})} />
+                              <input
+                                  type="text"
+                                  disabled={isReadOnly}
+                                  className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300"
+                                  placeholder="Nhập tên khách..."
+                                  value={bookingMeta.guestName}
+                                  onFocus={() => handleCustomerSuggestionFocus('name')}
+                                  onBlur={handleCustomerSuggestionBlur}
+                                  onChange={e => {
+                                      setCustomerSuggestionField('name');
+                                      setBookingMeta({...bookingMeta, guestName: e.target.value});
+                                  }}
+                              />
+                              {!isReadOnly && renderCustomerSuggestionList(nameCustomerSuggestions)}
                           </div>
-                          <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                          <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Số điện thoại</label>
-                              <input type="text" disabled={isReadOnly} className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300" placeholder="Nhập SĐT..." value={bookingMeta.guestPhone} onChange={e => setBookingMeta({...bookingMeta, guestPhone: e.target.value})} />
+                              <input
+                                  type="text"
+                                  disabled={isReadOnly}
+                                  className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300"
+                                  placeholder="Nhập SĐT..."
+                                  value={bookingMeta.guestPhone}
+                                  onFocus={() => handleCustomerSuggestionFocus('phone')}
+                                  onBlur={handleCustomerSuggestionBlur}
+                                  onChange={e => {
+                                      setCustomerSuggestionField('phone');
+                                      setBookingMeta({...bookingMeta, guestPhone: e.target.value});
+                                  }}
+                              />
+                              {!isReadOnly && renderCustomerSuggestionList(phoneCustomerSuggestions)}
                           </div>
                       </div>
 

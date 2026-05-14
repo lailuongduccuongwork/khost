@@ -20,10 +20,12 @@ interface HousekeepingProps {
 }
 
 type FilterType = 'ALL' | 'DIRTY' | 'CLEAN' | 'OCCUPIED';
+type HousekeepingView = 'CURRENT' | 'DAY_SCHEDULE';
 
 const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, currentProperty, onRefresh, onUpdateStatus, onOpenRoomMap }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [filter, setFilter] = useState<FilterType>('ALL');
+  const [activeView, setActiveView] = useState<HousekeepingView>('CURRENT');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFeedback, setStatusFeedback] = useState<{ roomId: string; state: 'saving' | 'saved'; message: string } | null>(null);
   
@@ -57,6 +59,17 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
     return `${pad(d.getHours())}:${pad(d.getMinutes())} ${pad(d.getDate())}/${pad(d.getMonth()+1)}`;
   };
 
+  const formatTimeOnly = (value: string | Date) => {
+    const d = typeof value === 'string' ? new Date(value) : value;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const formatDayLabel = (date: Date) => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+  };
+
   const isNightTime = (dateStr: string) => {
       const d = new Date(dateStr);
       const h = d.getHours();
@@ -67,6 +80,12 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
   const processedRooms = useMemo(() => {
     const nowMs = currentTime.getTime();
     const oneDayMs = 24 * 60 * 60 * 1000;
+    const todayStart = new Date(currentTime);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+    const todayStartMs = todayStart.getTime();
+    const todayEndMs = todayEnd.getTime();
     const scopedRooms = rooms.filter((room) => {
         if (isArchiveBucketRoom(room)) return false;
         if (currentProperty.id !== 'ALL' && room.propertyId !== currentProperty.id) return false;
@@ -129,6 +148,16 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         }
 
         const hasStaleOccupiedStatus = room.status === RoomStatus.OCCUPIED && !activeBooking;
+        const todayBookings = roomBookings
+            .filter((booking) => {
+                const status = deriveBookingStatus(booking, nowMs);
+                if (status === BookingStatus.DELETED || status === BookingStatus.HOLD) return false;
+                const checkInMs = new Date(booking.checkInDate).getTime();
+                const checkOutMs = new Date(booking.checkOutDate).getTime();
+                if (!Number.isFinite(checkInMs) || !Number.isFinite(checkOutMs)) return false;
+                return checkInMs < todayEndMs && checkOutMs > todayStartMs;
+            })
+            .sort((a, b) => new Date(a.checkInDate).getTime() - new Date(b.checkInDate).getTime());
 
         return {
             room: { ...room, status: effectiveRoomStatus },
@@ -140,7 +169,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             isUrgent,
             warningText,
             currentOccupied,
-            nightEvent
+            nightEvent,
+            todayBookings
         };
     });
 
@@ -163,12 +193,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
     });
   }, [rooms, bookings, currentTime, properties, currentProperty.id]);
 
-  // --- FILTER ---
-  const filteredList = processedRooms.filter(item => {
-      if (filter === 'DIRTY' && item.room.status !== RoomStatus.VACANT_DIRTY) return false;
-      if (filter === 'CLEAN' && item.room.status !== RoomStatus.VACANT_CLEAN) return false;
-      if (filter === 'OCCUPIED' && !item.activeBooking && item.room.status !== RoomStatus.OCCUPIED) return false;
-
+  const matchesSearch = (item: (typeof processedRooms)[number]) => {
       const term = searchTerm.trim().toLowerCase();
       if (!term) return true;
 
@@ -176,23 +201,88 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       const roomTypeName = roomTypes.find((type) => type.id === item.room.typeId)?.name?.toLowerCase() || '';
       const guestName = item.activeBooking?.guestName?.toLowerCase() || '';
       const roomNumber = (item.room.number || '').toLowerCase();
+      const todayGuestNames = item.todayBookings.map((booking) => booking.guestName || '').join(' ').toLowerCase();
 
       return (
           roomNumber.includes(term) ||
           propertyName.includes(term) ||
           roomTypeName.includes(term) ||
-          guestName.includes(term)
+          guestName.includes(term) ||
+          todayGuestNames.includes(term)
       );
+  };
+
+  const getScheduleTimeLabel = (booking: Booking) => {
+      const dayStart = new Date(currentTime);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const checkIn = new Date(booking.checkInDate);
+      const checkOut = new Date(booking.checkOutDate);
+      const startsBeforeToday = checkIn.getTime() < dayStart.getTime();
+      const endsAfterToday = checkOut.getTime() >= dayEnd.getTime();
+
+      const startLabel = startsBeforeToday ? `${formatTimeOnly(checkIn)} hôm trước` : formatTimeOnly(checkIn);
+      const endLabel = endsAfterToday ? `${formatTimeOnly(checkOut)} hôm sau` : formatTimeOnly(checkOut);
+      return `${startLabel} - ${endLabel}`;
+  };
+
+  const getRoomStatusBadge = (item: (typeof processedRooms)[number]) => {
+      if (item.activeBooking || item.room.status === RoomStatus.OCCUPIED) {
+          return { label: 'Đang ở', className: 'bg-red-100 text-red-700 border-red-200' };
+      }
+      if (item.room.status === RoomStatus.VACANT_DIRTY) {
+          return { label: 'Bẩn', className: 'bg-yellow-100 text-yellow-800 border-yellow-200' };
+      }
+      return { label: 'Sạch', className: 'bg-green-100 text-green-700 border-green-200' };
+  };
+
+  const getScheduleBookingMeta = (booking: Booking) => {
+      const status = deriveBookingStatus(booking, currentTime);
+      if (status === BookingStatus.CHECKED_IN) {
+          return {
+              label: 'Đang ở',
+              lineClassName: 'border-red-300 bg-red-50/70 text-red-900',
+              dotClassName: 'bg-red-500'
+          };
+      }
+      if (status === BookingStatus.CHECKED_OUT) {
+          return {
+              label: 'Đã ra',
+              lineClassName: 'border-gray-200 bg-gray-50/60 text-gray-500',
+              dotClassName: 'bg-gray-300'
+          };
+      }
+      return {
+          label: 'Sắp vào',
+          lineClassName: 'border-blue-200 bg-blue-50/70 text-blue-900',
+          dotClassName: 'bg-blue-500'
+      };
+  };
+
+  // --- FILTER ---
+  const filteredList = processedRooms.filter(item => {
+      if (filter === 'DIRTY' && item.room.status !== RoomStatus.VACANT_DIRTY) return false;
+      if (filter === 'CLEAN' && item.room.status !== RoomStatus.VACANT_CLEAN) return false;
+      if (filter === 'OCCUPIED' && !item.activeBooking && item.room.status !== RoomStatus.OCCUPIED) return false;
+
+      return matchesSearch(item);
   });
+  const scheduleList = processedRooms.filter(matchesSearch);
 
   const nightShiftRooms = processedRooms.filter(r => r.nightEvent !== null);
   const countDirty = processedRooms.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
+  const todayBookingCount = scheduleList.reduce((total, item) => total + item.todayBookings.length, 0);
   const branchLabel = currentProperty.id === 'ALL' ? 'Tất cả chi nhánh' : currentProperty.name;
+  const todayLabel = formatDayLabel(currentTime);
   const emptyReason = searchTerm.trim()
       ? `Không có phòng khớp từ khóa "${searchTerm.trim()}".`
       : filter !== 'ALL'
           ? `Không có phòng nào trong bộ lọc ${filter === 'DIRTY' ? 'Cần dọn' : filter === 'CLEAN' ? 'Sẵn sàng' : 'Đang ở'} tại ${branchLabel}.`
           : `Không có phòng nào tại ${branchLabel}.`;
+  const scheduleEmptyReason = searchTerm.trim()
+      ? `Không có phòng hoặc khách khớp từ khóa "${searchTerm.trim()}".`
+      : `Không có phòng nào tại ${branchLabel}.`;
 
   return (
     <div className="katka-liquid-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
@@ -241,16 +331,27 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             )}
         </div>
 
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-            <button onClick={() => setFilter('ALL')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='ALL' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'}`}>Tất cả</button>
-            <button onClick={() => setFilter('DIRTY')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='DIRTY' ? 'bg-yellow-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Cần dọn ({countDirty})</button>
-            <button onClick={() => setFilter('CLEAN')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='CLEAN' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Sẵn sàng</button>
-            <button onClick={() => setFilter('OCCUPIED')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='OCCUPIED' ? 'bg-red-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Đang ở</button>
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 items-center">
+            <button onClick={() => setActiveView('CURRENT')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${activeView==='CURRENT' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Việc hiện tại</button>
+            <button onClick={() => setActiveView('DAY_SCHEDULE')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${activeView==='DAY_SCHEDULE' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Lịch trong ngày</button>
+            <div className="h-6 w-px shrink-0 bg-gray-200" />
+            {activeView === 'CURRENT' ? (
+                <>
+                    <button onClick={() => setFilter('ALL')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='ALL' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'}`}>Tất cả</button>
+                    <button onClick={() => setFilter('DIRTY')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='DIRTY' ? 'bg-yellow-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Cần dọn ({countDirty})</button>
+                    <button onClick={() => setFilter('CLEAN')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='CLEAN' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Sẵn sàng</button>
+                    <button onClick={() => setFilter('OCCUPIED')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='OCCUPIED' ? 'bg-red-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Đang ở</button>
+                </>
+            ) : (
+                <span className="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap bg-gray-100 text-gray-600">
+                    {todayLabel} · {todayBookingCount} lượt khách
+                </span>
+            )}
         </div>
       </div>
 
       {/* NIGHT SHIFT BANNER */}
-      {nightShiftRooms.length > 0 && (
+      {activeView === 'CURRENT' && nightShiftRooms.length > 0 && (
           <div className="bg-slate-900 text-white p-3 shadow-md mb-2">
               <div className="flex items-center gap-2 mb-2">
                   <Moon className="text-yellow-400 fill-current" size={18} />
@@ -273,6 +374,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       )}
 
       {/* ROOM LIST */}
+      {activeView === 'CURRENT' ? (
       <div className="p-2 space-y-3">
         {filteredList.length === 0 && (
             <div className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">
@@ -465,6 +567,68 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             );
         })}
       </div>
+      ) : (
+      <div className="p-2 space-y-3">
+        {scheduleList.length === 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">
+                <div className="font-bold text-gray-700">Không có phòng nào trong lịch hôm nay</div>
+                <div className="mt-1">{scheduleEmptyReason}</div>
+            </div>
+        )}
+
+        {scheduleList.map((item, index) => {
+            const { room, todayBookings } = item;
+            const typeName = roomTypes.find(t => t.id === room.typeId)?.name || '';
+            const prevRoom = scheduleList[index - 1]?.room;
+            const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
+            const branchName = properties.find(p => p.id === room.propertyId)?.name;
+            const statusBadge = getRoomStatusBadge(item);
+
+            return (
+                <React.Fragment key={room.id}>
+                    {isNewBranch && (
+                        <div className="housekeeping-branch-header sticky top-[105px] z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
+                            <Building2 size={14} className="text-blue-600"/>
+                            {branchName}
+                        </div>
+                    )}
+
+                    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex items-baseline gap-2">
+                                <span className="text-xl font-black text-gray-900 leading-tight">{room.number}</span>
+                                <span className="truncate text-[11px] font-bold uppercase text-gray-500">{typeName || 'Chưa có hạng phòng'}</span>
+                            </div>
+                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${statusBadge.className}`}>
+                                {statusBadge.label}
+                            </span>
+                        </div>
+
+                        <div className="mt-2 space-y-1.5">
+                            {todayBookings.length === 0 ? (
+                                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-400">
+                                    Không có lượt khách hôm nay
+                                </div>
+                            ) : (
+                                todayBookings.map((booking) => {
+                                    const bookingMeta = getScheduleBookingMeta(booking);
+                                    return (
+                                    <div key={booking.id} className={`flex items-center gap-2 rounded-lg border-l-4 px-3 py-2 text-sm font-bold ${bookingMeta.lineClassName}`}>
+                                        <span className={`h-2 w-2 shrink-0 rounded-full ${bookingMeta.dotClassName}`} />
+                                        <span className="truncate">
+                                            {getScheduleTimeLabel(booking)} · {booking.guestName || 'Khách lẻ'} · {bookingMeta.label}
+                                        </span>
+                                    </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+                </React.Fragment>
+            );
+        })}
+      </div>
+      )}
     </div>
   );
 };

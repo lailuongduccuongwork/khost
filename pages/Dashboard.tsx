@@ -1,8 +1,6 @@
-
-import React, { useState, useMemo, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { DollarSign, BedDouble, CalendarCheck, Filter, CreditCard, ArrowUpCircle, ArrowDownCircle, Building2, Info } from 'lucide-react';
-import { Booking, BookingStatus, Room, Property } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BedDouble, Building2, CalendarCheck, CreditCard, Filter, Trophy } from 'lucide-react';
+import { Booking, BookingStatus, Property, Room } from '../types';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import { deriveBookingStatus } from '../utils/bookingState';
 
@@ -14,641 +12,744 @@ interface DashboardProps {
 }
 
 type DatePreset = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_30_DAYS' | 'THIS_QUARTER' | 'LAST_QUARTER' | 'THIS_YEAR' | 'LAST_YEAR' | 'CUSTOM';
+type TopMode = 'ROOM' | 'PROPERTY';
+type TopSortMetric = 'revenue' | 'turnoverOcc' | 'guestTurns';
+type SortDirection = 'asc' | 'desc';
+
+interface MoneyAggregate {
+  count: number;
+  roomRevenue: number;
+  serviceRevenue: number;
+  totalBill: number;
+  paid: number;
+  debt: number;
+}
+
+interface StayStats {
+  roomRevenue: number;
+  serviceRevenue: number;
+  totalRevenue: number;
+  roomNights: number;
+  guestTurns: number;
+  overnightRoomRevenue: number;
+}
+
+interface TopRow {
+  id: string;
+  label: string;
+  subLabel: string;
+  revenue: number;
+  turnoverOcc: number;
+  guestTurns: number;
+}
 
 const DATE_PRESETS: { label: string; value: DatePreset }[] = [
-    { label: 'Hôm nay', value: 'TODAY' },
-    { label: 'Hôm qua', value: 'YESTERDAY' },
-    { label: 'Tuần này', value: 'THIS_WEEK' },
-    { label: 'Tuần trước', value: 'LAST_WEEK' },
-    { label: '7 ngày qua', value: 'LAST_7_DAYS' },
-    { label: 'Tháng này', value: 'THIS_MONTH' },
-    { label: 'Tháng trước', value: 'LAST_MONTH' },
-    { label: '30 ngày qua', value: 'LAST_30_DAYS' },
-    { label: 'Quý này', value: 'THIS_QUARTER' },
-    { label: 'Quý trước', value: 'LAST_QUARTER' },
-    { label: 'Năm này', value: 'THIS_YEAR' },
-    { label: 'Năm ngoái', value: 'LAST_YEAR' },
-    { label: 'Tùy chọn...', value: 'CUSTOM' },
+  { label: 'Hôm nay', value: 'TODAY' },
+  { label: 'Hôm qua', value: 'YESTERDAY' },
+  { label: 'Tuần này', value: 'THIS_WEEK' },
+  { label: 'Tuần trước', value: 'LAST_WEEK' },
+  { label: '7 ngày qua', value: 'LAST_7_DAYS' },
+  { label: 'Tháng này', value: 'THIS_MONTH' },
+  { label: 'Tháng trước', value: 'LAST_MONTH' },
+  { label: '30 ngày qua', value: 'LAST_30_DAYS' },
+  { label: 'Quý này', value: 'THIS_QUARTER' },
+  { label: 'Quý trước', value: 'LAST_QUARTER' },
+  { label: 'Năm này', value: 'THIS_YEAR' },
+  { label: 'Năm ngoái', value: 'LAST_YEAR' },
+  { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-// Custom Dot to highlight Min/Max
-const CustomizedDot = (props: any) => {
-    const { cx, cy, stroke, payload, value, maxVal, minVal } = props;
-    
-    if (value === maxVal && maxVal > 0) {
-        return (
-            <svg x={cx - 10} y={cy - 10} width={20} height={20} fill="red" viewBox="0 0 1024 1024">
-                <circle cx="512" cy="512" r="512" fill="#ef4444" stroke="white" strokeWidth="50"/>
-            </svg>
-        );
-    }
-    if (value === minVal && maxVal > 0) {
-        return (
-             <svg x={cx - 6} y={cy - 6} width={12} height={12} fill="orange" viewBox="0 0 1024 1024">
-                <circle cx="512" cy="512" r="512" fill="#f97316" stroke="white" strokeWidth="50" />
-            </svg>
-        );
-    }
-    
-    return (
-        <circle cx={cx} cy={cy} r={4} stroke={stroke} strokeWidth={2} fill="white" />
-    );
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const HOURLY_BOOKING_LIMIT_HOURS = 12;
+
+const toDate = (input: string | Date) => {
+  if (input instanceof Date) return new Date(input);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    const [year, month, day] = input.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(input);
 };
 
 const startOfLocalDay = (input: string | Date) => {
-    const date = typeof input === 'string' ? new Date(input) : new Date(input);
-    date.setHours(0, 0, 0, 0);
-    return date;
+  const date = toDate(input);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const endExclusiveOfLocalDay = (input: string | Date) => {
+  const date = startOfLocalDay(input);
+  date.setDate(date.getDate() + 1);
+  return date;
 };
 
 const getLocalDateKey = (input: string | Date) => {
-    const date = typeof input === 'string' ? new Date(input) : new Date(input);
-    if (isNaN(date.getTime())) return '';
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, '0');
-    const day = `${date.getDate()}`.padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  const date = toDate(input);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-const getMonthKey = (input: string | Date) => {
-    const date = typeof input === 'string' ? new Date(input) : new Date(input);
-    if (isNaN(date.getTime())) return '';
-    return `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, '0')}`;
+const formatLocalDateInput = (date: Date) => getLocalDateKey(date);
+
+const isFiniteTime = (value: number) => Number.isFinite(value) && !Number.isNaN(value);
+
+const getBookingTimes = (booking: Booking) => {
+  const checkInMs = new Date(booking.checkInDate).getTime();
+  const checkOutMs = new Date(booking.checkOutDate).getTime();
+  if (!isFiniteTime(checkInMs) || !isFiniteTime(checkOutMs) || checkOutMs <= checkInMs) return null;
+  return { checkInMs, checkOutMs, durationMs: checkOutMs - checkInMs };
 };
 
-const getMonthLabel = (monthKey: string) => {
-    const [year, month] = monthKey.split('-');
-    return month && year ? `${month}/${year}` : monthKey;
+const getOverlapMs = (startA: number, endA: number, startB: number, endB: number) =>
+  Math.max(0, Math.min(endA, endB) - Math.max(startA, startB));
+
+const getExtraRevenue = (booking: Booking) =>
+  (booking.extraFees || [])
+    .filter((fee) => fee.type === 'REVENUE')
+    .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+
+const getRoomRevenue = (booking: Booking) => Number(booking.totalPrice) || 0;
+
+const getPaidAmount = (booking: Booking) => Number(booking.paidAmount) || 0;
+
+const isHourlyBooking = (booking: Booking) => {
+  const times = getBookingTimes(booking);
+  if (!times) return true;
+  return times.durationMs <= HOURLY_BOOKING_LIMIT_HOURS * HOUR_MS;
 };
 
-const aggregateBookingMoney = (source: Booking[], nowMs: number) => {
-    const grouped = new Map<string, Booking[]>();
-    const singles: Booking[] = [];
+const getNightStarts = (booking: Booking) => {
+  const times = getBookingTimes(booking);
+  if (!times) return [];
 
-    source.forEach((booking) => {
-        if (deriveBookingStatus(booking, nowMs) === BookingStatus.DELETED) return;
-        if (booking.groupId) {
-            const list = grouped.get(booking.groupId) || [];
-            list.push(booking);
-            grouped.set(booking.groupId, list);
-            return;
-        }
-        singles.push(booking);
-    });
+  const checkInDay = startOfLocalDay(booking.checkInDate);
+  const checkOutDay = startOfLocalDay(booking.checkOutDate);
+  const nights: Date[] = [];
 
-    const records = singles.map((booking) => ({
-        id: booking.id,
-        totalBill: Number(booking.totalPrice) || 0,
-        paid: Number(booking.paidAmount) || 0,
-    }));
+  if (checkOutDay.getTime() > checkInDay.getTime()) {
+    for (let cursor = new Date(checkInDay); cursor.getTime() < checkOutDay.getTime(); cursor.setDate(cursor.getDate() + 1)) {
+      nights.push(new Date(cursor));
+    }
+    return nights;
+  }
 
-    grouped.forEach((members, groupId) => {
-        const sorted = [...members].sort((left, right) => left.id.localeCompare(right.id));
-        records.push({
-            id: groupId,
-            totalBill: sorted.reduce((sum, booking) => sum + (Number(booking.totalPrice) || 0), 0),
-            paid: sorted.reduce((sum, booking) => sum + (Number(booking.paidAmount) || 0), 0),
-        });
-    });
-
-    return {
-        count: records.length,
-        totalBill: records.reduce((sum, record) => sum + record.totalBill, 0),
-        paid: records.reduce((sum, record) => sum + record.paid, 0),
-        debt: records.reduce((sum, record) => sum + Math.max(record.totalBill - record.paid, 0), 0),
-    };
+  // Fallback cho đơn > 12 giờ nhưng cùng ngày: vẫn phân bổ như 1 đêm để không làm mất doanh thu.
+  return [checkInDay];
 };
+
+const groupFinancials = (source: Booking[], includeExtraRevenue = false): MoneyAggregate => {
+  const grouped = new Map<string, Booking[]>();
+
+  source.forEach((booking) => {
+    const key = booking.groupId || booking.id;
+    const list = grouped.get(key) || [];
+    list.push(booking);
+    grouped.set(key, list);
+  });
+
+  const records = Array.from(grouped.values()).map((members) => {
+    const roomRevenue = members.reduce((sum, booking) => sum + getRoomRevenue(booking), 0);
+    const serviceRevenue = includeExtraRevenue ? members.reduce((sum, booking) => sum + getExtraRevenue(booking), 0) : 0;
+    const totalBill = roomRevenue + serviceRevenue;
+    const paid = members.reduce((sum, booking) => sum + getPaidAmount(booking), 0);
+    return { roomRevenue, serviceRevenue, totalBill, paid, debt: Math.max(totalBill - paid, 0) };
+  });
+
+  return {
+    count: records.length,
+    roomRevenue: records.reduce((sum, record) => sum + record.roomRevenue, 0),
+    serviceRevenue: records.reduce((sum, record) => sum + record.serviceRevenue, 0),
+    totalBill: records.reduce((sum, record) => sum + record.totalBill, 0),
+    paid: records.reduce((sum, record) => sum + record.paid, 0),
+    debt: records.reduce((sum, record) => sum + record.debt, 0),
+  };
+};
+
+const StatTile: React.FC<{ label: string; value: string; sub?: string; tone?: string }> = ({ label, value, sub, tone = 'text-gray-900' }) => (
+  <div className="rounded-2xl border border-gray-100 bg-white/80 p-3 shadow-sm">
+    <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">{label}</div>
+    <div className={`mt-1.5 text-lg md:text-xl font-black tracking-tight ${tone}`}>{value}</div>
+    {sub && <div className="mt-1 text-[11px] font-semibold text-gray-400">{sub}</div>}
+  </div>
+);
 
 const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, currentPropertyId }) => {
-  // --- Filter State ---
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [topMode, setTopMode] = useState<TopMode>('ROOM');
+  const [topSort, setTopSort] = useState<{ metric: TopSortMetric; direction: SortDirection }>({
+    metric: 'revenue',
+    direction: 'desc',
+  });
 
   useEffect(() => {
-      const timer = window.setInterval(() => {
-          setNowMs(Date.now());
-      }, 30_000);
-
-      return () => {
-          window.clearInterval(timer);
-      };
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
   }, []);
 
-  const currentPropertyName = useMemo(() => {
-      if (currentPropertyId === 'ALL') return `Toàn bộ chi nhánh (${properties.length})`;
-      return properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
-  }, [currentPropertyId, properties]);
-
-  // --- Date Logic ---
   useEffect(() => {
-    const getRange = (preset: DatePreset): { start: Date, end: Date } | null => {
-        const now = new Date();
-        const start = new Date(now);
-        const end = new Date(now);
-        
-        const getStartOfWeek = (d: Date) => {
-            const day = d.getDay();
-            const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-            return new Date(d.setDate(diff));
-        }
+    const getRange = (preset: DatePreset): { start: Date; end: Date } | null => {
+      const now = new Date();
+      const start = new Date(now);
+      const end = new Date(now);
 
-        switch (preset) {
-            case 'TODAY': break; 
-            case 'YESTERDAY': start.setDate(now.getDate() - 1); end.setDate(now.getDate() - 1); break;
-            case 'THIS_WEEK': { const s = getStartOfWeek(new Date()); start.setTime(s.getTime()); } break;
-            case 'LAST_WEEK': { const s = getStartOfWeek(new Date()); s.setDate(s.getDate() - 7); start.setTime(s.getTime()); const e = new Date(s); e.setDate(e.getDate() + 6); end.setTime(e.getTime()); } break;
-            case 'LAST_7_DAYS': start.setDate(now.getDate() - 7); break;
-            case 'THIS_MONTH': start.setDate(1); break;
-            case 'LAST_MONTH': start.setMonth(now.getMonth() - 1); start.setDate(1); end.setDate(0); break;
-            case 'LAST_30_DAYS': start.setDate(now.getDate() - 30); break;
-            case 'THIS_QUARTER': { const q = Math.floor(now.getMonth() / 3); start.setMonth(q * 3); start.setDate(1); } break;
-            case 'LAST_QUARTER': { const q = Math.floor(now.getMonth() / 3) - 1; if (q < 0) { start.setFullYear(now.getFullYear() - 1); start.setMonth(9); } else { start.setMonth(q * 3); } start.setDate(1); const e = new Date(start); e.setMonth(e.getMonth() + 3); e.setDate(0); end.setTime(e.getTime()); } break;
-            case 'THIS_YEAR': start.setMonth(0, 1); break;
-            case 'LAST_YEAR': start.setFullYear(now.getFullYear() - 1); start.setMonth(0, 1); end.setFullYear(now.getFullYear() - 1); end.setMonth(11, 31); break;
-            case 'CUSTOM': return null;
+      const getStartOfWeek = (date: Date) => {
+        const clone = new Date(date);
+        const day = clone.getDay();
+        const diff = clone.getDate() - day + (day === 0 ? -6 : 1);
+        clone.setDate(diff);
+        return clone;
+      };
+
+      switch (preset) {
+        case 'TODAY':
+          break;
+        case 'YESTERDAY':
+          start.setDate(now.getDate() - 1);
+          end.setDate(now.getDate() - 1);
+          break;
+        case 'THIS_WEEK': {
+          const weekStart = getStartOfWeek(now);
+          start.setTime(weekStart.getTime());
+          break;
         }
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
-        return { start, end };
+        case 'LAST_WEEK': {
+          const weekStart = getStartOfWeek(now);
+          weekStart.setDate(weekStart.getDate() - 7);
+          start.setTime(weekStart.getTime());
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+          end.setTime(weekEnd.getTime());
+          break;
+        }
+        case 'LAST_7_DAYS':
+          start.setDate(now.getDate() - 7);
+          break;
+        case 'THIS_MONTH':
+          start.setDate(1);
+          break;
+        case 'LAST_MONTH':
+          start.setMonth(now.getMonth() - 1, 1);
+          end.setDate(0);
+          break;
+        case 'LAST_30_DAYS':
+          start.setDate(now.getDate() - 30);
+          break;
+        case 'THIS_QUARTER': {
+          const quarter = Math.floor(now.getMonth() / 3);
+          start.setMonth(quarter * 3, 1);
+          break;
+        }
+        case 'LAST_QUARTER': {
+          const currentQuarter = Math.floor(now.getMonth() / 3);
+          const lastQuarterStartMonth = currentQuarter === 0 ? 9 : (currentQuarter - 1) * 3;
+          start.setFullYear(currentQuarter === 0 ? now.getFullYear() - 1 : now.getFullYear(), lastQuarterStartMonth, 1);
+          const quarterEnd = new Date(start);
+          quarterEnd.setMonth(quarterEnd.getMonth() + 3);
+          quarterEnd.setDate(0);
+          end.setTime(quarterEnd.getTime());
+          break;
+        }
+        case 'THIS_YEAR':
+          start.setMonth(0, 1);
+          break;
+        case 'LAST_YEAR':
+          start.setFullYear(now.getFullYear() - 1, 0, 1);
+          end.setFullYear(now.getFullYear() - 1, 11, 31);
+          break;
+        case 'CUSTOM':
+          return null;
+      }
+
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
     };
 
     if (filterPreset !== 'CUSTOM') {
-        const range = getRange(filterPreset);
-        if (range) {
-            const toLocalISO = (d: Date) => {
-                const offset = d.getTimezoneOffset() * 60000;
-                return (new Date(d.getTime() - offset)).toISOString().split('T')[0];
-            };
-            setStartDate(toLocalISO(range.start));
-            setEndDate(toLocalISO(range.end));
-        }
+      const range = getRange(filterPreset);
+      if (range) {
+        setStartDate(formatLocalDateInput(range.start));
+        setEndDate(formatLocalDateInput(range.end));
+      }
     }
   }, [filterPreset]);
 
-  // --- Helper: Check date in range ---
-  const isInRange = (dateStr: string) => {
-      if (!startDate || !endDate) return false;
-      const d = new Date(dateStr).getTime();
-      const s = new Date(startDate); s.setHours(0,0,0,0);
-      const e = new Date(endDate); e.setHours(23,59,59,999);
-      return d >= s.getTime() && d <= e.getTime();
-  };
+  const currentPropertyName = useMemo(() => {
+    if (currentPropertyId === 'ALL') return `Toàn bộ chi nhánh (${properties.length})`;
+    return properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
+  }, [currentPropertyId, properties]);
 
   const dateRangeInfo = useMemo(() => {
-      if (!startDate || !endDate) {
-          return { valid: false, message: 'Vui lòng chọn đủ ngày bắt đầu và ngày kết thúc.', days: 0 };
-      }
-      const start = startOfLocalDay(startDate);
-      const end = startOfLocalDay(endDate);
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-          return { valid: false, message: 'Khoảng ngày không hợp lệ.', days: 0 };
-      }
-      if (start.getTime() > end.getTime()) {
-          return { valid: false, message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.', days: 0 };
-      }
-      const oneDay = 24 * 60 * 60 * 1000;
-      return {
-          valid: true,
-          message: '',
-          days: Math.floor((end.getTime() - start.getTime()) / oneDay) + 1,
-      };
-  }, [startDate, endDate]);
-
-  const roomById = useMemo(() => {
-      const map = new Map<string, Room>();
-      rooms.forEach((room) => {
-          if (!isArchiveBucketRoom(room)) map.set(room.id, room);
-      });
-      return map;
-  }, [rooms]);
-
-  // --- INTEGRITY CHECK ---
-  // Chỉ tính booking thật sự vận hành doanh thu/công suất.
-  // Loại: DELETED, HOLD/giữ phòng và booking phòng không còn tồn tại.
-  const isOperationalBooking = (booking: Booking) => {
-      const room = roomById.get(booking.roomId);
-      if (!room) return false;
-      const effectiveStatus = deriveBookingStatus(booking, nowMs);
-      if (effectiveStatus === BookingStatus.DELETED) return false;
-      if (effectiveStatus === BookingStatus.HOLD) return false;
-      if (booking.isHold) return false;
-      return true;
-  };
-  const operationalRooms = useMemo(
-      () => rooms.filter((room) => !isArchiveBucketRoom(room)),
-      [rooms]
-  );
-
-  // --- Helper: Format Currency ---
-  const formatVND = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
-  const formatCompactVND = (val: number) => {
-      if (val >= 1000000000) return (val / 1000000000).toFixed(1) + 'B';
-      if (val >= 1000000) return (val / 1000000).toFixed(1) + 'M';
-      if (val >= 1000) return (val / 1000).toFixed(0) + 'K';
-      return val.toString();
-  };
-
-
-  // ==========================================
-  // 1. STATS: CHECKED-OUT (Khách đã trả phòng)
-  // ==========================================
-  const checkoutStats = useMemo(() => {
-      if (!dateRangeInfo.valid) {
-          return { count: 0, totalBill: 0, paid: 0, debt: 0, totalNights: 0 };
-      }
-      const filtered = bookings.filter(b => 
-          isOperationalBooking(b) &&
-          deriveBookingStatus(b, nowMs) === BookingStatus.CHECKED_OUT && 
-          isInRange(b.checkOutDate)
-      );
-
-      return {
-          ...aggregateBookingMoney(filtered, nowMs),
-          totalNights: filtered.reduce((sum, b) => {
-              const start = startOfLocalDay(b.checkInDate).getTime();
-              const end = startOfLocalDay(b.checkOutDate).getTime();
-              const nights = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-              return sum + nights;
-          }, 0)
-      };
-  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid]);
-
-
-  // ==========================================
-  // 2. STATS: CREATED / PHÁT SINH (Đơn mới)
-  // ==========================================
-  const createdStats = useMemo(() => {
-      if (!dateRangeInfo.valid) {
-          return { count: 0, totalBill: 0, paid: 0, debt: 0 };
-      }
-      const filtered = bookings.filter(b => 
-          isOperationalBooking(b) &&
-          isInRange(b.createdAt)
-      );
-
-      return aggregateBookingMoney(filtered, nowMs);
-  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid]);
-
-
-  // ==========================================
-  // 3. STATS: OCCUPANCY (OCC%) & ADR
-  // ==========================================
-  const performanceStats = useMemo(() => {
-      if (!dateRangeInfo.valid || operationalRooms.length === 0) return { occ: 0, adr: 0, occupiedInventory: 0, totalInventory: 0 };
-
-      const start = startOfLocalDay(startDate);
-      
-      const oneDay = 24 * 60 * 60 * 1000;
-      const daysDiff = dateRangeInfo.days;
-      
-      // 1. Total Inventory (Tổng quỹ phòng khả dụng)
-      const totalInventory = operationalRooms.length * daysDiff;
-
-      // 2. Occupied Inventory: tính đêm ở từ ngày nhận đến trước ngày trả.
-      let occupiedInventory = 0;
-      const bookingsWithSoldNight = new Set<string>();
-      
-      for (let i = 0; i < daysDiff; i++) {
-          const currentDayStart = new Date(start.getTime() + i * oneDay);
-          
-          const occupiedRoomsOnThisDay = new Set<string>();
-
-          bookings.forEach(b => {
-             if (!isOperationalBooking(b)) return;
-             
-             const bookingStartDay = startOfLocalDay(b.checkInDate).getTime();
-             const bookingEndDay = startOfLocalDay(b.checkOutDate).getTime();
-
-             if (bookingStartDay <= currentDayStart.getTime() && bookingEndDay > currentDayStart.getTime()) {
-                 occupiedRoomsOnThisDay.add(b.roomId);
-                 bookingsWithSoldNight.add(b.id);
-             }
-          });
-          
-          occupiedInventory += occupiedRoomsOnThisDay.size;
-      }
-
-      const occ = totalInventory > 0 ? Math.min(100, Math.round((occupiedInventory / totalInventory) * 100)) : 0;
-      const soldNightBookings = bookings.filter((booking) => bookingsWithSoldNight.has(booking.id));
-      const totalRevenue = aggregateBookingMoney(soldNightBookings, nowMs).totalBill;
-      const adr = occupiedInventory > 0 ? Math.round(totalRevenue / occupiedInventory) : 0;
-
-      return { occ, adr, occupiedInventory, totalInventory };
-  }, [bookings, operationalRooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid, dateRangeInfo.days]);
-
-
-  // ==========================================
-  // 4. CHART DATA: DAILY REVENUE (Line Chart)
-  // ==========================================
-  const { chartData, maxVal, minVal, chartGranularity } = useMemo(() => {
-    if (!dateRangeInfo.valid) return { chartData: [], maxVal: 0, minVal: 0, chartGranularity: 'DAY' as const };
-
+    if (!startDate || !endDate) return { valid: false, message: 'Vui lòng chọn đủ ngày bắt đầu và ngày kết thúc.', days: 0 };
     const start = startOfLocalDay(startDate);
     const end = startOfLocalDay(endDate);
-    const shouldGroupByMonth = dateRangeInfo.days > 45;
-    const days = [];
-    
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        days.push(new Date(d));
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { valid: false, message: 'Khoảng ngày không hợp lệ.', days: 0 };
+    if (start.getTime() > end.getTime()) return { valid: false, message: 'Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.', days: 0 };
+    return {
+      valid: true,
+      message: '',
+      days: Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1,
+    };
+  }, [startDate, endDate]);
+
+  const rangeBounds = useMemo(() => {
+    if (!dateRangeInfo.valid) return null;
+    const start = startOfLocalDay(startDate);
+    const endExclusive = endExclusiveOfLocalDay(endDate);
+    return { start, endExclusive, startMs: start.getTime(), endExclusiveMs: endExclusive.getTime() };
+  }, [startDate, endDate, dateRangeInfo.valid]);
+
+  const operationalRooms = useMemo(
+    () => rooms.filter((room) => !isArchiveBucketRoom(room) && (currentPropertyId === 'ALL' || room.propertyId === currentPropertyId)),
+    [rooms, currentPropertyId]
+  );
+
+  const roomById = useMemo(() => {
+    const map = new Map<string, Room>();
+    operationalRooms.forEach((room) => map.set(room.id, room));
+    return map;
+  }, [operationalRooms]);
+
+  const propertyById = useMemo(() => {
+    const map = new Map<string, Property>();
+    properties.forEach((property) => map.set(property.id, property));
+    return map;
+  }, [properties]);
+
+  const isOperationalBooking = (booking: Booking) => {
+    const room = roomById.get(booking.roomId);
+    if (!room) return false;
+    const effectiveStatus = deriveBookingStatus(booking, nowMs);
+    if (effectiveStatus === BookingStatus.DELETED || effectiveStatus === BookingStatus.HOLD || booking.isHold) return false;
+    return true;
+  };
+
+  const operationalBookings = useMemo(
+    () => bookings.filter((booking) => isOperationalBooking(booking)),
+    [bookings, roomById, nowMs]
+  );
+
+  const overlapsRange = (booking: Booking, startMs: number, endMs: number) => {
+    const times = getBookingTimes(booking);
+    if (!times) return false;
+    return times.checkInMs < endMs && times.checkOutMs > startMs;
+  };
+
+  const isTimeInRange = (value: string, startMs: number, endMs: number) => {
+    const timeMs = new Date(value).getTime();
+    return isFiniteTime(timeMs) && timeMs >= startMs && timeMs < endMs;
+  };
+
+  const calculateStayStats = (periodStartMs: number, periodEndMs: number, serviceAnchorBaseMs = periodStartMs, source = operationalBookings): StayStats => {
+    let roomRevenue = 0;
+    let serviceRevenue = 0;
+    let roomNights = 0;
+    let guestTurns = 0;
+    let overnightRoomRevenue = 0;
+
+    source.forEach((booking) => {
+      const times = getBookingTimes(booking);
+      if (!times || !overlapsRange(booking, periodStartMs, periodEndMs)) return;
+
+      guestTurns += 1;
+      const bookingRoomRevenue = getRoomRevenue(booking);
+      const extraRevenue = getExtraRevenue(booking);
+
+      // Phụ thu chưa có ngày phát sinh riêng, nên gắn vào ngày đầu tiên của booking trong kỳ đang xem.
+      const serviceAnchorMs = Math.max(times.checkInMs, serviceAnchorBaseMs);
+      if (serviceAnchorMs >= periodStartMs && serviceAnchorMs < periodEndMs) {
+        serviceRevenue += extraRevenue;
+      }
+
+      if (isHourlyBooking(booking)) {
+        const overlapMs = getOverlapMs(times.checkInMs, times.checkOutMs, periodStartMs, periodEndMs);
+        roomRevenue += bookingRoomRevenue * (overlapMs / times.durationMs);
+        return;
+      }
+
+      const nightStarts = getNightStarts(booking);
+      if (nightStarts.length === 0) return;
+      const revenuePerNight = bookingRoomRevenue / nightStarts.length;
+      const nightsInPeriod = nightStarts.filter((nightStart) => {
+        const nightStartMs = nightStart.getTime();
+        return nightStartMs >= periodStartMs && nightStartMs < periodEndMs;
+      }).length;
+
+      roomNights += nightsInPeriod;
+      roomRevenue += revenuePerNight * nightsInPeriod;
+      overnightRoomRevenue += revenuePerNight * nightsInPeriod;
+    });
+
+    return {
+      roomRevenue,
+      serviceRevenue,
+      totalRevenue: roomRevenue + serviceRevenue,
+      roomNights,
+      guestTurns,
+      overnightRoomRevenue,
+    };
+  };
+
+  const calculateCheckoutStats = (periodStartMs: number, periodEndMs: number) => {
+    const checkoutBookings = operationalBookings.filter((booking) => {
+      const effectiveStatus = deriveBookingStatus(booking, nowMs);
+      return effectiveStatus === BookingStatus.CHECKED_OUT && isTimeInRange(booking.checkOutDate, periodStartMs, periodEndMs);
+    });
+    return groupFinancials(checkoutBookings, true);
+  };
+
+  const createdStats = useMemo(() => {
+    if (!rangeBounds) return { count: 0, roomRevenue: 0, serviceRevenue: 0, totalBill: 0, paid: 0, debt: 0 };
+    const createdBookings = operationalBookings.filter((booking) => isTimeInRange(booking.createdAt, rangeBounds.startMs, rangeBounds.endExclusiveMs));
+    return groupFinancials(createdBookings, true);
+  }, [operationalBookings, rangeBounds]);
+
+  const stayStats = useMemo(() => {
+    if (!rangeBounds) return { roomRevenue: 0, serviceRevenue: 0, totalRevenue: 0, roomNights: 0, guestTurns: 0, overnightRoomRevenue: 0 };
+    return calculateStayStats(rangeBounds.startMs, rangeBounds.endExclusiveMs, rangeBounds.startMs);
+  }, [operationalBookings, rangeBounds]);
+
+  const checkoutStats = useMemo(() => {
+    if (!rangeBounds) return { count: 0, roomRevenue: 0, serviceRevenue: 0, totalBill: 0, paid: 0, debt: 0 };
+    return calculateCheckoutStats(rangeBounds.startMs, rangeBounds.endExclusiveMs);
+  }, [operationalBookings, rangeBounds, nowMs]);
+
+  const performanceStats = useMemo(() => {
+    if (!rangeBounds || operationalRooms.length === 0) {
+      return { turnoverOcc: 0, adr: 0, revPar: 0, guestTurns: 0, roomDayInventory: 0 };
     }
+    const roomDayInventory = operationalRooms.length * dateRangeInfo.days;
+    const turnoverOcc = roomDayInventory > 0 ? Math.round((stayStats.guestTurns / roomDayInventory) * 100) : 0;
+    const adr = stayStats.roomNights > 0 ? Math.round(stayStats.overnightRoomRevenue / stayStats.roomNights) : 0;
+    const revPar = roomDayInventory > 0 ? Math.round(stayStats.overnightRoomRevenue / roomDayInventory) : 0;
 
-    const checkoutBookings = bookings.filter(b => 
-            isOperationalBooking(b) &&
-            deriveBookingStatus(b, nowMs) === BookingStatus.CHECKED_OUT && 
-            isInRange(b.checkOutDate)
-    );
+    return {
+      turnoverOcc,
+      adr,
+      revPar,
+      guestTurns: stayStats.guestTurns,
+      roomDayInventory,
+    };
+  }, [rangeBounds, operationalRooms.length, dateRangeInfo.days, stayStats]);
 
-    const data = shouldGroupByMonth
-        ? Array.from(new Set(days.map((day) => getMonthKey(day)))).map((monthKey) => {
-            const monthBookings = checkoutBookings.filter((booking) => getMonthKey(booking.checkOutDate) === monthKey);
-            const totals = aggregateBookingMoney(monthBookings, nowMs);
-            return {
-                dateStr: monthKey,
-                name: getMonthLabel(monthKey),
-                totalBill: totals.totalBill,
-                paidAmount: totals.paid,
-            };
-        })
-        : days.map(day => {
-            const dayStr = getLocalDateKey(day);
-            const dayBookings = checkoutBookings.filter((booking) => getLocalDateKey(booking.checkOutDate) === dayStr);
-            const totals = aggregateBookingMoney(dayBookings, nowMs);
+  const topRows = useMemo(() => {
+    if (!rangeBounds) return [] as TopRow[];
 
-            return {
-                dateStr: dayStr,
-                name: `${day.getDate()}/${day.getMonth() + 1}`,
-                totalBill: totals.totalBill,
-                paidAmount: totals.paid,
-            };
-        });
+    const roomRows = operationalRooms.map((room) => {
+      const roomBookings = operationalBookings.filter((booking) => booking.roomId === room.id);
+      const stats = calculateStayStats(rangeBounds.startMs, rangeBounds.endExclusiveMs, rangeBounds.startMs, roomBookings);
+      return {
+        id: room.id,
+        label: room.number,
+        subLabel: propertyById.get(room.propertyId)?.name || 'Chi nhánh',
+        revenue: stats.totalRevenue,
+        turnoverOcc: dateRangeInfo.days > 0 ? Math.round((stats.guestTurns / dateRangeInfo.days) * 100) : 0,
+        guestTurns: stats.guestTurns,
+      };
+    });
 
-    if (data.length === 0) return { chartData: [], maxVal: 0, minVal: 0, chartGranularity: shouldGroupByMonth ? 'MONTH' as const : 'DAY' as const };
+    const roomsByProperty = new Map<string, Room[]>();
+    operationalRooms.forEach((room) => {
+      const list = roomsByProperty.get(room.propertyId) || [];
+      list.push(room);
+      roomsByProperty.set(room.propertyId, list);
+    });
 
-    const max = Math.max(...data.map(d => d.totalBill));
-    const min = Math.min(...data.map(d => d.totalBill));
+    const propertyRows = Array.from(roomsByProperty.entries()).map(([propertyId, propertyRooms]) => {
+      const roomIds = new Set(propertyRooms.map((room) => room.id));
+      const propertyBookings = operationalBookings.filter((booking) => roomIds.has(booking.roomId));
+      const stats = calculateStayStats(rangeBounds.startMs, rangeBounds.endExclusiveMs, rangeBounds.startMs, propertyBookings);
+      const denominator = propertyRooms.length * dateRangeInfo.days;
+      return {
+        id: propertyId,
+        label: propertyById.get(propertyId)?.name || propertyId,
+        subLabel: `${propertyRooms.length} phòng`,
+        revenue: stats.totalRevenue,
+        turnoverOcc: denominator > 0 ? Math.round((stats.guestTurns / denominator) * 100) : 0,
+        guestTurns: stats.guestTurns,
+      };
+    });
 
-    return { chartData: data, maxVal: max, minVal: min, chartGranularity: shouldGroupByMonth ? 'MONTH' as const : 'DAY' as const };
-  }, [bookings, rooms, roomById, startDate, endDate, nowMs, dateRangeInfo.valid, dateRangeInfo.days]);
+    const rows = topMode === 'ROOM' ? roomRows : propertyRows;
+    return [...rows]
+      .filter((row) => row.revenue > 0 || row.guestTurns > 0)
+      .sort((left, right) => {
+        const direction = topSort.direction === 'asc' ? 1 : -1;
+        return (left[topSort.metric] - right[topSort.metric]) * direction;
+      })
+      .slice(0, 8);
+  }, [rangeBounds, operationalRooms, operationalBookings, propertyById, topMode, topSort, dateRangeInfo.days]);
 
+  const dailySummaryRows = useMemo(() => {
+    if (!rangeBounds) return [] as Array<Record<string, number | string>>;
+
+    const rows = [];
+    for (let cursor = new Date(rangeBounds.start); cursor.getTime() < rangeBounds.endExclusiveMs; cursor.setDate(cursor.getDate() + 1)) {
+      const next = new Date(cursor);
+      next.setDate(next.getDate() + 1);
+      const dayStay = calculateStayStats(cursor.getTime(), next.getTime(), rangeBounds.startMs);
+      const dayCheckout = calculateCheckoutStats(cursor.getTime(), next.getTime());
+      const dayCreatedBookings = operationalBookings.filter((booking) => isTimeInRange(booking.createdAt, cursor.getTime(), next.getTime()));
+      const dayCreated = groupFinancials(dayCreatedBookings, true);
+      const denominator = operationalRooms.length;
+      rows.push({
+        key: getLocalDateKey(cursor),
+        name: `${cursor.getDate()}/${cursor.getMonth() + 1}`,
+        createdRevenue: Math.round(dayCreated.totalBill),
+        checkoutRevenue: Math.round(dayCheckout.totalBill),
+        paid: Math.round(dayCheckout.paid),
+        debt: Math.round(dayCheckout.debt),
+        turnoverOcc: denominator > 0 ? Math.round((dayStay.guestTurns / denominator) * 100) : 0,
+        guestTurns: dayStay.guestTurns,
+      });
+    }
+    return rows;
+  }, [rangeBounds, operationalBookings, operationalRooms.length, nowMs]);
+
+  const formatVND = (value: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(Math.round(value || 0));
+  const formatPercent = (value: number) => `${Math.round(value || 0)}%`;
+
+  const toggleTopSort = (metric: TopSortMetric) => {
+    setTopSort((current) => ({
+      metric,
+      direction: current.metric === metric && current.direction === 'desc' ? 'asc' : 'desc',
+    }));
+  };
+
+  const sortLabel = (metric: TopSortMetric) => {
+    if (topSort.metric !== metric) return '↕';
+    return topSort.direction === 'desc' ? '↓' : '↑';
+  };
+
+  const emptyData = dateRangeInfo.valid && operationalRooms.length > 0 && operationalBookings.length === 0;
 
   return (
-    <div className="katka-liquid-page space-y-6 animate-fade-in pb-10">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-              <h2 className="text-xl md:text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
-                      <Building2 size={12} />
-                      Đang xem: {currentPropertyName}
-                  </span>
-                  <span className="text-gray-500 text-xs md:text-sm">Số liệu cập nhật theo dữ liệu đã tải và khoảng thời gian đang lọc.</span>
-              </div>
+    <div className="katka-liquid-page space-y-4 animate-fade-in pb-8">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl md:text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
+              <Building2 size={12} />
+              Đang xem: {currentPropertyName}
+            </span>
           </div>
-          
-          {/* FILTER BAR */}
-          <div className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row gap-2 items-stretch md:items-center">
-             <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg text-gray-700 font-semibold text-sm">
-                 <Filter size={16} />
-                 <span>Lọc:</span>
-             </div>
-             
-             <select 
-                className="bg-white border-none text-gray-900 text-sm font-semibold focus:ring-0 cursor-pointer hover:bg-gray-50 rounded-lg px-2 py-2"
-                value={filterPreset}
-                onChange={(e) => setFilterPreset(e.target.value as DatePreset)}
-             >
-                 {DATE_PRESETS.map(p => (
-                     <option key={p.value} value={p.value}>{p.label}</option>
-                 ))}
-             </select>
+        </div>
 
-             <div className="hidden md:block h-6 w-px bg-gray-300 mx-1"></div>
-
-             <div className="flex items-center gap-2">
-                 <input 
-                    type="date" 
-                    className="flex-1 border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
-                    value={startDate}
-                    onChange={(e) => { setFilterPreset('CUSTOM'); setStartDate(e.target.value); }}
-                 />
-                 <span className="text-gray-400 font-bold">-</span>
-                 <input 
-                    type="date" 
-                    className="flex-1 border border-gray-200 text-gray-700 text-xs rounded-lg px-2 py-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
-                    value={endDate}
-                    onChange={(e) => { setFilterPreset('CUSTOM'); setEndDate(e.target.value); }}
-                 />
-             </div>
+        <div className="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm md:flex-row md:items-center">
+          <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+            <Filter size={16} />
+            <span>Lọc:</span>
           </div>
+          <select
+            className="cursor-pointer rounded-lg border-none bg-white px-2 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 focus:ring-0"
+            value={filterPreset}
+            onChange={(event) => setFilterPreset(event.target.value as DatePreset)}
+          >
+            {DATE_PRESETS.map((preset) => (
+              <option key={preset.value} value={preset.value}>{preset.label}</option>
+            ))}
+          </select>
+          <div className="hidden h-6 w-px bg-gray-300 md:block" />
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              className="flex-1 rounded-lg border border-gray-200 px-2 py-2 text-xs text-gray-700 outline-none focus:border-blue-500 focus:ring-blue-500"
+              value={startDate}
+              onChange={(event) => {
+                setFilterPreset('CUSTOM');
+                setStartDate(event.target.value);
+              }}
+            />
+            <span className="font-bold text-gray-400">-</span>
+            <input
+              type="date"
+              className="flex-1 rounded-lg border border-gray-200 px-2 py-2 text-xs text-gray-700 outline-none focus:border-blue-500 focus:ring-blue-500"
+              value={endDate}
+              onChange={(event) => {
+                setFilterPreset('CUSTOM');
+                setEndDate(event.target.value);
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {!dateRangeInfo.valid && (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-              {dateRangeInfo.message}
-          </div>
+        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {dateRangeInfo.message}
+        </div>
       )}
 
       {dateRangeInfo.valid && operationalRooms.length === 0 && (
-          <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-              Không có phòng vận hành trong phạm vi chi nhánh hiện tại.
-          </div>
+        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          Không có phòng vận hành trong phạm vi chi nhánh hiện tại.
+        </div>
       )}
 
-      {dateRangeInfo.valid && operationalRooms.length > 0 && bookings.length === 0 && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600">
-              Chưa có đơn đặt phòng trong phạm vi dữ liệu hiện tại. Các chỉ số tiền và biểu đồ sẽ hiển thị 0.
-          </div>
+      {emptyData && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600">
+          Chưa có đơn đặt phòng trong phạm vi dữ liệu hiện tại. Các chỉ số sẽ hiển thị 0.
+        </div>
       )}
 
-      {/* STATS GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
-        
-        {/* GROUP 1: CHECKED OUT STATS (Rounded-3xl for consistency) */}
-        <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="dashboard-stat-header dashboard-stat-header-success p-4 md:p-6 border-b border-green-100 flex justify-between items-center">
-                 <div>
-                     <h3 className="text-green-800 font-bold flex items-center gap-2 text-sm md:text-base"><CalendarCheck size={18}/> Khách đã trả phòng</h3>
-                     <p className="text-[10px] md:text-xs text-green-600 mt-1 font-medium">Dựa trên ngày check-out</p>
-                 </div>
-                 <span className="bg-white text-green-700 font-bold px-3 py-1 rounded-full text-xs border border-green-200 shadow-sm">
-                     {checkoutStats.count} Đơn
-                 </span>
-             </div>
-             <div className="p-4 md:p-6 space-y-4">
-                 <div className="flex justify-between items-end">
-                     <span className="text-gray-500 text-xs md:text-sm font-medium">Tổng Bill</span>
-                     <span className="text-xl md:text-2xl font-bold text-gray-800 tracking-tight">{formatVND(checkoutStats.totalBill)}</span>
-                 </div>
-                 <div className="h-px bg-gray-100"></div>
-                 <div className="grid grid-cols-2 gap-4">
-                     <div>
-                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Thực thu</span>
-                         <span className="text-green-600 font-bold text-base md:text-lg">{formatVND(checkoutStats.paid)}</span>
-                     </div>
-                     <div className="text-right">
-                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Công nợ</span>
-                         <span className={`${checkoutStats.debt > 0 ? 'text-red-500' : 'text-gray-400'} font-bold text-base md:text-lg`}>
-                             {formatVND(checkoutStats.debt)}
-                         </span>
-                     </div>
-                 </div>
-             </div>
+      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <CreditCard size={18} className="text-blue-600" />
+          <h3 className="text-base font-black text-gray-900">Doanh số phát sinh</h3>
         </div>
-
-        {/* GROUP 2: CREATED BOOKINGS STATS (Rounded-3xl for consistency) */}
-        <div className="bg-white rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 overflow-hidden">
-             <div className="dashboard-stat-header dashboard-stat-header-info p-4 md:p-6 border-b border-blue-100 flex justify-between items-center">
-                 <div>
-                     <h3 className="text-blue-800 font-bold flex items-center gap-2 text-sm md:text-base"><CreditCard size={18}/> Đặt phòng phát sinh</h3>
-                     <p className="text-[10px] md:text-xs text-blue-600 mt-1 font-medium">Dựa trên ngày tạo đơn</p>
-                 </div>
-                 <span className="bg-white text-blue-700 font-bold px-3 py-1 rounded-full text-xs border border-blue-200 shadow-sm">
-                     {createdStats.count} Đơn
-                 </span>
-             </div>
-             <div className="p-4 md:p-6 space-y-4">
-                 <div className="flex justify-between items-end">
-                     <span className="text-gray-500 text-xs md:text-sm font-medium">Tổng giá trị</span>
-                     <span className="text-xl md:text-2xl font-bold text-gray-800 tracking-tight">{formatVND(createdStats.totalBill)}</span>
-                 </div>
-                 <div className="h-px bg-gray-100"></div>
-                 <div className="grid grid-cols-2 gap-4">
-                     <div>
-                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Đã cọc/TT</span>
-                         <span className="text-blue-600 font-bold text-base md:text-lg">{formatVND(createdStats.paid)}</span>
-                     </div>
-                     <div className="text-right">
-                         <span className="text-[10px] md:text-[11px] text-gray-400 font-bold uppercase block mb-1">Chưa thu</span>
-                         <span className={`${createdStats.debt > 0 ? 'text-orange-500' : 'text-gray-400'} font-bold text-base md:text-lg`}>
-                             {formatVND(createdStats.debt)}
-                         </span>
-                     </div>
-                 </div>
-             </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Đơn phát sinh" value={`${createdStats.count}`} />
+          <StatTile label="Giá trị đơn" value={formatVND(createdStats.totalBill)} />
+          <StatTile label="Đã thu/cọc" value={formatVND(createdStats.paid)} tone="text-blue-600" />
+          <StatTile label="Chưa thu" value={formatVND(createdStats.debt)} tone={createdStats.debt > 0 ? 'text-orange-600' : 'text-gray-400'} />
         </div>
+      </section>
 
-        {/* GROUP 3: PERFORMANCE STATS - iOS WIDGET STYLE */}
-        <div className="bg-white rounded-2xl md:rounded-[32px] shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] border border-gray-100 overflow-hidden md:col-span-2 xl:col-span-1 flex flex-col">
-             <div className="px-6 md:px-8 pt-6 md:pt-8 pb-4">
-                 <h3 className="text-xl md:text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
-                    Hiệu suất
-                 </h3>
-                 <p className="text-[13px] font-medium text-gray-400 mt-1">Theo khoảng thời gian đang lọc</p>
-             </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <CalendarCheck size={18} className="text-green-600" />
+            <h3 className="text-base font-black text-gray-900">Doanh thu check-out trong kỳ</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <StatTile label="Số đơn" value={`${checkoutStats.count}`} />
+            <StatTile label="Doanh thu phòng" value={formatVND(checkoutStats.roomRevenue)} />
+            <StatTile label="Dịch vụ/phụ thu" value={formatVND(checkoutStats.serviceRevenue)} tone="text-blue-600" />
+            <StatTile label="Tổng doanh thu" value={formatVND(checkoutStats.totalBill)} tone="text-emerald-600" />
+            <StatTile label="Đã thu" value={formatVND(checkoutStats.paid)} tone="text-green-600" />
+            <StatTile label="Còn thiếu" value={formatVND(checkoutStats.debt)} tone={checkoutStats.debt > 0 ? 'text-red-600' : 'text-gray-400'} />
+          </div>
+        </section>
 
-             <div className="p-4 md:p-6 pt-2 grid grid-cols-2 gap-4 md:gap-5 h-full">
-                 {/* OCC Widget */}
-                 <div className="dashboard-kpi-tile rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all">
-                     <div className="dashboard-kpi-icon-shell mb-4 p-2 md:p-3 rounded-2xl text-purple-600 border border-purple-50/50">
-                        <BedDouble size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
-                     </div>
-
-                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Công suất</p>
-                     <p className="text-2xl md:text-4xl font-extrabold text-gray-900 tracking-tight mb-2">{performanceStats.occ}%</p>
-                     <div className="dashboard-kpi-pill px-3 py-1 rounded-lg border border-gray-200/50">
-                        <p className="text-[10px] md:text-[11px] font-semibold text-gray-500 whitespace-nowrap">
-                            {performanceStats.occupiedInventory}/{performanceStats.totalInventory} Đêm phòng
-                        </p>
-                     </div>
-                 </div>
-                 
-                 {/* ADR Widget */}
-                 <div className="dashboard-kpi-tile rounded-[24px] p-4 md:p-5 flex flex-col items-center justify-center relative group transition-all">
-                     <div className="dashboard-kpi-icon-shell mb-4 p-2 md:p-3 rounded-2xl text-teal-600 border border-teal-50/50">
-                        <DollarSign size={24} className="md:w-7 md:h-7" strokeWidth={2}/>
-                     </div>
-
-                     <p className="text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Giá TB (ADR)</p>
-                     <p className="text-xl md:text-3xl font-extrabold text-gray-900 tracking-tight mb-2">{formatCompactVND(performanceStats.adr)}</p>
-                     <div className="dashboard-kpi-pill px-3 py-1 rounded-lg border border-gray-200/50">
-                        <p className="text-[10px] md:text-[11px] font-semibold text-gray-500">
-                            VNĐ / Đêm
-                        </p>
-                     </div>
-                 </div>
-             </div>
-        </div>
-
+        <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <BedDouble size={18} className="text-purple-600" />
+            <h3 className="text-base font-black text-gray-900">Hiệu suất phòng</h3>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <StatTile label="OCC lượt phòng" value={formatPercent(performanceStats.turnoverOcc)} sub="Số lượt khai thác / phòng" tone="text-purple-700" />
+            <StatTile label="ADR" value={formatVND(performanceStats.adr)} sub="Doanh thu / đêm phòng bán" />
+            <StatTile label="RevPAR" value={formatVND(performanceStats.revPar)} sub="Doanh thu / phòng khả dụng" />
+            <StatTile label="Số lượt khai thác" value={`${performanceStats.guestTurns} lượt`} />
+          </div>
+        </section>
       </div>
 
-      {/* LINE CHART SECTION (Consistent Radius) */}
-      <div className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[24px] shadow-sm border border-gray-200 w-full overflow-hidden">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-              <div>
-                  <h3 className="text-base md:text-lg font-bold text-gray-800 flex items-center gap-2">Biểu đồ tổng bill và tiền đã trả</h3>
-                  <p className="text-xs md:text-sm text-gray-500 mt-1">
-                      Thống kê theo {chartGranularity === 'MONTH' ? 'tháng' : 'ngày'} khách trả phòng (Check-out)
-                  </p>
-              </div>
-              <div className="flex gap-4 text-xs font-medium bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 w-full md:w-auto justify-between md:justify-start">
-                   <div className="flex items-center gap-2 text-green-700">
-                       <ArrowUpCircle size={14} className="text-red-500" />
-                       <span className="hidden sm:inline">Cao nhất: </span>
-                       <span>{formatCompactVND(maxVal)}</span>
-                   </div>
-                   <div className="w-px h-4 bg-gray-300"></div>
-                   <div className="flex items-center gap-2 text-orange-700">
-                       <ArrowDownCircle size={14} className="text-orange-500" />
-                       <span className="hidden sm:inline">Thấp nhất: </span>
-                       <span>{formatCompactVND(minVal)}</span>
-                   </div>
-              </div>
+      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2">
+            <Trophy size={18} className="text-amber-500" />
+            <h3 className="text-base font-black text-gray-900">Top doanh thu / OCC lượt phòng</h3>
           </div>
-
-          <div className="h-[250px] md:h-[350px] w-full -ml-2 md:ml-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#9ca3af', fontSize: 10}} 
-                    dy={10} 
-                    padding={{left: 10, right: 10}}
-                    interval="preserveStartEnd"
-                />
-                <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#9ca3af', fontSize: 10}} 
-                    tickFormatter={(val) => formatCompactVND(val)} 
-                    width={30}
-                />
-                <Tooltip 
-                    formatter={(value: number) => formatVND(value)} 
-                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} 
-                    labelStyle={{color: '#6b7280', marginBottom: '0.25rem', fontSize: '0.75rem'}}
-                />
-                <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '12px'}} />
-                
-                {/* Tổng Bill - Green Line */}
-                <Line 
-                    type="monotone" 
-                    dataKey="totalBill" 
-                    name="Tổng bill"
-                    stroke="#10b981" 
-                    strokeWidth={3} 
-                    dot={<CustomizedDot maxVal={maxVal} minVal={minVal} />} 
-                    activeDot={{ r: 6, strokeWidth: 0 }}
-                />
-
-                {/* Đã Trả - Blue Line */}
-                <Line 
-                    type="monotone" 
-                    dataKey="paidAmount" 
-                    name="Tiền đã trả"
-                    stroke="#3b82f6" 
-                    strokeWidth={3} 
-                    dot={false}
-                    strokeDasharray="5 5"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="inline-flex w-fit rounded-xl bg-gray-100 p-1 text-xs font-black">
+            <button
+              type="button"
+              onClick={() => setTopMode('ROOM')}
+              className={`rounded-lg px-3 py-1.5 ${topMode === 'ROOM' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500'}`}
+            >
+              Theo phòng
+            </button>
+            <button
+              type="button"
+              onClick={() => setTopMode('PROPERTY')}
+              className={`rounded-lg px-3 py-1.5 ${topMode === 'PROPERTY' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500'}`}
+            >
+              Theo chi nhánh
+            </button>
           </div>
-      </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-400">
+                <th className="py-3 pr-4">{topMode === 'ROOM' ? 'Phòng' : 'Chi nhánh'}</th>
+                <th className="py-3 pr-4">
+                  <button type="button" onClick={() => toggleTopSort('revenue')} className="font-black hover:text-blue-700">
+                    Doanh thu {sortLabel('revenue')}
+                  </button>
+                </th>
+                <th className="py-3 pr-4">
+                  <button type="button" onClick={() => toggleTopSort('turnoverOcc')} className="font-black hover:text-blue-700">
+                    OCC lượt phòng {sortLabel('turnoverOcc')}
+                  </button>
+                </th>
+                <th className="py-3 pr-4">
+                  <button type="button" onClick={() => toggleTopSort('guestTurns')} className="font-black hover:text-blue-700">
+                    Lượt khách {sortLabel('guestTurns')}
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {topRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-sm font-semibold text-gray-400">Chưa có dữ liệu top trong kỳ này.</td>
+                </tr>
+              ) : (
+                topRows.map((row, index) => (
+                  <tr key={row.id} className="border-b border-gray-50 last:border-0">
+                    <td className="py-3 pr-4">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-50 text-xs font-black text-blue-700">{index + 1}</span>
+                        <div>
+                          <div className="font-black text-gray-900">{row.label}</div>
+                          <div className="text-xs font-semibold text-gray-400">{row.subLabel}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 font-black text-gray-900">{formatVND(row.revenue)}</td>
+                    <td className="py-3 pr-4 font-black text-purple-700">{formatPercent(row.turnoverOcc)}</td>
+                    <td className="py-3 pr-4 font-black text-gray-700">{row.guestTurns} lượt</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+        <div className="mb-4">
+          <h3 className="text-base font-black text-gray-900">Bảng tóm tắt theo ngày</h3>
+        </div>
+        <div className="max-h-[420px] overflow-auto">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="border-b border-gray-100 text-[11px] font-black uppercase tracking-wide text-gray-400">
+                <th className="py-3 pr-4">Ngày</th>
+                <th className="py-3 pr-4">DT phát sinh</th>
+                <th className="py-3 pr-4">DT check-out</th>
+                <th className="py-3 pr-4">Đã thu</th>
+                <th className="py-3 pr-4">Còn thiếu</th>
+                <th className="py-3 pr-4">OCC lượt</th>
+                <th className="py-3 pr-4">Lượt khách</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dailySummaryRows.map((row) => (
+                <tr key={row.key} className="border-b border-gray-50 last:border-0">
+                  <td className="py-3 pr-4 font-black text-gray-900">{row.name}</td>
+                  <td className="py-3 pr-4 font-bold text-gray-800">{formatVND(Number(row.createdRevenue))}</td>
+                  <td className="py-3 pr-4 font-bold text-gray-800">{formatVND(Number(row.checkoutRevenue))}</td>
+                  <td className="py-3 pr-4 font-bold text-green-700">{formatVND(Number(row.paid))}</td>
+                  <td className={`py-3 pr-4 font-bold ${Number(row.debt) > 0 ? 'text-red-600' : 'text-gray-400'}`}>{formatVND(Number(row.debt))}</td>
+                  <td className="py-3 pr-4 font-bold text-purple-700">{formatPercent(Number(row.turnoverOcc))}</td>
+                  <td className="py-3 pr-4 font-bold text-gray-700">{row.guestTurns} lượt</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 };
