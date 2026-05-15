@@ -79,6 +79,7 @@ export interface Property {
   name: string;
   address: string;
   sortOrder?: number; // Order for display
+  excludeFromDashboard?: boolean; // Không tính chi nhánh này vào Tổng quan
 }
 
 export interface RoomType {
@@ -99,6 +100,7 @@ export interface Room {
   status: RoomStatus;
   floor: number;
   sortOrder?: number; // Order for display
+  excludeFromDashboard?: boolean; // Không tính phòng này vào Tổng quan
 }
 
 export type RoomPolicyMode = 'LOCKED' | 'HOURLY_ONLY';

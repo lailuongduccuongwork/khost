@@ -306,9 +306,42 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
     return { start, endExclusive, startMs: start.getTime(), endExclusiveMs: endExclusive.getTime() };
   }, [startDate, endDate, dateRangeInfo.valid]);
 
+  const propertyById = useMemo(() => {
+    const map = new Map<string, Property>();
+    properties.forEach((property) => map.set(property.id, property));
+    return map;
+  }, [properties]);
+
+  const dashboardExcludedPropertyIds = useMemo(
+    () => new Set(properties.filter((property) => property.excludeFromDashboard).map((property) => property.id)),
+    [properties]
+  );
+
+  const dashboardExcludedSummary = useMemo(() => {
+    const scopedProperties = properties.filter((property) => currentPropertyId === 'ALL' || property.id === currentPropertyId);
+    const scopedPropertyIds = new Set(scopedProperties.map((property) => property.id));
+    const propertyCount = scopedProperties.filter((property) => property.excludeFromDashboard).length;
+    const roomCount = rooms.filter((room) =>
+      scopedPropertyIds.has(room.propertyId) &&
+      !isArchiveBucketRoom(room) &&
+      (room.excludeFromDashboard || dashboardExcludedPropertyIds.has(room.propertyId))
+    ).length;
+
+    return {
+      propertyCount,
+      roomCount,
+      hasExclusions: propertyCount > 0 || roomCount > 0,
+    };
+  }, [properties, rooms, currentPropertyId, dashboardExcludedPropertyIds]);
+
   const operationalRooms = useMemo(
-    () => rooms.filter((room) => !isArchiveBucketRoom(room) && (currentPropertyId === 'ALL' || room.propertyId === currentPropertyId)),
-    [rooms, currentPropertyId]
+    () => rooms.filter((room) =>
+      !isArchiveBucketRoom(room) &&
+      (currentPropertyId === 'ALL' || room.propertyId === currentPropertyId) &&
+      !room.excludeFromDashboard &&
+      !dashboardExcludedPropertyIds.has(room.propertyId)
+    ),
+    [rooms, currentPropertyId, dashboardExcludedPropertyIds]
   );
 
   const roomById = useMemo(() => {
@@ -316,12 +349,6 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
     operationalRooms.forEach((room) => map.set(room.id, room));
     return map;
   }, [operationalRooms]);
-
-  const propertyById = useMemo(() => {
-    const map = new Map<string, Property>();
-    properties.forEach((property) => map.set(property.id, property));
-    return map;
-  }, [properties]);
 
   const isOperationalBooking = (booking: Booking) => {
     const room = roomById.get(booking.roomId);
@@ -540,6 +567,11 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
               <Building2 size={12} />
               Đang xem: {currentPropertyName}
             </span>
+            {dashboardExcludedSummary.hasExclusions && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-orange-100 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700">
+                Đã loại trừ: {dashboardExcludedSummary.propertyCount} chi nhánh, {dashboardExcludedSummary.roomCount} phòng
+              </span>
+            )}
           </div>
         </div>
 
@@ -590,7 +622,9 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
 
       {dateRangeInfo.valid && operationalRooms.length === 0 && (
         <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-          Không có phòng vận hành trong phạm vi chi nhánh hiện tại.
+          {dashboardExcludedSummary.hasExclusions
+            ? 'Không có phòng nào đang được tính vào Tổng quan trong phạm vi chi nhánh hiện tại.'
+            : 'Không có phòng vận hành trong phạm vi chi nhánh hiện tại.'}
         </div>
       )}
 

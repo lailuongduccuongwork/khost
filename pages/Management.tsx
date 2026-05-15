@@ -417,6 +417,21 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       setEditingId(newProp.id);
   };
 
+  const handleTogglePropertyDashboardExclusion = (propertyId: string) => {
+      const nextProperties = properties.map(prop =>
+          prop.id === propertyId ? { ...prop, excludeFromDashboard: !prop.excludeFromDashboard } : prop
+      );
+      runSaveAction('cấu hình Tổng quan của chi nhánh', () => DataService.saveProperties(nextProperties));
+  };
+
+  const handleToggleRoomDashboardExclusion = (roomId: string) => {
+      const nextRooms = managementRooms.map(room =>
+          room.id === roomId ? { ...room, excludeFromDashboard: !room.excludeFromDashboard } : room
+      );
+      setManagementRooms(nextRooms);
+      runSaveAction('cấu hình Tổng quan của phòng', () => DataService.saveRooms(nextRooms));
+  };
+
   const handleAddRoomType = (propertyId: string) => {
       setNewRoomTypeDraft({ propertyId, name: '' });
       setNewRoomDraft(null);
@@ -659,6 +674,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                       </div>
                                   </th>
                                   <th className="px-6 py-4 w-1/2">Địa chỉ</th>
+                                  <th className="px-6 py-4 w-44 text-center">Tổng quan</th>
                                   <th className="px-6 py-4 w-32 text-center">Thao tác</th>
                               </tr>
                           </thead>
@@ -688,6 +704,20 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                             {editingId === prop.id + '_addr' ? (
                                               <InlineInput value={prop.address} autoSelect onSave={(v) => { DataService.saveProperties(properties.map(p => p.id === prop.id ? {...p, address: v} : p)); setEditingId(null); }} onCancel={() => setEditingId(null)} />
                                           ) : <span className="truncate block max-w-xs">{prop.address}</span>}
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
+                                          <button
+                                              type="button"
+                                              onClick={() => handleTogglePropertyDashboardExclusion(prop.id)}
+                                              className={`rounded-full px-3 py-1.5 text-xs font-black transition-colors ${
+                                                  prop.excludeFromDashboard
+                                                      ? 'border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100'
+                                                      : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                              }`}
+                                              title="Bật/tắt tính chi nhánh này vào tab Tổng quan"
+                                          >
+                                              {prop.excludeFromDashboard ? 'Không tính' : 'Có tính'}
+                                          </button>
                                       </td>
                                       <td className="px-6 py-4 flex items-center justify-center gap-2">
                                           <button onClick={() => setEditingId(editingId === prop.id ? null : prop.id)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg" title="Sửa tên"><Edit2 size={16} /></button>
@@ -770,13 +800,27 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                   {isSearchActive && ` • đang hiện ${displayedTypesInProp.length} hạng, ${displayedRoomsInProp.length} phòng`}
                                               </div>
                                           </div>
-                                          <button
-                                              onClick={() => setCollapsedPropertyIds(prev => prev.includes(prop.id) ? prev.filter(id => id !== prop.id) : [...prev, prop.id])}
-                                              className="self-start md:self-auto rounded-lg bg-white/15 px-3 py-1.5 text-sm font-bold text-white hover:bg-white/25 flex items-center gap-1"
-                                          >
-                                              {isCollapsed ? 'Mở rộng' : 'Thu gọn'}
-                                              <ChevronDown size={16} className={`transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
-                                          </button>
+                                          <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                                              <button
+                                                  type="button"
+                                                  onClick={() => handleTogglePropertyDashboardExclusion(prop.id)}
+                                                  className={`rounded-lg px-3 py-1.5 text-xs font-black transition-colors ${
+                                                      prop.excludeFromDashboard
+                                                          ? 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                                          : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                                  }`}
+                                                  title="Bật/tắt tính chi nhánh này vào tab Tổng quan"
+                                              >
+                                                  {prop.excludeFromDashboard ? 'Không tính Tổng quan' : 'Có tính Tổng quan'}
+                                              </button>
+                                              <button
+                                                  onClick={() => setCollapsedPropertyIds(prev => prev.includes(prop.id) ? prev.filter(id => id !== prop.id) : [...prev, prop.id])}
+                                                  className="rounded-lg bg-white/15 px-3 py-1.5 text-sm font-bold text-white hover:bg-white/25 flex items-center gap-1"
+                                              >
+                                                  {isCollapsed ? 'Mở rộng' : 'Thu gọn'}
+                                                  <ChevronDown size={16} className={`transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
+                                              </button>
+                                          </div>
                                       </div>
 
                                       {isCollapsed && (
@@ -937,6 +981,25 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                                                           <option key={t.id} value={t.id}>{t.name}</option>
                                                                                       ))}
                                                                                   </select>
+                                                                                  <button
+                                                                                      type="button"
+                                                                                      disabled={Boolean(prop.excludeFromDashboard)}
+                                                                                      onClick={() => handleToggleRoomDashboardExclusion(room.id)}
+                                                                                      className={`w-full rounded-lg px-2 py-1.5 text-[11px] font-black transition-colors ${
+                                                                                          prop.excludeFromDashboard
+                                                                                              ? 'cursor-not-allowed border border-orange-100 bg-orange-50 text-orange-500'
+                                                                                              : room.excludeFromDashboard
+                                                                                                ? 'border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100'
+                                                                                                : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                                                      }`}
+                                                                                      title={prop.excludeFromDashboard ? 'Chi nhánh đã không tính vào Tổng quan' : 'Bật/tắt tính phòng này vào tab Tổng quan'}
+                                                                                  >
+                                                                                      {prop.excludeFromDashboard
+                                                                                          ? 'Không tính do chi nhánh'
+                                                                                          : room.excludeFromDashboard
+                                                                                            ? 'Không tính Tổng quan'
+                                                                                            : 'Có tính Tổng quan'}
+                                                                                  </button>
                                                                               </div>
                                                                           );
                                                                       })}
