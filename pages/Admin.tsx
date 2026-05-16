@@ -22,6 +22,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
   const [isDeleting, setIsDeleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [formError, setFormError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
 
   const [userData, setUserData] = useState<Partial<User>>({
     role: UserRole.RECEPTIONIST,
@@ -42,21 +43,23 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
           return;
       }
       setUserToDelete(user);
+      setDeleteError('');
       setShowDeleteConfirm(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
       if (userToDelete) {
+          setDeleteError('');
           try {
               setIsDeleting(true);
-              DataService.deleteUser(userToDelete.id);
+              await DataService.deleteUser(userToDelete.id);
               onRefresh();
               setStatusMessage(`Đã xóa tài khoản ${userToDelete.fullName || userToDelete.username}.`);
               setShowDeleteConfirm(false);
               setUserToDelete(null);
           } catch (error) {
               const message = error instanceof Error ? error.message : 'Không thể xóa nhân viên.';
-              setStatusMessage(message);
+              setDeleteError(message);
           } finally {
               setIsDeleting(false);
           }
@@ -475,9 +478,9 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
         document.body
       )}
 
-      {showDeleteConfirm && userToDelete && (
-          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-              <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 animate-fade-in text-center">
+      {showDeleteConfirm && userToDelete && createPortal(
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in text-center">
                   <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
                       <AlertTriangle size={32} />
                   </div>
@@ -486,9 +489,17 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
                       Bạn có chắc chắn muốn xóa tài khoản <b>{userToDelete.fullName}</b> ({userToDelete.username}) không? <br/>
                       Hành động này không thể hoàn tác.
                   </p>
+                  {deleteError && (
+                      <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-left text-sm font-semibold text-red-700">
+                          {deleteError}
+                      </div>
+                  )}
                   <div className="flex gap-3">
                       <button 
-                          onClick={() => setShowDeleteConfirm(false)}
+                          onClick={() => {
+                              setShowDeleteConfirm(false);
+                              setDeleteError('');
+                          }}
                           disabled={isDeleting}
                           className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
                       >
@@ -503,7 +514,8 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
                       </button>
                   </div>
               </div>
-          </div>
+          </div>,
+          document.body
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory, RoomPolicyRule } from '../types';
 import { DataService } from '../services/dataService';
 import { 
@@ -78,7 +79,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isMobileTabPickerOpen, setIsMobileTabPickerOpen] = useState(false);
   
-  // Modal xóa nguy hiểm: bắt buộc gõ XÓA để tránh xóa dây chuyền nhầm dữ liệu thật.
+  // Modal xóa nguy hiểm: bắt buộc xác nhận thủ công để tránh xóa dây chuyền nhầm dữ liệu thật.
   const [deleteModal, setDeleteModal] = useState<DangerousDeleteModalState | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -341,7 +342,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   };
 
   const handleConfirmCascadeDelete = async () => {
-      if (!deleteModal || deleteConfirmText.trim() !== 'XÓA') return;
+      if (!deleteModal || deleteConfirmText.trim().toUpperCase() !== 'Y') return;
       setIsDeleting(true);
       setDeleteError('');
       try {
@@ -542,22 +543,22 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       resetPolicyForm();
   };
 
-  const applyBulkPolicyState = (active: boolean) => {
+  const applyBulkPolicyState = async (active: boolean) => {
       if (selectedPolicyIds.length === 0) return;
       const updated = roomPolicies.map(policy =>
           selectedPolicyIds.includes(policy.id) ? { ...policy, isActive: active } : policy
       );
-      DataService.saveRoomPolicies(updated);
+      const saved = await runSaveAction('trạng thái chính sách phòng', () => DataService.saveRoomPolicies(updated));
+      if (!saved) return;
       setSelectedPolicyIds([]);
-      onRefresh();
   };
 
-  const deleteSelectedPolicies = () => {
+  const deleteSelectedPolicies = async () => {
       if (selectedPolicyIds.length === 0) return;
       if (!window.confirm(`Xóa ${selectedPolicyIds.length} chính sách phòng đã chọn? Hành động này không thể hoàn tác.`)) return;
-      DataService.deleteItems('roomPolicies', selectedPolicyIds);
+      const deleted = await runSaveAction('chính sách phòng đã chọn', () => DataService.deleteItems('roomPolicies', selectedPolicyIds));
+      if (!deleted) return;
       setSelectedPolicyIds([]);
-      onRefresh();
   };
 
   // --- COMPONENT: MENU BÊN TRÁI ---
@@ -1334,11 +1335,11 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                                           {policy.isActive ? 'Dừng' : 'Bật'}
                                                       </button>
                                                       <button
-                                                          onClick={() => {
+                                                          onClick={async () => {
                                                               if (!window.confirm('Xóa chính sách phòng này? Hành động này không thể hoàn tác.')) return;
-                                                              DataService.deleteItems('roomPolicies', [policy.id]);
+                                                              const deleted = await runSaveAction('chính sách phòng', () => DataService.deleteItems('roomPolicies', [policy.id]));
+                                                              if (!deleted) return;
                                                               setSelectedPolicyIds(prev => prev.filter(id => id !== policy.id));
-                                                              onRefresh();
                                                           }}
                                                           className="px-2.5 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 hover:bg-red-200"
                                                       >
@@ -1487,61 +1488,44 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       )}
 
       {/* --- MODAL XÁC NHẬN XÓA CHUNG --- */}
-      {deleteModal?.isOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
-                  <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <AlertTriangle size={32} />
+      {deleteModal?.isOpen && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px] animate-fade-in">
+              <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-500">
+                      <AlertTriangle size={26} />
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2 text-center">{deleteModal.title}</h3>
-                  <p className="text-gray-600 text-sm mb-4 text-center">
-                      Nếu xóa, toàn bộ dữ liệu liên quan sẽ bị xóa vĩnh viễn và không thể hoàn tác.
+                  <h3 className="mb-2 text-center text-xl font-black text-gray-950">{deleteModal.title}</h3>
+                  <p className="mx-auto mb-5 max-w-sm text-center text-sm font-medium leading-6 text-gray-500">
+                      Hành động này sẽ xoá vĩnh viễn dữ liệu liên quan và không thể hoàn tác.
                   </p>
-                  <div className="grid grid-cols-2 gap-2 text-sm mb-4">
-                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
-                          <div className="text-xs text-red-500 font-bold uppercase">Phòng</div>
-                          <div className="text-lg font-black text-red-700">{deleteModal.impact.rooms}</div>
-                      </div>
-                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
-                          <div className="text-xs text-red-500 font-bold uppercase">Hạng phòng</div>
-                          <div className="text-lg font-black text-red-700">{deleteModal.impact.roomTypes}</div>
-                      </div>
-                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
-                          <div className="text-xs text-red-500 font-bold uppercase">Booking</div>
-                          <div className="text-lg font-black text-red-700">{deleteModal.impact.bookings}</div>
-                      </div>
-                      <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2">
-                          <div className="text-xs text-red-500 font-bold uppercase">Chính sách</div>
-                          <div className="text-lg font-black text-red-700">{deleteModal.impact.roomPolicies}</div>
-                      </div>
-                  </div>
-                  <label className="block text-sm font-bold text-gray-700 mb-2">
-                      Gõ đúng <span className="text-red-600">XÓA</span> để xác nhận
+                  <label className="mb-2 block text-sm font-bold text-gray-700">
+                      Nhập <span className="text-red-600">Y</span> để xác nhận
                   </label>
                   <input
                       value={deleteConfirmText}
                       onChange={(e) => setDeleteConfirmText(e.target.value)}
-                      className="w-full border-2 border-red-200 rounded-lg px-3 py-2 font-bold text-gray-900 outline-none focus:border-red-500"
-                      placeholder="XÓA"
+                      className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-base font-black text-gray-900 outline-none transition-colors placeholder:text-gray-300 focus:border-red-400 focus:ring-4 focus:ring-red-50"
+                      placeholder="Y"
                       autoFocus
                   />
                   {deleteError && (
-                      <div className="mt-3 rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+                      <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
                           {deleteError}
                       </div>
                   )}
-                  <div className="flex gap-3">
-                      <button onClick={closeDeleteModal} disabled={isDeleting} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-60">Huỷ bỏ</button>
+                  <div className="mt-5 flex gap-3">
+                      <button onClick={closeDeleteModal} disabled={isDeleting} className="flex-1 rounded-2xl bg-gray-100 py-3 font-bold text-gray-700 transition-colors hover:bg-gray-200 disabled:opacity-60">Huỷ bỏ</button>
                       <button
                           onClick={handleConfirmCascadeDelete}
-                          disabled={deleteConfirmText.trim() !== 'XÓA' || isDeleting}
-                          className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 shadow-lg shadow-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          disabled={deleteConfirmText.trim().toUpperCase() !== 'Y' || isDeleting}
+                          className="flex-1 rounded-2xl bg-red-600 py-3 font-bold text-white shadow-lg shadow-red-100 transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
                       >
                           {isDeleting ? 'Đang xoá...' : 'Xóa vĩnh viễn'}
                       </button>
                   </div>
               </div>
-          </div>
+          </div>,
+          document.body
       )}
     </div>
   );

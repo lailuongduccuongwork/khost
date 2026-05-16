@@ -610,6 +610,44 @@ const trackedRemove = async (path: string, meta?: Record<string, unknown>) => {
     return remove(ref(db, path));
 };
 
+const getMatchingCollectionChildKeys = async (collectionPath: string, ids: Iterable<string>) => {
+    const idSet = new Set(Array.from(ids).filter(Boolean));
+    if (idSet.size === 0) return [];
+
+    const matchingKeys = new Set<string>(idSet);
+    const snap = await trackedGet(collectionPath);
+    const rawCollection = snap.val();
+
+    if (rawCollection && typeof rawCollection === 'object') {
+        Object.entries(rawCollection as Record<string, unknown>).forEach(([childKey, childValue]) => {
+            if (idSet.has(childKey)) {
+                matchingKeys.add(childKey);
+                return;
+            }
+
+            if (
+                childValue &&
+                typeof childValue === 'object' &&
+                !Array.isArray(childValue) &&
+                idSet.has(String((childValue as Record<string, unknown>).id || ''))
+            ) {
+                matchingKeys.add(childKey);
+            }
+        });
+    }
+
+    return Array.from(matchingKeys);
+};
+
+const buildCollectionDeleteUpdates = async (collectionPath: string, ids: Iterable<string>) => {
+    const updates: Record<string, null> = {};
+    const matchingKeys = await getMatchingCollectionChildKeys(collectionPath, ids);
+    matchingKeys.forEach((childKey) => {
+        updates[`${collectionPath}/${childKey}`] = null;
+    });
+    return updates;
+};
+
 const trackedOnValue = (path: string, callback: (snap: any) => void, errorCallback?: (error: unknown) => void) =>
     onValue(
         ref(db, path),
@@ -1272,8 +1310,11 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
             if (!propertySnap.exists() || propertySnap.size === 0) {
                 trackedGet(`${basePath}/rooms`).then((roomSnap) => {
                     if (!roomSnap.exists()) {
-                        if (isFirebaseDebugEnabled()) console.log(`Seeding initial data for ${tenantId}`);
-                        _seedTenantData(tenantId);
+                        trackedGet(`system/tenants/${tenantId}/initialSeeded`).then((seedSnap) => {
+                            if (seedSnap.val() === true) return;
+                            if (isFirebaseDebugEnabled()) console.log(`Seeding initial data for ${tenantId}`);
+                            _seedTenantData(tenantId);
+                        });
                     }
                 });
             }
@@ -1873,6 +1914,7 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/customers`] = toMap(INITIAL_CUSTOMERS);
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
+    updates[`system/tenants/${tenantId}/initialSeeded`] = true;
 
     trackedUpdateRoot(updates, { source: 'seed-tenant', tenantId }).then(() => {
         if (isFirebaseDebugEnabled()) console.log('Seeding complete');
@@ -1907,25 +1949,24 @@ const _saveItem = (node: string, item: any) => {
     }
 };
 
-const _deleteItem = (node: string, id: string) => {
-    if (!activeTenantId || !db) return;
+const _deleteItem = async (node: string, id: string) => {
+    if (!activeTenantId || !db) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
 
     const basePath = getBaseRef();
-    if (!basePath) return;
+    if (!basePath) throw new Error('Không xác định được tenant hiện tại.');
 
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
     const itemBefore = Array.isArray(list) ? list.find((entry: any) => entry.id === id) : null;
     assertNodeMutationAllowed(node, 'delete', itemBefore || { id });
+    const updates = await buildCollectionDeleteUpdates(`${basePath}/${node}`, [id]);
+    await trackedUpdateRoot(updates, { node, operation: 'delete' });
+
     if (Array.isArray(list)) {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] = list.filter((entry: any) => entry.id !== id);
     }
     _dataChangeCallback();
-
-    return trackedRemove(`${basePath}/${node}/${id}`, { node }).catch((error: any) => {
-        console.error(`Delete ${node} failed`, error);
-    });
 };
 
 const _saveListAsMap = async (node: string, list: any[]) => {
@@ -1941,24 +1982,19 @@ const _saveListAsMap = async (node: string, list: any[]) => {
     const updates: Record<string, any> = {};
     const nextIds = new Set(normalizedList.map((item) => item.id));
 
-    // Room policies must be hard-deleted when removed from list
-    // to avoid ghost policies reappearing on realtime sync.
-    if (node === 'roomPolicies') {
+    // Small list settings must be hard-deleted when removed from the saved list
+    // to avoid ghost items reappearing on realtime sync / page refresh.
+    const shouldDeleteRemovedListItems = ['roomPolicies', 'tags', 'transactionCategories'].includes(node);
+    if (shouldDeleteRemovedListItems) {
         // @ts-ignore
         const currentList = CACHE[node as keyof typeof CACHE];
         if (Array.isArray(currentList)) {
-            currentList.forEach((item: any) => {
-                if (!item?.id) return;
-                if (!nextIds.has(item.id)) {
-                    updates[`${basePath}/${node}/${item.id}`] = null;
-                }
-            });
+            const removedIds = currentList
+                .map((item: any) => item?.id)
+                .filter((id: string | undefined): id is string => !!id && !nextIds.has(id));
+            Object.assign(updates, await buildCollectionDeleteUpdates(`${basePath}/${node}`, removedIds));
         }
     }
-
-    // @ts-ignore
-    CACHE[node as keyof typeof CACHE] = normalizedList;
-    _dataChangeCallback();
 
     normalizedList.forEach((item) => {
         if (item?.id) {
@@ -1968,17 +2004,21 @@ const _saveListAsMap = async (node: string, list: any[]) => {
 
     try {
         await trackedUpdateRoot(updates, { node, operation: 'bulk-save' });
+        // @ts-ignore
+        CACHE[node as keyof typeof CACHE] = normalizedList;
+        _dataChangeCallback();
     } catch (error) {
         console.error(`Bulk save ${node} failed`, error);
         throw error;
     }
 };
 
-const _deleteItems = (node: string, ids: string[]) => {
-    if (!activeTenantId || !db || ids.length === 0) return;
+const _deleteItems = async (node: string, ids: string[]) => {
+    if (!activeTenantId || !db) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    if (ids.length === 0) return;
 
     const basePath = getBaseRef();
-    if (!basePath) return;
+    if (!basePath) throw new Error('Không xác định được tenant hiện tại.');
 
     // @ts-ignore
     const currentList = CACHE[node as keyof typeof CACHE];
@@ -1990,10 +2030,9 @@ const _deleteItems = (node: string, ids: string[]) => {
         ids.forEach((id) => assertNodeMutationAllowed(node, 'delete', { id }));
     }
 
-    const updates: Record<string, any> = {};
-    ids.forEach((id) => {
-        updates[`${basePath}/${node}/${id}`] = null;
-    });
+    const updates = await buildCollectionDeleteUpdates(`${basePath}/${node}`, ids);
+
+    await trackedUpdateRoot(updates, { node, operation: 'bulk-delete' });
 
     // @ts-ignore
     const list = CACHE[node as keyof typeof CACHE];
@@ -2002,10 +2041,6 @@ const _deleteItems = (node: string, ids: string[]) => {
         CACHE[node as keyof typeof CACHE] = list.filter((entry: any) => !ids.includes(entry.id));
     }
     _dataChangeCallback();
-
-    return trackedUpdateRoot(updates, { node, operation: 'bulk-delete' }).catch((error: any) => {
-        console.error(`Bulk delete ${node} failed`, error);
-    });
 };
 
 const _auditCollectionMutation = (node: AuditedNode, previousList: any[], nextList: any[]) => {
@@ -3441,24 +3476,30 @@ const _cascadeDeleteManagementItem = async (
         .forEach((policy) => assertNodeMutationAllowed('roomPolicies', 'delete', policy));
 
     const updates: Record<string, unknown> = {};
+    const deleteUpdateGroups = await Promise.all([
+        kind === 'property'
+            ? buildCollectionDeleteUpdates(`${basePath}/properties`, [targetId])
+            : Promise.resolve({}),
+        kind === 'roomType'
+            ? buildCollectionDeleteUpdates(`${basePath}/roomTypes`, [targetId])
+            : Promise.resolve({}),
+        kind === 'room'
+            ? buildCollectionDeleteUpdates(`${basePath}/rooms`, [targetId])
+            : Promise.resolve({}),
+        buildCollectionDeleteUpdates(`${basePath}/rooms`, impactedRoomIds),
+        buildCollectionDeleteUpdates(`${basePath}/roomTypes`, impactedRoomTypeIds),
+        buildCollectionDeleteUpdates(`${basePath}/roomPolicies`, impactedPolicyIds),
+        buildCollectionDeleteUpdates(
+            `${basePath}/bookings`,
+            impactedBookings.map((booking) => booking.id)
+        ),
+    ]);
+    deleteUpdateGroups.forEach((deleteUpdates) => Object.assign(updates, deleteUpdates));
 
-    if (kind === 'property') updates[`${basePath}/properties/${targetId}`] = null;
-    if (kind === 'roomType') updates[`${basePath}/roomTypes/${targetId}`] = null;
-    if (kind === 'room') updates[`${basePath}/rooms/${targetId}`] = null;
-
-    impactedRoomIds.forEach((roomId) => {
-        updates[`${basePath}/rooms/${roomId}`] = null;
-    });
-    impactedRoomTypeIds.forEach((roomTypeId) => {
-        updates[`${basePath}/roomTypes/${roomTypeId}`] = null;
-    });
-    impactedPolicyIds.forEach((policyId) => {
-        updates[`${basePath}/roomPolicies/${policyId}`] = null;
-    });
     impactedBookings.forEach((booking) => {
-        updates[`${basePath}/bookings/${booking.id}`] = null;
         Object.assign(updates, buildBookingIndexDiff(basePath, booking, null));
     });
+    updates[`system/tenants/${activeTenantId}/initialSeeded`] = true;
 
     await trackedUpdateRootWithBookingIndexFallback(updates, {
         operation: 'cascade-delete-management-item',
@@ -3562,28 +3603,29 @@ const _upsertTenantUser = (user: User, mode: 'create' | 'update') => {
     });
 };
 
-const _deleteUser = (id: string) => {
-    if (!db) return;
+const _deleteUser = async (id: string) => {
+    if (!db) throw new Error('Không thể xóa nhân viên: Firebase chưa sẵn sàng.');
     assertNodeMutationAllowed('users', 'delete', resolveUserById(id) || { id });
 
     const user = resolveUserById(id);
     const targetTenantId = user?.tenantId && user.tenantId !== SYSTEM_TENANT_ID ? user.tenantId : activeTenantId;
     const updates: Record<string, any> = {
-        [`system/users/${id}`]: null,
+        ...(await buildCollectionDeleteUpdates('system/users', [id])),
     };
 
     if (targetTenantId && targetTenantId !== SYSTEM_TENANT_ID) {
-        updates[`tenants/${targetTenantId}/users/${id}`] = null;
+        Object.assign(updates, await buildCollectionDeleteUpdates(`tenants/${targetTenantId}/users`, [id]));
     }
 
+    await trackedUpdateRoot(updates, { operation: 'delete-user' });
+
     if (activeTenantId && activeTenantId !== SYSTEM_TENANT_ID) {
-        _deleteItem('users', id);
+        CACHE.users = CACHE.users.filter((item) => item.id !== id);
+        _dataChangeCallback();
     } else {
         CACHE.systemUsers = CACHE.systemUsers.filter((item) => item.id !== id);
         _dataChangeCallback();
     }
-
-    trackedUpdateRoot(updates, { operation: 'delete-user' });
 
     _recordHistory({
         tenantId: targetTenantId || SYSTEM_TENANT_ID,
@@ -4379,12 +4421,12 @@ export const DataService = {
     updateUser: (user: User) => _upsertTenantUser(user, 'update'),
     deleteUser: _deleteUser,
 
-    deleteItems: (node: string, ids: string[]) => {
+    deleteItems: async (node: string, ids: string[]) => {
         const auditedNode = node as AuditedNode;
         const config = COLLECTION_CONFIGS[auditedNode];
 
         if (!config) {
-            _deleteItems(node, ids);
+            await _deleteItems(node, ids);
             return;
         }
 
@@ -4394,7 +4436,7 @@ export const DataService = {
         ) as any[];
         const removedItems = previousList.filter((item) => ids.includes(item.id));
 
-        _deleteItems(node, ids);
+        await _deleteItems(node, ids);
 
         removedItems.forEach((item) => {
             _recordHistory({
