@@ -188,6 +188,17 @@ interface ManagementCascadeDeleteImpact {
     roomPolicies: number;
 }
 
+interface ManagementCascadeDeletePlan {
+    kind: ManagementCascadeDeleteKind;
+    targetId: string;
+    target: Property | RoomType | Room;
+    impactedRooms: Room[];
+    impactedRoomTypes: RoomType[];
+    impactedBookings: Booking[];
+    impactedPolicies: RoomPolicyRule[];
+    impact: ManagementCascadeDeleteImpact;
+}
+
 const isSystemMutation = (source?: AuditSource) =>
     source === 'SYSTEM' ||
     currentAuditActor?.role === 'SYSTEM' ||
@@ -3336,27 +3347,77 @@ const _deleteBookingsAtomic = async (ids: string[], staffId: string, options: Bo
 
 const getRoomTypePropertyId = (roomType: RoomType) => (roomType as RoomType & { propertyId?: string }).propertyId;
 
-const getManagementCascadeDeleteImpact = (
+const loadFullManagementCascadeDataset = async () => {
+    if (!activeTenantId || !db) {
+        throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        throw new Error('Không xác định được tenant hiện tại.');
+    }
+
+    const [propertySnap, roomTypeSnap, roomSnap, bookingSnap, roomPolicySnap] = await Promise.all([
+        trackedGet(`${basePath}/properties`),
+        trackedGet(`${basePath}/roomTypes`),
+        trackedGet(`${basePath}/rooms`),
+        trackedGet(`${basePath}/bookings`),
+        trackedGet(`${basePath}/roomPolicies`),
+    ]);
+
+    return {
+        basePath,
+        properties: snapshotToArray<Property>(propertySnap).map(
+            (item) => normalizeForNode('properties', item, activeTenantId) as Property
+        ),
+        roomTypes: snapshotToArray<RoomType>(roomTypeSnap).map(
+            (item) => normalizeForNode('roomTypes', item, activeTenantId) as RoomType
+        ),
+        rooms: snapshotToArray<Room>(roomSnap).map(
+            (item) => normalizeForNode('rooms', item, activeTenantId) as Room
+        ),
+        bookings: snapshotToArray<Booking>(bookingSnap).map(
+            (item) => normalizeForNode('bookings', item, activeTenantId) as Booking
+        ),
+        roomPolicies: snapshotToArray<RoomPolicyRule>(roomPolicySnap).map(
+            (item) => normalizeForNode('roomPolicies', item, activeTenantId) as RoomPolicyRule
+        ),
+    };
+};
+
+const buildManagementCascadeDeletePlan = async (
     kind: ManagementCascadeDeleteKind,
     targetId: string
-): ManagementCascadeDeleteImpact => {
+): Promise<ManagementCascadeDeletePlan> => {
+    const dataset = await loadFullManagementCascadeDataset();
+    const target =
+        kind === 'property'
+            ? dataset.properties.find((property) => property.id === targetId)
+            : kind === 'roomType'
+              ? dataset.roomTypes.find((roomType) => roomType.id === targetId)
+              : dataset.rooms.find((room) => room.id === targetId);
+
+    if (!target) {
+        throw new Error('Dữ liệu cần xóa không còn tồn tại. Vui lòng tải lại trang.');
+    }
+
     const impactedRoomIds = new Set<string>();
     const impactedRoomTypeIds = new Set<string>();
 
     if (kind === 'property') {
-        CACHE.rooms
+        dataset.rooms
             .filter((room) => room.propertyId === targetId)
             .forEach((room) => {
                 impactedRoomIds.add(room.id);
             });
-        CACHE.roomTypes
+        dataset.roomTypes
             .filter((roomType) => getRoomTypePropertyId(roomType) === targetId)
             .forEach((roomType) => impactedRoomTypeIds.add(roomType.id));
     }
 
     if (kind === 'roomType') {
         impactedRoomTypeIds.add(targetId);
-        CACHE.rooms
+        dataset.rooms
             .filter((room) => room.typeId === targetId)
             .forEach((room) => impactedRoomIds.add(room.id));
     }
@@ -3365,12 +3426,12 @@ const getManagementCascadeDeleteImpact = (
         impactedRoomIds.add(targetId);
     }
 
-    const impactedBookings = CACHE.bookings.filter((booking) => {
+    const impactedBookings = dataset.bookings.filter((booking) => {
         if (kind === 'property' && booking.propertyId === targetId) return true;
         return impactedRoomIds.has(booking.roomId);
     });
 
-    const impactedPolicies = CACHE.roomPolicies.filter((policy) => {
+    const impactedPolicies = dataset.roomPolicies.filter((policy) => {
         const policyPropertyIds = policy.propertyIds || [];
         const policyRoomTypeIds = policy.roomTypeIds || [];
         const policyRoomIds = policy.roomIds || [];
@@ -3381,23 +3442,39 @@ const getManagementCascadeDeleteImpact = (
         return false;
     });
 
-    return {
+    const impactedRooms = dataset.rooms.filter((room) => impactedRoomIds.has(room.id));
+    const impactedRoomTypes = dataset.roomTypes.filter((roomType) => impactedRoomTypeIds.has(roomType.id));
+    const impact: ManagementCascadeDeleteImpact = {
         kind,
         targetId,
-        rooms: kind === 'room' ? (CACHE.rooms.some((room) => room.id === targetId) ? 1 : 0) : impactedRoomIds.size,
-        roomTypes:
-            kind === 'roomType'
-                ? (CACHE.roomTypes.some((roomType) => roomType.id === targetId) ? 1 : 0)
-                : impactedRoomTypeIds.size,
+        rooms: impactedRooms.length,
+        roomTypes: impactedRoomTypes.length,
         bookings: impactedBookings.length,
         roomPolicies: impactedPolicies.length,
     };
+
+    return {
+        kind,
+        targetId,
+        target,
+        impactedRooms,
+        impactedRoomTypes,
+        impactedBookings,
+        impactedPolicies,
+        impact,
+    };
 };
+
+const getManagementCascadeDeleteImpact = async (
+    kind: ManagementCascadeDeleteKind,
+    targetId: string
+) => (await buildManagementCascadeDeletePlan(kind, targetId)).impact;
 
 const _cascadeDeleteManagementItem = async (
     kind: ManagementCascadeDeleteKind,
     targetId: string,
-    staffId?: string
+    staffId?: string,
+    preparedPlan?: ManagementCascadeDeletePlan
 ) => {
     if (!activeTenantId || !db || !targetId) {
         throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
@@ -3410,70 +3487,33 @@ const _cascadeDeleteManagementItem = async (
         throw new Error('Không xác định được tenant hiện tại.');
     }
 
-    const target =
-        kind === 'property'
-            ? CACHE.properties.find((property) => property.id === targetId)
-            : kind === 'roomType'
-              ? CACHE.roomTypes.find((roomType) => roomType.id === targetId)
-              : CACHE.rooms.find((room) => room.id === targetId);
-
-    if (!target) {
-        throw new Error('Dữ liệu cần xóa không còn tồn tại. Vui lòng tải lại trang.');
-    }
-
-    const impactedRoomIds = new Set<string>();
-    const impactedRoomTypeIds = new Set<string>();
+    const plan =
+        preparedPlan && preparedPlan.kind === kind && preparedPlan.targetId === targetId
+            ? preparedPlan
+            : await buildManagementCascadeDeletePlan(kind, targetId);
+    const { target, impactedRooms, impactedRoomTypes, impactedBookings, impactedPolicies, impact } = plan;
+    const impactedRoomIds = new Set(impactedRooms.map((room) => room.id));
+    const impactedRoomTypeIds = new Set(impactedRoomTypes.map((roomType) => roomType.id));
 
     if (kind === 'property') {
         assertNodeMutationAllowed('properties', 'delete', target);
-        CACHE.rooms
-            .filter((room) => room.propertyId === targetId)
-            .forEach((room) => {
-                assertNodeMutationAllowed('rooms', 'delete', room);
-                impactedRoomIds.add(room.id);
-            });
-        CACHE.roomTypes
-            .filter((roomType) => getRoomTypePropertyId(roomType) === targetId)
-            .forEach((roomType) => {
-                assertNodeMutationAllowed('roomTypes', 'delete', roomType);
-                impactedRoomTypeIds.add(roomType.id);
-            });
+        impactedRooms.forEach((room) => assertNodeMutationAllowed('rooms', 'delete', room));
+        impactedRoomTypes.forEach((roomType) => assertNodeMutationAllowed('roomTypes', 'delete', roomType));
     }
 
     if (kind === 'roomType') {
         assertNodeMutationAllowed('roomTypes', 'delete', target);
-        impactedRoomTypeIds.add(targetId);
-        CACHE.rooms
-            .filter((room) => room.typeId === targetId)
-            .forEach((room) => {
-                assertNodeMutationAllowed('rooms', 'delete', room);
-                impactedRoomIds.add(room.id);
-            });
+        impactedRooms.forEach((room) => assertNodeMutationAllowed('rooms', 'delete', room));
     }
 
     if (kind === 'room') {
         assertNodeMutationAllowed('rooms', 'delete', target);
-        impactedRoomIds.add(targetId);
     }
 
-    const impactedBookings = CACHE.bookings.filter((booking) => {
-        if (kind === 'property' && booking.propertyId === targetId) return true;
-        return impactedRoomIds.has(booking.roomId);
-    });
     impactedBookings.forEach((booking) => assertBookingMutationAllowed('delete', booking));
 
-    const impactedPolicyIds = new Set<string>();
-    CACHE.roomPolicies.forEach((policy) => {
-        const policyPropertyIds = policy.propertyIds || [];
-        const policyRoomTypeIds = policy.roomTypeIds || [];
-        const policyRoomIds = policy.roomIds || [];
-        if (kind === 'property' && policyPropertyIds.includes(targetId)) impactedPolicyIds.add(policy.id);
-        if (policyRoomIds.some((roomId) => impactedRoomIds.has(roomId))) impactedPolicyIds.add(policy.id);
-        if (policyRoomTypeIds.some((roomTypeId) => impactedRoomTypeIds.has(roomTypeId))) impactedPolicyIds.add(policy.id);
-    });
-    CACHE.roomPolicies
-        .filter((policy) => impactedPolicyIds.has(policy.id))
-        .forEach((policy) => assertNodeMutationAllowed('roomPolicies', 'delete', policy));
+    const impactedPolicyIds = new Set(impactedPolicies.map((policy) => policy.id));
+    impactedPolicies.forEach((policy) => assertNodeMutationAllowed('roomPolicies', 'delete', policy));
 
     const updates: Record<string, unknown> = {};
     const deleteUpdateGroups = await Promise.all([
@@ -3519,14 +3559,6 @@ const _cascadeDeleteManagementItem = async (
     CACHE.bookings = CACHE.bookings.filter((booking) => !impactedBookingIds.has(booking.id));
     _dataChangeCallback();
 
-    const impact: ManagementCascadeDeleteImpact = {
-        kind,
-        targetId,
-        rooms: impactedRoomIds.size,
-        roomTypes: impactedRoomTypeIds.size,
-        bookings: impactedBookings.length,
-        roomPolicies: impactedPolicyIds.size,
-    };
     const config =
         kind === 'property'
             ? COLLECTION_CONFIGS.properties
@@ -4454,11 +4486,16 @@ export const DataService = {
         kind: ManagementCascadeDeleteKind,
         targetId: string
     ) => getManagementCascadeDeleteImpact(kind, targetId),
+    prepareManagementCascadeDelete: (
+        kind: ManagementCascadeDeleteKind,
+        targetId: string
+    ) => buildManagementCascadeDeletePlan(kind, targetId),
     cascadeDeleteManagementItem: (
         kind: ManagementCascadeDeleteKind,
         targetId: string,
-        staffId?: string
-    ) => _cascadeDeleteManagementItem(kind, targetId, staffId),
+        staffId?: string,
+        preparedPlan?: ManagementCascadeDeletePlan
+    ) => _cascadeDeleteManagementItem(kind, targetId, staffId, preparedPlan),
 
     deleteBookingsByBatchId: async (batchId: string, staffId: string) => {
         const toDelete = CACHE.bookings.filter((booking) => booking.importBatchId === batchId);

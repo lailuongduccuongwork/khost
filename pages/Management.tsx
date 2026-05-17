@@ -24,6 +24,7 @@ type CascadeDeleteKind = 'property' | 'roomType' | 'room';
 type NewRoomTypeDraft = { propertyId: string; name: string } | null;
 type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
 type EditRoomModalState = { roomId: string; number: string; typeId: string } | null;
+type PreparedCascadeDelete = Awaited<ReturnType<typeof DataService.prepareManagementCascadeDelete>>;
 
 interface DangerousDeleteModalState {
     isOpen: boolean;
@@ -31,6 +32,7 @@ interface DangerousDeleteModalState {
     id: string;
     name: string;
     title: string;
+    plan: PreparedCascadeDelete;
     impact: {
         rooms: number;
         roomTypes: number;
@@ -84,6 +86,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [preparingDeleteKey, setPreparingDeleteKey] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState('');
   const [draftTags, setDraftTags] = useState<Tag[]>(tags);
   const [draftCategories, setDraftCategories] = useState<TransactionCategory[]>(DataService.getTransactionCategories());
@@ -315,9 +318,12 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   };
 
   // --- HÀM HỖ TRỢ XÓA ---
-  const confirmDelete = (kind: CascadeDeleteKind, id: string, name: string) => {
+  const confirmDelete = async (kind: CascadeDeleteKind, id: string, name: string) => {
+      const deleteKey = `${kind}:${id}`;
+      if (preparingDeleteKey) return;
+      setPreparingDeleteKey(deleteKey);
       try {
-          const impact = DataService.getManagementCascadeDeleteImpact(kind, id);
+          const plan = await DataService.prepareManagementCascadeDelete(kind, id);
           setDeleteConfirmText('');
           setDeleteError('');
           setDeleteModal({
@@ -326,11 +332,14 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
               id,
               name,
               title: `Xoá ${name}?`,
-              impact,
+              plan,
+              impact: plan.impact,
           });
       } catch (error) {
           const message = error instanceof Error ? error.message : 'Không thể kiểm tra dữ liệu liên quan.';
           alert(message);
+      } finally {
+          setPreparingDeleteKey(null);
       }
   };
 
@@ -346,8 +355,14 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       setIsDeleting(true);
       setDeleteError('');
       try {
-          await DataService.cascadeDeleteManagementItem(deleteModal.kind, deleteModal.id, currentUser.id);
-          setManagementRooms(DataService.getRooms());
+          await DataService.cascadeDeleteManagementItem(
+              deleteModal.kind,
+              deleteModal.id,
+              currentUser.id,
+              deleteModal.plan
+          );
+          const refreshedRooms = await DataService.loadRoomsForPropertiesView(managementPropertyIds);
+          setManagementRooms(refreshedRooms);
           setManagementRoomTypes(DataService.getRoomTypes());
           setDeleteModal(null);
           setDeleteConfirmText('');
