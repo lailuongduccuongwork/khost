@@ -745,7 +745,7 @@ const App: React.FC = () => {
       
       <div className={`${isDesktopSidebarHidden ? 'md:ml-0' : 'md:ml-64'} min-h-screen flex flex-col transition-all duration-300`}>
         {currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView && (
-            <div className="katka-glass katka-liquid-shell text-gray-800 px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 border-b border-white/50">
+            <div className="khost-safe-top-bar katka-glass katka-liquid-shell text-gray-800 px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 border-b border-white/50">
                 <span className="flex items-center gap-2">
                     <Users size={16} className="text-purple-200" />
                     Bạn đang xem dữ liệu của: <strong>{tenantList.find(t=>t.id===activeTenantId)?.name || activeTenantId}</strong>
@@ -775,7 +775,7 @@ const App: React.FC = () => {
         )}
         
         {isSuperAdminView && (
-             <header className="h-16 katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6">
+             <header className="h-16 khost-safe-top-header katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6">
                  <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 katka-secondary-btn rounded-lg">
                     <Users size={24} />
                  </button>

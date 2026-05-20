@@ -105,6 +105,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   // --- ROOM POLICY STATE (KHÓA PHÒNG / CHỈ NHẬN GIỜ) ---
   const todayISO = new Date().toISOString().slice(0, 10);
   const [policyMode, setPolicyMode] = useState<'LOCKED' | 'HOURLY_ONLY'>('LOCKED');
+  const [policyMaxStayHours, setPolicyMaxStayHours] = useState(12);
   const [policyReason, setPolicyReason] = useState('');
   const [policyRecurrence, setPolicyRecurrence] = useState<'NONE' | 'WEEKLY'>('NONE');
   const [policyStartDate, setPolicyStartDate] = useState(todayISO);
@@ -307,6 +308,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
 
   const resetPolicyForm = () => {
       setPolicyMode('LOCKED');
+      setPolicyMaxStayHours(12);
       setPolicyReason('');
       setPolicyRecurrence('NONE');
       setPolicyStartDate(todayISO);
@@ -535,6 +537,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       if (policyRoomIds.length === 0 && policyPropertyIds.length === 0 && policyRoomTypeIds.length === 0) {
           return alert('Vui lòng chọn phòng hoặc chọn theo chi nhánh/hạng phòng để áp dụng hàng loạt.');
       }
+      const normalizedMaxStayHours = Number(policyMaxStayHours);
+      if (policyMode === 'HOURLY_ONLY' && (!Number.isInteger(normalizedMaxStayHours) || normalizedMaxStayHours < 1 || normalizedMaxStayHours > 24)) {
+          return alert('Thời gian lưu trú tối đa phải là số nguyên từ 1 đến 24 giờ.');
+      }
 
       const newPolicy: RoomPolicyRule = {
           id: `rp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -551,6 +557,9 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           createdAt: new Date().toISOString(),
           createdBy: currentUser.id,
       };
+      if (policyMode === 'HOURLY_ONLY') {
+          newPolicy.maxStayHours = normalizedMaxStayHours;
+      }
 
       const saved = await runSaveAction('chính sách phòng', () => DataService.saveRoomPolicies([...roomPolicies, newPolicy]));
       if (!saved) return;
@@ -1056,7 +1065,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                       className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
                                   >
                                       <option value="LOCKED">Khóa phòng (chặn nhận khách)</option>
-                                      <option value="HOURLY_ONLY">Chỉ nhận khách giờ (tối đa 12 tiếng)</option>
+                                      <option value="HOURLY_ONLY">Chỉ nhận khách giờ</option>
                                   </select>
                               </label>
 
@@ -1095,6 +1104,29 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                   </div>
                               </label>
                           </div>
+
+                          {policyMode === 'HOURLY_ONLY' && (
+                              <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-4">
+                                  <label className="text-xs font-bold text-blue-800 uppercase tracking-wide">
+                                      Thời gian lưu trú tối đa (giờ)
+                                      <input
+                                          type="number"
+                                          min={1}
+                                          max={24}
+                                          step={1}
+                                          value={policyMaxStayHours}
+                                          onChange={(e) => {
+                                              const nextValue = Number(e.target.value);
+                                              setPolicyMaxStayHours(Number.isFinite(nextValue) ? nextValue : 12);
+                                          }}
+                                          className="mt-1.5 w-full max-w-[220px] border border-blue-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500 bg-white"
+                                      />
+                                  </label>
+                                  <div className="mt-2 text-xs font-medium text-blue-700">
+                                      Mặc định 12 giờ. Khi booking giao với ngày áp dụng chính sách này, tổng thời gian lưu trú không được vượt quá số giờ trên.
+                                  </div>
+                              </div>
+                          )}
 
                           {policyRecurrence === 'WEEKLY' && (
                               <div>
@@ -1328,7 +1360,11 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
                                               <td className="px-4 py-3 text-xs font-semibold text-gray-700">
                                                   <div>{policy.startDate} → {policy.endDate || 'Không giới hạn'}</div>
                                                   {policy.recurrence === 'WEEKLY' && <div className="text-blue-600 mt-0.5">Lặp: {weekdayLabel || '--'}</div>}
-                                                  {policy.mode === 'HOURLY_ONLY' && <div className="text-gray-500 mt-0.5">Tối đa 12 tiếng/lượt lưu trú</div>}
+                                                  {policy.mode === 'HOURLY_ONLY' && (
+                                                      <div className="text-gray-500 mt-0.5">
+                                                          Tối đa {Number.isFinite(Number(policy.maxStayHours)) ? Math.min(24, Math.max(1, Math.floor(Number(policy.maxStayHours)))) : 12} tiếng/lượt lưu trú
+                                                      </div>
+                                                  )}
                                               </td>
                                               <td className="px-4 py-3 text-xs font-semibold text-gray-700">{policyTargetSummary(policy)}</td>
                                               <td className="px-4 py-3 text-xs text-gray-600 max-w-[260px] truncate" title={policy.reason || '--'}>

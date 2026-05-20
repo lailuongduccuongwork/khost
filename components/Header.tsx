@@ -65,7 +65,7 @@ const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="h-16 katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
+    <header className="h-16 khost-safe-top-header katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
       <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
         <button onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
           <Menu size={24} />

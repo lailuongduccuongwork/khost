@@ -4,6 +4,8 @@
 
 :root {
   color-scheme: light;
+  --khost-safe-top: env(safe-area-inset-top, 0px);
+  --khost-safe-bottom: env(safe-area-inset-bottom, 0px);
   --katka-bg: #f2f2f7;
   --katka-card: #ffffff;
   --katka-card-muted: #f8f8fc;
@@ -56,6 +58,20 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
+}
+
+.khost-safe-top-header {
+  height: calc(4rem + var(--khost-safe-top));
+  min-height: calc(4rem + var(--khost-safe-top));
+  padding-top: var(--khost-safe-top);
+}
+
+.khost-safe-top-bar {
+  padding-top: calc(0.5rem + var(--khost-safe-top));
+}
+
+.khost-safe-bottom-padding {
+  padding-bottom: var(--khost-safe-bottom);
 }
 
 .katka-app {

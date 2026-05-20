@@ -1626,6 +1626,30 @@ const _fetchBookingByIdRemote = async (bookingId: string) => {
     return normalizeForNode('bookings', { id: bookingId, ...snap.val() }, activeTenantId) as Booking;
 };
 
+const _fetchRoomByIdRemote = async (roomId: string) => {
+    if (!_ensureFirebase() || !roomId) return null;
+
+    const basePath = getBaseRef();
+    if (!basePath) return null;
+
+    const directSnap = await trackedGet(`${basePath}/rooms/${roomId}`);
+    if (directSnap.exists()) {
+        return normalizeForNode('rooms', { id: roomId, ...directSnap.val() }, activeTenantId) as Room;
+    }
+
+    const roomsSnap = await trackedGet(`${basePath}/rooms`);
+    let matchedRoom: Room | null = null;
+    roomsSnap.forEach((child: any) => {
+        if (matchedRoom) return;
+        const value = child.val();
+        if (child.key === roomId || value?.id === roomId) {
+            matchedRoom = normalizeForNode('rooms', { id: value?.id || child.key, ...value }, activeTenantId) as Room;
+        }
+    });
+
+    return matchedRoom;
+};
+
 const _fetchBookingById = async (bookingId: string) => {
     if (!_ensureFirebase() || !bookingId) return null;
 
@@ -1842,7 +1866,7 @@ const _validateRoomAvailabilityRemote = async (
     const endMs = new Date(end).getTime();
 
     await _refreshRoomPoliciesRemote();
-    const policyCheck = _validateRoomPolicy(roomId, start, end);
+    const policyCheck = await _validateRoomPolicyRemote(roomId, start, end);
     if (!policyCheck.valid) {
         return {
             valid: false,
@@ -2868,7 +2892,7 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
 
         const startMs = new Date(nextBooking.checkInDate).getTime();
         const endMs = new Date(nextBooking.checkOutDate).getTime();
-        const policyCheck = _validateRoomPolicy(nextBooking.roomId, nextBooking.checkInDate, nextBooking.checkOutDate);
+        const policyCheck = await _validateRoomPolicyRemote(nextBooking.roomId, nextBooking.checkInDate, nextBooking.checkOutDate);
         if (!policyCheck.valid) {
             throw new Error(policyCheck.reason || 'Vi phạm chính sách phòng');
         }
@@ -3731,6 +3755,16 @@ const addDays = (date: Date, days: number) => {
     return clone;
 };
 
+const DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS = 12;
+
+const normalizeHourlyOnlyMaxStayHours = (value?: number) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS;
+    const roundedValue = Math.floor(numericValue);
+    if (roundedValue < 1 || roundedValue > 24) return DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS;
+    return roundedValue;
+};
+
 const isPolicyApplicableOnDate = (policy: RoomPolicyRule, date: Date) => {
     if (!policy.isActive) return false;
     const dayMs = toDayStart(date).getTime();
@@ -3777,6 +3811,24 @@ const getPolicyWindowsInRange = (policy: RoomPolicyRule, rangeStartMs: number, r
     return windows;
 };
 
+const bookingIntersectsPolicyDays = (policy: RoomPolicyRule, rangeStartMs: number, rangeEndMs: number) => {
+    if (!policy.isActive || !Number.isFinite(rangeStartMs) || !Number.isFinite(rangeEndMs) || rangeEndMs <= rangeStartMs) {
+        return false;
+    }
+
+    let cursor = toDayStart(new Date(rangeStartMs));
+    const cursorEnd = toDayStart(new Date(rangeEndMs - 1)).getTime();
+    let guard = 0;
+
+    while (cursor.getTime() <= cursorEnd && guard < 2000) {
+        if (isPolicyApplicableOnDate(policy, cursor)) return true;
+        cursor = addDays(cursor, 1);
+        guard += 1;
+    }
+
+    return false;
+};
+
 const roomMatchesPolicy = (policy: RoomPolicyRule, room: Room) => {
     const propertyIds = policy.propertyIds || [];
     const roomTypeIds = policy.roomTypeIds || [];
@@ -3788,10 +3840,13 @@ const roomMatchesPolicy = (policy: RoomPolicyRule, room: Room) => {
     return matchProperty && matchType && matchRoom;
 };
 
-const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
-    const room = CACHE.rooms.find((item) => item.id === roomId);
-    if (!room) return { valid: true };
-
+const _validateRoomPolicyForRoom = (room: Room | null, roomId: string, start: string, end: string) => {
+    if (!room) {
+        return {
+            valid: false,
+            reason: `Không tìm thấy phòng ${roomId} để kiểm tra chính sách phòng. Vui lòng tải lại dữ liệu.`,
+        };
+    }
     const startMs = new Date(start).getTime();
     const endMs = new Date(end).getTime();
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return { valid: true };
@@ -3799,10 +3854,10 @@ const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
     const matchedPolicies = CACHE.roomPolicies.filter((policy) => roomMatchesPolicy(policy, room));
 
     for (const policy of matchedPolicies) {
-        const windows = getPolicyWindowsInRange(policy, startMs, endMs);
-        if (windows.length === 0) continue;
-
         if (policy.mode === 'LOCKED') {
+            const windows = getPolicyWindowsInRange(policy, startMs, endMs);
+            if (windows.length === 0) continue;
+
             return {
                 valid: false,
                 reason: `Phòng ${room.number} đang bị khóa. ${policy.reason ? `Lý do: ${policy.reason}` : ''}`.trim(),
@@ -3811,18 +3866,37 @@ const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
         }
 
         if (policy.mode === 'HOURLY_ONLY') {
+            if (!bookingIntersectsPolicyDays(policy, startMs, endMs)) continue;
+
+            const maxStayHours = normalizeHourlyOnlyMaxStayHours(policy.maxStayHours);
             const durationHours = (endMs - startMs) / (1000 * 60 * 60);
-            if (durationHours <= 12) continue;
+            if (durationHours <= maxStayHours) continue;
 
             return {
                 valid: false,
-                reason: `Phòng ${room.number} chỉ nhận khách giờ trong khung này, tổng thời gian lưu trú không được vượt quá 12 tiếng.`,
+                reason: `Phòng ${room.number} chỉ nhận khách giờ, tổng thời gian lưu trú không được vượt quá ${maxStayHours} tiếng.`,
                 policyMode: policy.mode,
             };
         }
     }
 
     return { valid: true };
+};
+
+const _validateRoomPolicy = (roomId: string, start: string, end: string) => {
+    const room = CACHE.rooms.find((item) => item.id === roomId) || null;
+    return _validateRoomPolicyForRoom(room, roomId, start, end);
+};
+
+const _validateRoomPolicyRemote = async (roomId: string, start: string, end: string) => {
+    let room = CACHE.rooms.find((item) => item.id === roomId) || null;
+    if (!room) {
+        room = await _fetchRoomByIdRemote(roomId);
+        if (room) {
+            CACHE.rooms = [...CACHE.rooms.filter((item) => item.id !== room!.id), room];
+        }
+    }
+    return _validateRoomPolicyForRoom(room, roomId, start, end);
 };
 
 const isExpiredHoldBooking = (booking: Booking, nowMs: number = Date.now()) => {
@@ -4064,7 +4138,7 @@ const _saveBookingAtomic = async (
 
     if (scheduleChanged) {
         await _refreshRoomPoliciesRemote();
-        const policyCheck = _validateRoomPolicy(
+        const policyCheck = await _validateRoomPolicyRemote(
             normalizedBooking.roomId,
             normalizedBooking.checkInDate,
             normalizedBooking.checkOutDate

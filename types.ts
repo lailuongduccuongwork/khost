@@ -118,6 +118,7 @@ export interface RoomPolicyRule {
   weekdays?: number[]; // 0-6 (CN-T7), dùng cho WEEKLY
   checkInHour?: number; // mặc định 14
   checkOutHour?: number; // mặc định 12 (ngày hôm sau)
+  maxStayHours?: number; // dùng cho HOURLY_ONLY, mặc định 12
   propertyIds?: string[];
   roomTypeIds?: string[];
   roomIds?: string[];

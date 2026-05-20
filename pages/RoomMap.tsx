@@ -48,6 +48,16 @@ const parsePolicyDateToDayMs = (dateText?: string) => {
     return startOfDay(parsed).getTime();
 };
 
+const DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS = 12;
+
+const normalizeHourlyOnlyMaxStayHours = (value?: number) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS;
+    const roundedValue = Math.floor(numericValue);
+    if (roundedValue < 1 || roundedValue > 24) return DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS;
+    return roundedValue;
+};
+
 const isPolicyApplicableOnDate = (policy: RoomPolicyRule, date: Date) => {
     if (!policy.isActive) return false;
 
@@ -92,9 +102,11 @@ const getPolicyWindowsForRange = (policy: RoomPolicyRule, rangeStartMs: number, 
     while (cursor.getTime() <= cursorEnd && guard < 2000) {
         if (isPolicyApplicableOnDate(policy, cursor)) {
             const windowStart = new Date(cursor);
-            windowStart.setHours(checkInHour, 0, 0, 0);
             const windowEnd = addDays(new Date(cursor), 1);
-            windowEnd.setHours(checkOutHour, 0, 0, 0);
+            if (policy.mode === 'LOCKED') {
+                windowStart.setHours(checkInHour, 0, 0, 0);
+                windowEnd.setHours(checkOutHour, 0, 0, 0);
+            }
 
             const startMs = windowStart.getTime();
             const endMs = windowEnd.getTime();
@@ -114,6 +126,24 @@ const getPolicyWindowsForRange = (policy: RoomPolicyRule, rangeStartMs: number, 
     }
 
     return windows;
+};
+
+const bookingIntersectsPolicyDays = (policy: RoomPolicyRule, rangeStartMs: number, rangeEndMs: number) => {
+    if (!policy.isActive || !Number.isFinite(rangeStartMs) || !Number.isFinite(rangeEndMs) || rangeEndMs <= rangeStartMs) {
+        return false;
+    }
+
+    let cursor = startOfDay(new Date(rangeStartMs));
+    const cursorEnd = startOfDay(new Date(rangeEndMs - 1)).getTime();
+    let guard = 0;
+
+    while (cursor.getTime() <= cursorEnd && guard < 2000) {
+        if (isPolicyApplicableOnDate(policy, cursor)) return true;
+        cursor = addDays(cursor, 1);
+        guard += 1;
+    }
+
+    return false;
 };
 
 // Format helper
@@ -417,6 +447,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const [receiptData, setReceiptData] = useState<any | null>(null);
   const [customerSuggestionField, setCustomerSuggestionField] = useState<'name' | 'phone' | null>(null);
+  const [showGuestFallbackConfirm, setShowGuestFallbackConfirm] = useState(false);
+  const guestNameInputRef = useRef<HTMLInputElement>(null);
   const customerSuggestionBlurTimerRef = useRef<number | null>(null);
   const [bookingMeta, setBookingMeta] = useState<{
       id?: string; groupId?: string; guestName: string; guestPhone: string;
@@ -669,7 +701,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   useEffect(() => {
-      if (!showModal) setCustomerSuggestionField(null);
+      if (!showModal) {
+          setCustomerSuggestionField(null);
+          setShowGuestFallbackConfirm(false);
+      }
   }, [showModal]);
 
   useEffect(() => {
@@ -1378,19 +1413,27 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   const getHourlyOnlyViolation = (roomId: string, checkIn: Date, checkOut: Date) => {
-      const durationHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-      if (durationHours <= 12) return null;
-
-      const windows = roomPolicyWindowsByRoom.get(roomId) || [];
-      const overlapsHourlyWindow = windows.some((window) =>
-          window.mode === 'HOURLY_ONLY' &&
-          window.endMs > checkIn.getTime() &&
-          window.startMs < checkOut.getTime()
-      );
-      if (!overlapsHourlyWindow) return null;
-
       const room = rooms.find((item) => item.id === roomId);
-      return `Phòng ${room?.number || roomId} chỉ nhận khách giờ trong khung này, tổng thời gian lưu trú không được vượt quá 12 tiếng.`;
+      if (!room) return null;
+
+      const checkInMs = checkIn.getTime();
+      const checkOutMs = checkOut.getTime();
+      if (!Number.isFinite(checkInMs) || !Number.isFinite(checkOutMs) || checkOutMs <= checkInMs) return null;
+
+      const matchedHourlyPolicies = roomPolicies.filter((policy) =>
+          policy.mode === 'HOURLY_ONLY' &&
+          roomMatchesPolicy(policy, room) &&
+          bookingIntersectsPolicyDays(policy, checkInMs, checkOutMs)
+      );
+      if (matchedHourlyPolicies.length === 0) return null;
+
+      const maxStayHours = Math.min(
+          ...matchedHourlyPolicies.map(policy => normalizeHourlyOnlyMaxStayHours(policy.maxStayHours))
+      );
+      const durationHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
+      if (durationHours <= maxStayHours) return null;
+
+      return `Phòng ${room.number || roomId} chỉ nhận khách giờ, tổng thời gian lưu trú không được vượt quá ${maxStayHours} tiếng.`;
   };
 
   const handleNavigate = (direction: 'PREV' | 'NEXT') => {
@@ -1904,8 +1947,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       return log.actorId || log.staffId || 'không rõ';
   };
 
-  const handleSaveBooking = async () => {
+  const handleSaveBooking = async (options: { allowGuestFallback?: boolean } = {}) => {
      if (isSubmitting) return; 
+     const resolvedGuestName = bookingMeta.guestName.trim();
+     const resolvedGuestPhone = bookingMeta.guestPhone.trim();
+     if (!resolvedGuestName && !options.allowGuestFallback) {
+         setShowGuestFallbackConfirm(true);
+         return;
+     }
+     const finalGuestName = resolvedGuestName || 'Khách lẻ';
      const validRows = bookingRows.filter(r => r.roomId);
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
      const roomIds = validRows.map(r => r.roomId);
@@ -1923,6 +1973,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
          }
          if (row.tempTypeId && rowRoom.typeId !== row.tempTypeId) {
              return alert(`Lỗi chọn phòng (Dòng ${idx + 1}):\nPhòng ${rowRoom.number} không thuộc hạng phòng đã chọn. Vui lòng chọn lại phòng.`);
+         }
+         const hourlyOnlyViolation = getHourlyOnlyViolation(row.roomId, new Date(row.checkIn), new Date(row.checkOut));
+         if (hourlyOnlyViolation) {
+             return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${hourlyOnlyViolation}`);
          }
          const availability = await DataService.validateRoomAvailabilityRemote(
              rowRoom.propertyId,
@@ -1956,7 +2010,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
              const commonData = {
                  groupId: groupId || null, propertyId: selectedRoom?.propertyId || currentProperty.id, roomId: row.roomId,
-                 customerId: 'c_guest', guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '',
+                 customerId: 'c_guest', guestName: finalGuestName, guestPhone: resolvedGuestPhone,
                  checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice, 
                  paidAmount: thisPaid, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
                  extraFees: idx === 0 ? (bookingMeta.extraFees || []) : []
@@ -2006,7 +2060,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
          const receiptIssuer = (currentUser.fullName || currentUser.username || 'K-Host').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'K-Host';
 
          setReceiptData({
-             guestName: bookingMeta.guestName || 'Khách lẻ', guestPhone: bookingMeta.guestPhone || '', notes: bookingMeta.notes,
+             guestName: finalGuestName, guestPhone: resolvedGuestPhone, notes: bookingMeta.notes,
              tags: selectedTags, total: receiptTotal, paid: bookingMeta.paidAmount, rooms: receiptRooms, extraFees: receiptFees, roomPrice: bookingMeta.totalPrice,
              bookingCode: receiptBookingCodes[0] || '--',
              roomCount: receiptRooms.length,
@@ -2429,7 +2483,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                  : 'Chỉ nhận khách giờ';
                                              const tooltipText = isLockedPolicy
                                                  ? label
-                                                 : 'Chỉ nhận khách giờ. Không nhận đơn 14h - 12h hôm sau.';
+                                                 : 'Chỉ nhận khách giờ. Tổng thời gian lưu trú bị giới hạn theo chính sách.';
 
                                              return (
                                                  <div
@@ -3112,6 +3166,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
                               <input
+                                  ref={guestNameInputRef}
                                   type="text"
                                   disabled={isReadOnly}
                                   className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent placeholder:text-gray-300"
@@ -3450,7 +3505,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                               <button onClick={() => setShowModal(false)} className="flex-1 md:flex-none px-4 py-2.5 text-gray-700 bg-gray-100 border border-gray-300 shadow-sm hover:bg-gray-200 rounded-lg font-bold text-xs transition-colors">Đóng</button>
                               {!isReadOnly && (
                                 <button 
-                                    onClick={handleSaveBooking} 
+                                    onClick={() => handleSaveBooking()}
                                     disabled={isSubmitting}
                                     className={`flex-[2] md:flex-none px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold shadow-md shadow-blue-200 transition-all flex items-center justify-center gap-1.5 text-xs ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700 active:scale-95'}`}
                                 >
@@ -3460,6 +3515,48 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                               )}
                           </div>
                       </div>
+                  </div>
+              </div>
+          </div>,
+          document.body
+      )}
+
+      {showModal && showGuestFallbackConfirm && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+              <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl animate-fade-in">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
+                      <AlertTriangle size={24} />
+                  </div>
+                  <h3 className="text-center text-lg font-black text-gray-950">
+                      Bạn chưa nhập tên khách
+                  </h3>
+                  <p className="mt-2 text-center text-sm font-medium leading-relaxed text-gray-500">
+                      Tạo đơn với tên <span className="font-bold text-gray-900">"Khách lẻ"</span>?
+                  </p>
+                  <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                          type="button"
+                          onClick={() => {
+                              setShowGuestFallbackConfirm(false);
+                              window.setTimeout(() => {
+                                  guestNameInputRef.current?.focus();
+                                  setCustomerSuggestionField('name');
+                              }, 0);
+                          }}
+                          className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-gray-800 shadow-sm transition-colors hover:bg-gray-50"
+                      >
+                          Nhập tên khách
+                      </button>
+                      <button
+                          type="button"
+                          onClick={() => {
+                              setShowGuestFallbackConfirm(false);
+                              void handleSaveBooking({ allowGuestFallback: true });
+                          }}
+                          className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-blue-200 transition-colors hover:bg-blue-700"
+                      >
+                          Vẫn tạo khách lẻ
+                      </button>
                   </div>
               </div>
           </div>,
