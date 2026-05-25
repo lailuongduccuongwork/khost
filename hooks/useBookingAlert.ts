@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Booking, BookingStatus } from '../types';
+import {
+  Booking,
+  BookingStatus,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  NotificationSettings,
+  normalizeNotificationSettings,
+} from '../types';
 
 export interface AppNotification {
   id: string;
@@ -13,53 +19,90 @@ export interface AppNotification {
 
 const SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
-export const useBookingAlert = (bookings: Booking[], onNewAlert: (alert: AppNotification) => void) => {
+const getNotificationApi = () => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return null;
+  return window.Notification;
+};
+
+const shouldTriggerBefore = (diffMin: number, minutesBefore: number) =>
+  diffMin > minutesBefore - 1 && diffMin <= minutesBefore;
+
+export const useBookingAlert = (
+  bookings: Booking[],
+  onNewAlert: (alert: AppNotification) => void,
+  notificationSettings: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS
+) => {
   const processedRef = useRef<Set<string>>(new Set());
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const onNewAlertRef = useRef(onNewAlert);
+  const settingsRef = useRef<NotificationSettings>(normalizeNotificationSettings(notificationSettings));
 
   useEffect(() => {
       onNewAlertRef.current = onNewAlert;
   }, [onNewAlert]);
 
   useEffect(() => {
-    if ('Notification' in window && Notification.permission !== 'granted') {
-      Notification.requestPermission();
+      settingsRef.current = normalizeNotificationSettings(notificationSettings);
+  }, [notificationSettings]);
+
+  useEffect(() => {
+    const settings = settingsRef.current;
+    const notificationApi = getNotificationApi();
+    if (settings.enabled && settings.browserEnabled && notificationApi && notificationApi.permission !== 'granted') {
+      notificationApi.requestPermission();
     }
     audioRef.current = new Audio(SOUND_URL);
-  }, []);
+  }, [notificationSettings]);
 
   useEffect(() => {
     const checkBookings = () => {
+        const settings = settingsRef.current;
+        if (!settings.enabled) return;
+        if (!settings.bookingAlerts.checkInEnabled && !settings.bookingAlerts.checkOutEnabled) return;
+
         const now = new Date().getTime();
         bookings.forEach(b => {
-            if (b.status === BookingStatus.CONFIRMED) {
+            if (b.status === BookingStatus.CONFIRMED && settings.bookingAlerts.checkInEnabled) {
                 const checkInTime = new Date(b.checkInDate).getTime();
                 const diffMin = (checkInTime - now) / 60000;
-                if (diffMin > 4 && diffMin <= 5) triggerAlert(b, 'CHECK_IN', '5MIN');
-                if (Math.abs(diffMin) <= 1) triggerAlert(b, 'CHECK_IN', 'NOW');
+                if (shouldTriggerBefore(diffMin, settings.bookingAlerts.minutesBefore)) {
+                    triggerAlert(b, 'CHECK_IN', 'BEFORE', settings.bookingAlerts.minutesBefore);
+                }
+                if (settings.bookingAlerts.atTimeEnabled && Math.abs(diffMin) <= 1) {
+                    triggerAlert(b, 'CHECK_IN', 'NOW');
+                }
             }
-            if (b.status === BookingStatus.CHECKED_IN) {
+            if (b.status === BookingStatus.CHECKED_IN && settings.bookingAlerts.checkOutEnabled) {
                 const checkOutTime = new Date(b.checkOutDate).getTime();
                 const diffMin = (checkOutTime - now) / 60000;
-                if (diffMin > 4 && diffMin <= 5) triggerAlert(b, 'CHECK_OUT', '5MIN');
-                if (Math.abs(diffMin) <= 1) triggerAlert(b, 'CHECK_OUT', 'NOW');
+                if (shouldTriggerBefore(diffMin, settings.bookingAlerts.minutesBefore)) {
+                    triggerAlert(b, 'CHECK_OUT', 'BEFORE', settings.bookingAlerts.minutesBefore);
+                }
+                if (settings.bookingAlerts.atTimeEnabled && Math.abs(diffMin) <= 1) {
+                    triggerAlert(b, 'CHECK_OUT', 'NOW');
+                }
             }
         });
     };
 
-    const triggerAlert = (booking: Booking, type: 'CHECK_IN' | 'CHECK_OUT', trigger: '5MIN' | 'NOW') => {
-        const key = `${booking.id}_${type}_${trigger}`;
+    const triggerAlert = (booking: Booking, type: 'CHECK_IN' | 'CHECK_OUT', trigger: 'BEFORE' | 'NOW', minutesBefore?: number) => {
+        const settings = settingsRef.current;
+        const beforeLabel = trigger === 'BEFORE' ? minutesBefore || settings.bookingAlerts.minutesBefore : 'NOW';
+        const key = `${booking.id}_${type}_${trigger}_${beforeLabel}`;
         if (processedRef.current.has(key)) return;
         processedRef.current.add(key);
 
         let title = ''; let message = '';
         if (type === 'CHECK_IN') {
             title = 'Sắp đến giờ Check-in';
-            message = trigger === '5MIN' ? `Đơn ${booking.id} sẽ check-in trong 5 phút nữa.` : `Đã đến giờ check-in cho đơn ${booking.id}.`;
+            message = trigger === 'BEFORE'
+                ? `Đơn ${booking.id} sẽ check-in trong ${beforeLabel} phút nữa.`
+                : `Đã đến giờ check-in cho đơn ${booking.id}.`;
         } else {
             title = 'Sắp đến giờ Check-out';
-            message = trigger === '5MIN' ? `Đơn ${booking.id} sẽ check-out trong 5 phút nữa.` : `Đã đến giờ check-out cho đơn ${booking.id}.`;
+            message = trigger === 'BEFORE'
+                ? `Đơn ${booking.id} sẽ check-out trong ${beforeLabel} phút nữa.`
+                : `Đã đến giờ check-out cho đơn ${booking.id}.`;
         }
 
         const newAlert: AppNotification = {
@@ -70,16 +113,19 @@ export const useBookingAlert = (bookings: Booking[], onNewAlert: (alert: AppNoti
             time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
         };
 
-        if (audioRef.current) {
+        if (settings.soundEnabled && audioRef.current) {
             audioRef.current.currentTime = 0;
             audioRef.current.play().catch(e => console.log('Audio play blocked:', e));
         }
 
-        if (Notification.permission === 'granted') {
-            new Notification(title, { body: message, icon: '/favicon.ico' });
+        const notificationApi = getNotificationApi();
+        if (settings.browserEnabled && notificationApi?.permission === 'granted') {
+            new notificationApi(title, { body: message, icon: '/favicon.ico' });
         }
 
-        onNewAlertRef.current(newAlert);
+        if (settings.inAppEnabled) {
+            onNewAlertRef.current(newAlert);
+        }
     };
 
     checkBookings();

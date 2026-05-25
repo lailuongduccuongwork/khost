@@ -73,6 +73,109 @@ export interface ExtraFee {
 }
 // -------------------------------------
 
+export interface NotificationSettings {
+  enabled: boolean;
+  inAppEnabled: boolean;
+  soundEnabled: boolean;
+  browserEnabled: boolean;
+  bookingAlerts: {
+    checkInEnabled: boolean;
+    checkOutEnabled: boolean;
+    minutesBefore: number;
+    atTimeEnabled: boolean;
+  };
+  debtAlerts: {
+    enabled: boolean;
+    minutesBeforeCheckout: number;
+    atCheckoutEnabled: boolean;
+    dailyReminderEnabled: boolean;
+    dailyHours: number[];
+  };
+}
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  inAppEnabled: true,
+  soundEnabled: true,
+  browserEnabled: true,
+  bookingAlerts: {
+    checkInEnabled: true,
+    checkOutEnabled: true,
+    minutesBefore: 5,
+    atTimeEnabled: true,
+  },
+  debtAlerts: {
+    enabled: true,
+    minutesBeforeCheckout: 60,
+    atCheckoutEnabled: true,
+    dailyReminderEnabled: true,
+    dailyHours: [15, 21],
+  },
+};
+
+const normalizeNotificationBoolean = (value: unknown, fallback: boolean) =>
+  typeof value === 'boolean' ? value : fallback;
+
+const normalizeNotificationMinutes = (value: unknown, fallback: number) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 1) return fallback;
+  return Math.min(1440, Math.round(numeric));
+};
+
+export const normalizeNotificationSettings = (value?: any): NotificationSettings => {
+  const source = value && typeof value === 'object' ? value : {};
+  const bookingAlerts = source.bookingAlerts && typeof source.bookingAlerts === 'object' ? source.bookingAlerts : {};
+  const debtAlerts = source.debtAlerts && typeof source.debtAlerts === 'object' ? source.debtAlerts : {};
+  const dailyHours = Array.isArray(debtAlerts.dailyHours)
+    ? Array.from(new Set(
+        debtAlerts.dailyHours
+          .map((hour: unknown) => Number(hour))
+          .filter((hour: number) => Number.isInteger(hour) && hour >= 0 && hour <= 23)
+      )).sort((a, b) => a - b)
+    : DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.dailyHours;
+
+  return {
+    enabled: normalizeNotificationBoolean(source.enabled, DEFAULT_NOTIFICATION_SETTINGS.enabled),
+    inAppEnabled: normalizeNotificationBoolean(source.inAppEnabled, DEFAULT_NOTIFICATION_SETTINGS.inAppEnabled),
+    soundEnabled: normalizeNotificationBoolean(source.soundEnabled, DEFAULT_NOTIFICATION_SETTINGS.soundEnabled),
+    browserEnabled: normalizeNotificationBoolean(source.browserEnabled, DEFAULT_NOTIFICATION_SETTINGS.browserEnabled),
+    bookingAlerts: {
+      checkInEnabled: normalizeNotificationBoolean(
+        bookingAlerts.checkInEnabled,
+        DEFAULT_NOTIFICATION_SETTINGS.bookingAlerts.checkInEnabled
+      ),
+      checkOutEnabled: normalizeNotificationBoolean(
+        bookingAlerts.checkOutEnabled,
+        DEFAULT_NOTIFICATION_SETTINGS.bookingAlerts.checkOutEnabled
+      ),
+      minutesBefore: normalizeNotificationMinutes(
+        bookingAlerts.minutesBefore,
+        DEFAULT_NOTIFICATION_SETTINGS.bookingAlerts.minutesBefore
+      ),
+      atTimeEnabled: normalizeNotificationBoolean(
+        bookingAlerts.atTimeEnabled,
+        DEFAULT_NOTIFICATION_SETTINGS.bookingAlerts.atTimeEnabled
+      ),
+    },
+    debtAlerts: {
+      enabled: normalizeNotificationBoolean(debtAlerts.enabled, DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.enabled),
+      minutesBeforeCheckout: normalizeNotificationMinutes(
+        debtAlerts.minutesBeforeCheckout,
+        DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.minutesBeforeCheckout
+      ),
+      atCheckoutEnabled: normalizeNotificationBoolean(
+        debtAlerts.atCheckoutEnabled,
+        DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.atCheckoutEnabled
+      ),
+      dailyReminderEnabled: normalizeNotificationBoolean(
+        debtAlerts.dailyReminderEnabled,
+        DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.dailyReminderEnabled
+      ),
+      dailyHours,
+    },
+  };
+};
+
 export interface Property {
   id: string;
   tenantId?: string; // Multi-tenant Foreign Key

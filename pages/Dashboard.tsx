@@ -112,7 +112,17 @@ const getExtraRevenue = (booking: Booking) =>
     .filter((fee) => fee.type === 'REVENUE')
     .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
 
-const getRoomRevenue = (booking: Booking) => Number(booking.totalPrice) || 0;
+const getExtraExpense = (booking: Booking) =>
+  (booking.extraFees || [])
+    .filter((fee) => fee.type === 'EXPENSE')
+    .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+
+const getStoredNetRevenue = (booking: Booking) => Number(booking.totalPrice) || 0;
+
+// totalPrice is stored as room + extra revenue - extra expense.
+const getRoomRevenue = (booking: Booking) => getStoredNetRevenue(booking) - getExtraRevenue(booking) + getExtraExpense(booking);
+
+const getCustomerBill = (booking: Booking) => getStoredNetRevenue(booking) + getExtraExpense(booking);
 
 const getPaidAmount = (booking: Booking) => Number(booking.paidAmount) || 0;
 
@@ -154,7 +164,9 @@ const groupFinancials = (source: Booking[], includeExtraRevenue = false): MoneyA
   const records = Array.from(grouped.values()).map((members) => {
     const roomRevenue = members.reduce((sum, booking) => sum + getRoomRevenue(booking), 0);
     const serviceRevenue = includeExtraRevenue ? members.reduce((sum, booking) => sum + getExtraRevenue(booking), 0) : 0;
-    const totalBill = roomRevenue + serviceRevenue;
+    const totalBill = includeExtraRevenue
+      ? members.reduce((sum, booking) => sum + getCustomerBill(booking), 0)
+      : roomRevenue;
     const paid = members.reduce((sum, booking) => sum + getPaidAmount(booking), 0);
     return { roomRevenue, serviceRevenue, totalBill, paid, debt: Math.max(totalBill - paid, 0) };
   });

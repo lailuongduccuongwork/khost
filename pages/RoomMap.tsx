@@ -1874,7 +1874,22 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       }
 
       setIsLoadingRecentHistory(true);
-      DataService.fetchRecentHistory(80)
+      const historyBookingIds = Array.from(new Set([
+          bookingMeta.id,
+          ...originalBookingIds,
+          ...bookingRows.map(row => row.bookingId),
+      ].filter(Boolean) as string[]));
+      const historyPromise =
+          isEditMode && showBookingHistory
+              ? DataService.fetchBookingHistory({
+                    bookingIds: historyBookingIds,
+                    groupId: bookingMeta.groupId,
+                    limit: 120,
+                    fallbackLimit: 80,
+                })
+              : DataService.fetchRecentHistory(80);
+
+      historyPromise
           .then((logs) => {
               if (!cancelled) {
                   setRecentHistory(logs);
@@ -1889,7 +1904,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       return () => {
           cancelled = true;
       };
-  }, [isEditMode, showBookingHistory, statusModal.isOpen, bookingMeta.id, bookingMeta.groupId, originalBookingIds.join('|')]);
+  }, [isEditMode, showBookingHistory, statusModal.isOpen, bookingMeta.id, bookingMeta.groupId, originalBookingIds.join('|'), bookingRows.map(row => row.bookingId || '').join('|')]);
 
   const selectedBookingHistory = useMemo(() => {
       if (!isEditMode) return [];
@@ -2557,6 +2572,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                 const laneCount = roomLayout?.laneCount ?? 1;
                                                 const laneIndex = roomLayout?.byBookingId.get(b.id)?.lane ?? 0;
                                                 const isStackedLayout = laneCount > 1;
+                                                const hasTopBadges = showGroupBadge || showNoteBadge;
+                                                const minInlineTimeWidth = timelineMode === 'DAY' ? 14 : timelineMode === 'WEEK' ? 16 : Number.POSITIVE_INFINITY;
+                                                const showInlineTime = !isStackedLayout && width >= minInlineTimeWidth;
                                                 const bookingTop = isStackedLayout ? 6 + (laneIndex * 24) : '10%';
                                                 const bookingHeight = isStackedLayout ? 20 : '80%';
                                                 const bookingTimeLabel = `${formatCompactRoomDateTime(b.checkInDate)} - ${formatCompactRoomDateTime(b.checkOutDate)}`;
@@ -2584,10 +2602,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                             {showGroupBadge && <div className="bg-blue-500 text-white w-3.5 h-3.5 flex items-center justify-center text-[8px] border border-white rounded-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>}
                                                             {showNoteBadge && <div className="bg-orange-500 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[8px] border border-white shadow-sm font-bold" title="Có ghi chú">!</div>}
                                                         </div>
-                                                        <div className="font-bold truncate text-[10px] md:text-xs relative z-[11]">{b.guestName}</div>
-                                                        {!isCompactCard && !isStackedLayout && (
-                                                            <div className="truncate text-[9px] md:text-[10px] opacity-90 relative z-[11]">{bookingTimeLabel}</div>
-                                                        )}
+                                                        <div className={`relative z-[11] flex min-w-0 items-center gap-1 ${hasTopBadges ? 'pr-8' : ''}`}>
+                                                            <div className="min-w-0 flex-1 truncate text-[10px] font-bold md:text-xs">{b.guestName}</div>
+                                                            {showInlineTime && (
+                                                                <div className="max-w-[52%] flex-none truncate whitespace-nowrap text-right text-[9px] opacity-90 md:text-[10px]">
+                                                                    {bookingTimeLabel}
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                         {!isStackedLayout && (
                                                             <div className="flex gap-0.5 mt-1 relative z-[11]">
                                                                 {bookingTags.map(t => (
@@ -3126,7 +3148,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       {isEditMode && showBookingHistory && (
                           <div className="bg-white border border-gray-200 rounded-xl mb-2.5 shadow-sm overflow-hidden">
                               <div className="px-2.5 py-1.5 flex items-center justify-between bg-gray-50 border-b border-gray-200">
-                                  <span className="text-[11px] font-bold uppercase text-gray-700">80 hoạt động gần đây</span>
+                                  <span className="text-[11px] font-bold uppercase text-gray-700">Lịch sử thao tác đơn</span>
                                   <span className="text-xs font-semibold text-gray-500">{selectedBookingHistory.length} mục khớp đơn</span>
                               </div>
 

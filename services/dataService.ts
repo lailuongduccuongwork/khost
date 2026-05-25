@@ -2,9 +2,11 @@ import {
     Booking,
     BookingStatus,
     Customer,
+    DEFAULT_NOTIFICATION_SETTINGS,
     HistoryAction,
     HistoryEntityType,
     HistoryLog,
+    NotificationSettings,
     PERMISSIONS,
     Property,
     Room,
@@ -17,6 +19,7 @@ import {
     TransactionCategory,
     User,
     UserRole,
+    normalizeNotificationSettings,
 } from '../types';
 import {
     INITIAL_BOOKINGS,
@@ -89,6 +92,7 @@ const CACHE = {
     history: [] as HistoryLog[],
     tags: [] as Tag[],
     transactionCategories: [] as TransactionCategory[],
+    notificationSettings: DEFAULT_NOTIFICATION_SETTINGS as NotificationSettings,
     tenants: [] as Tenant[],
     plans: [] as SubscriptionPlan[],
     systemUsers: [] as User[],
@@ -147,6 +151,14 @@ interface HistoryParams {
     actor?: AuditActor;
     bookingSnapshot?: Booking;
     coalesceKey?: string;
+}
+
+interface BookingHistoryQueryParams {
+    bookingIds?: string[];
+    groupId?: string | null;
+    limit?: number;
+    tenantId?: string | null;
+    fallbackLimit?: number;
 }
 
 interface RoomStatusOptions {
@@ -531,6 +543,12 @@ const trackedGet = async (path: string) => {
 const trackedGetByChild = async (path: string, child: string, value: string) => {
     const snap = await get(query(ref(db, path), orderByChild(child), equalTo(value)));
     debugFirebaseTraffic('READ:getByChild', path, snap.val(), { exists: snap.exists(), child, value });
+    return snap;
+};
+
+const trackedGetRecentByChild = async (path: string, child: string, value: string, limit: number) => {
+    const snap = await get(query(ref(db, path), orderByChild(child), equalTo(value), limitToLast(limit)));
+    debugFirebaseTraffic('READ:getRecentByChild', path, snap.val(), { exists: snap.exists(), child, value, limit });
     return snap;
 };
 
@@ -1183,6 +1201,56 @@ const _fetchRecentHistory = async (limit: number = 60, tenantId?: string | null)
     }
 };
 
+const _fetchBookingHistory = async ({
+    bookingIds = [],
+    groupId,
+    limit = 120,
+    tenantId,
+    fallbackLimit = 80,
+}: BookingHistoryQueryParams) => {
+    if (!_ensureFirebase() || !db) return [] as HistoryLog[];
+
+    const historyPath = getHistoryPath(tenantId);
+    if (!historyPath) return [] as HistoryLog[];
+
+    const normalizedLimit = Math.min(300, Math.max(1, Math.floor(Number(limit) || 120)));
+    const normalizedFallbackLimit = Math.min(120, Math.max(1, Math.floor(Number(fallbackLimit) || 80)));
+    const uniqueBookingIds = Array.from(new Set((bookingIds || []).map((id) => `${id || ''}`.trim()).filter(Boolean)));
+    const normalizedGroupId = `${groupId || ''}`.trim();
+
+    if (uniqueBookingIds.length === 0 && !normalizedGroupId) return [] as HistoryLog[];
+
+    try {
+        const queries = [
+            ...uniqueBookingIds.map((bookingId) =>
+                trackedGetRecentByChild(historyPath, 'entityId', bookingId, normalizedLimit)
+            ),
+            ...(normalizedGroupId
+                ? [trackedGetRecentByChild(historyPath, 'metadata/groupId', normalizedGroupId, normalizedLimit)]
+                : []),
+        ];
+        const snaps = await Promise.all(queries);
+        const byId = new Map<string, HistoryLog>();
+
+        snaps.forEach((snap) => {
+            if (!snap.exists()) return;
+            snapshotToArray<HistoryLog>(snap).forEach((log) => {
+                const entityType = log.entityType || (log.bookingSnapshot ? 'BOOKING' : 'SYSTEM');
+                if (entityType !== 'BOOKING') return;
+                if (!log.id) return;
+                byId.set(log.id, log);
+            });
+        });
+
+        return Array.from(byId.values())
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, normalizedLimit);
+    } catch (error) {
+        console.error('Fetch booking history failed, falling back to recent history', error);
+        return _fetchRecentHistory(normalizedFallbackLimit, tenantId);
+    }
+};
+
 const _recordHistory = ({
     tenantId,
     action,
@@ -1285,6 +1353,12 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<TransactionCategory>('transactionCategories', 'transactionCategories');
         bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
         bind<Customer>('customers', 'customers');
+
+        const notificationSettingsUnsubscribe = trackedOnValue(`${basePath}/notificationSettings`, (snap) => {
+            CACHE.notificationSettings = normalizeNotificationSettings(snap.val());
+            _dataChangeCallback();
+        });
+        activeRealtimeUnsubscribers.push(notificationSettingsUnsubscribe);
 
         const usersUnsubscribe = trackedOnValue(`${basePath}/users`, async (snap) => {
             const users = snapshotToArray<User>(snap).map((user) =>
@@ -2173,6 +2247,40 @@ const _saveAuditedList = async (node: AuditedNode, list: any[]) => {
 
     await _saveListAsMap(node, list);
     _auditCollectionMutation(node, previousList, normalizedList);
+};
+
+const _saveNotificationSettings = async (settings: NotificationSettings) => {
+    if (!db || !activeTenantId || activeTenantId === SYSTEM_TENANT_ID) {
+        throw new Error('Không thể lưu cài đặt thông báo: thiếu kết nối tenant.');
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        throw new Error('Không thể lưu cài đặt thông báo: không xác định được tenant hiện tại.');
+    }
+
+    assertActorHasAnyPermission([PERMISSIONS.ADMIN_SETTINGS], 'cập nhật cài đặt thông báo');
+
+    const previous = cloneData(CACHE.notificationSettings);
+    const normalized = normalizeNotificationSettings(settings);
+    await trackedSet(`${basePath}/notificationSettings`, removeUndefinedDeep(normalized), { node: 'notificationSettings' });
+
+    CACHE.notificationSettings = normalized;
+    _dataChangeCallback();
+
+    if (JSON.stringify(previous) !== JSON.stringify(normalized)) {
+        _recordHistory({
+            action: 'UPDATE',
+            entityType: 'SYSTEM',
+            entityId: 'notificationSettings',
+            entityLabel: 'Cài đặt thông báo',
+            description: 'Cập nhật cài đặt thông báo',
+            before: previous as unknown as Record<string, any>,
+            after: normalized as unknown as Record<string, any>,
+            metadata: { node: 'notificationSettings' },
+            coalesceKey: 'notification-settings:update',
+        });
+    }
 };
 
 const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: RoomStatusOptions = {}) => {
@@ -4477,8 +4585,10 @@ export const DataService = {
     getUsers: () => CACHE.users,
     getTags: () => CACHE.tags,
     getTransactionCategories: () => CACHE.transactionCategories,
+    getNotificationSettings: () => normalizeNotificationSettings(CACHE.notificationSettings),
     getHistory: () => CACHE.history,
     fetchRecentHistory: (limit?: number, tenantId?: string | null) => _fetchRecentHistory(limit, tenantId),
+    fetchBookingHistory: (params: BookingHistoryQueryParams) => _fetchBookingHistory(params),
     validateRoomAvailabilityRemote: (
         propertyId: string,
         roomId: string,
@@ -4500,6 +4610,7 @@ export const DataService = {
     saveRoomTypes: (list: RoomType[]) => _saveAuditedList('roomTypes', list),
     saveTags: (list: Tag[]) => _saveAuditedList('tags', list),
     saveTransactionCategories: (list: TransactionCategory[]) => _saveAuditedList('transactionCategories', list),
+    saveNotificationSettings: (settings: NotificationSettings) => _saveNotificationSettings(settings),
 
     updateRoomStatus: _updateRoomStatus,
     addBooking: _addBooking,

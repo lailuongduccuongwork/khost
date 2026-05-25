@@ -288,35 +288,25 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
     <div className="katka-liquid-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
       {/* HEADER */}
       <div className="bg-white px-4 py-3 shadow-sm sticky top-0 z-20 border-b border-gray-200">
-        <div className="flex justify-between items-center mb-3">
-            <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Brush className="text-orange-600" size={24} />
-            BUỒNG PHÒNG
-            </h1>
-            <div className="flex gap-2">
-                <span className="bg-orange-100 text-orange-800 text-sm font-black px-3 py-1 rounded-lg border border-orange-200 shadow-sm">
-                    CẦN DỌN TẠI {branchLabel}: {countDirty}
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                <h1 className="shrink-0 text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <Brush className="text-orange-600" size={24} />
+                    BUỒNG PHÒNG
+                </h1>
+                <span className="inline-flex min-w-0 max-w-[220px] items-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-black text-white border border-blue-700 shadow-sm">
+                    <Building2 size={12} className="shrink-0" />
+                    <span className="truncate">{branchLabel}</span>
                 </span>
             </div>
-        </div>
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 font-black text-white border border-blue-700 shadow-sm">
-                <Building2 size={12} />
-                Buồng phòng của: {branchLabel}
-            </span>
-            <span className="text-gray-500">
-                Màn này đang tối ưu cho từng chi nhánh để buồng phòng thao tác nhanh và tránh nhầm phòng.
-            </span>
-        </div>
-        
-        {/* FILTERS */}
-        <div className="mb-3 relative max-w-md">
+
+            <div className="relative w-full sm:w-72 lg:ml-auto lg:w-64 xl:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
             <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Tìm theo số phòng, loại phòng, khách..."
+                placeholder="Tìm kiếm"
                 className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-gray-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
             {searchTerm && (
@@ -329,6 +319,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     <X size={14} />
                 </button>
             )}
+            </div>
         </div>
 
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 items-center">

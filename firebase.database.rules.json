@@ -100,7 +100,11 @@
             ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $categoryId && newData.child('tenantId').val() === $tenantId"
           }
         },
+        "notificationSettings": {
+          ".validate": "newData.hasChildren(['enabled', 'inAppEnabled', 'soundEnabled', 'browserEnabled', 'bookingAlerts', 'debtAlerts'])"
+        },
         "history": {
+          ".indexOn": ["entityId", "metadata/groupId"],
           "$logId": {
             ".validate": "newData.hasChildren(['id', 'tenantId', 'timestamp', 'description']) && newData.child('id').val() === $logId && newData.child('tenantId').val() === $tenantId"
           }

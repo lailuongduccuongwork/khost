@@ -1,10 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { User, Room, RoomType, Property, RoomStatus, Tag, TransactionCategory, RoomPolicyRule } from '../types';
+import {
+    DEFAULT_NOTIFICATION_SETTINGS,
+    NotificationSettings,
+    User,
+    Room,
+    RoomType,
+    Property,
+    RoomStatus,
+    Tag,
+    TransactionCategory,
+    RoomPolicyRule,
+    normalizeNotificationSettings,
+} from '../types';
 import { DataService } from '../services/dataService';
 import { 
     Building2, BedDouble, Shield, Settings, Plus, Trash2, Edit2, 
-    Check, X, Tag as TagIcon, DollarSign, AlertTriangle, ArrowDownAZ, ArrowUpZA, GripVertical, Info, Users, Key, ChevronDown
+    Check, X, Tag as TagIcon, DollarSign, AlertTriangle, ArrowDownAZ, ArrowUpZA, GripVertical, Info, Users, Key, ChevronDown,
+    Bell
 } from 'lucide-react';
 import Admin from './Admin'; 
 
@@ -15,11 +28,12 @@ interface ManagementProps {
   roomPolicies: RoomPolicyRule[];
   properties: Property[];
   tags: Tag[];
+  notificationSettings: NotificationSettings;
   currentUser: User;
   onRefresh: () => void;
 }
 
-type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'ADVANCED';
+type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'NOTIFICATIONS' | 'ADVANCED';
 type CascadeDeleteKind = 'property' | 'roomType' | 'room';
 type NewRoomTypeDraft = { propertyId: string; name: string } | null;
 type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
@@ -76,7 +90,47 @@ const InlineInput = ({
     );
 };
 
-const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPolicies, properties, tags, currentUser, onRefresh }) => {
+const NotificationToggle = ({
+    checked,
+    title,
+    description,
+    onChange,
+    disabled = false,
+}: {
+    checked: boolean;
+    title: string;
+    description?: string;
+    onChange: (checked: boolean) => void;
+    disabled?: boolean;
+}) => (
+    <button
+        type="button"
+        onClick={() => !disabled && onChange(!checked)}
+        className={`w-full flex items-center justify-between gap-4 p-4 rounded-xl border text-left transition-all ${
+            disabled ? 'bg-gray-50 border-gray-100 opacity-60 cursor-not-allowed' : 'bg-white border-gray-200 hover:border-blue-200 hover:bg-blue-50/30'
+        }`}
+    >
+        <span className="min-w-0">
+            <span className="block text-sm font-bold text-gray-800">{title}</span>
+            {description && <span className="block text-xs font-medium text-gray-500 mt-1">{description}</span>}
+        </span>
+        <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}>
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+        </span>
+    </button>
+);
+
+const Management: React.FC<ManagementProps> = ({
+  users,
+  rooms,
+  roomTypes,
+  roomPolicies,
+  properties,
+  tags,
+  notificationSettings,
+  currentUser,
+  onRefresh,
+}) => {
   const [activeTab, setActiveTab] = useState<TabType>('PROPERTIES');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isMobileTabPickerOpen, setIsMobileTabPickerOpen] = useState(false);
@@ -90,6 +144,9 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   const [saveStatus, setSaveStatus] = useState('');
   const [draftTags, setDraftTags] = useState<Tag[]>(tags);
   const [draftCategories, setDraftCategories] = useState<TransactionCategory[]>(DataService.getTransactionCategories());
+  const [draftNotificationSettings, setDraftNotificationSettings] = useState<NotificationSettings>(
+      normalizeNotificationSettings(notificationSettings)
+  );
   const [collapsedPropertyIds, setCollapsedPropertyIds] = useState<string[]>([]);
   const [newRoomTypeDraft, setNewRoomTypeDraft] = useState<NewRoomTypeDraft>(null);
   const [newRoomDraft, setNewRoomDraft] = useState<NewRoomDraft>(null);
@@ -120,6 +177,7 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
       { id: 'ROOM_MANAGEMENT', label: 'Phân bổ Hạng & Phòng', icon: BedDouble, desc: 'Cấu hình phòng theo cấu trúc' },
       { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
       { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
+      { id: 'NOTIFICATIONS', label: 'Thông báo', icon: Bell, desc: 'Nhắc lịch, công nợ' },
       { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag' },
   ];
   const activeTabMeta = managementTabs.find(tab => tab.id === activeTab) || managementTabs[0];
@@ -136,6 +194,10 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
   useEffect(() => {
       setDraftCategories(DataService.getTransactionCategories());
   }, [activeTab, tags]);
+
+  useEffect(() => {
+      setDraftNotificationSettings(normalizeNotificationSettings(notificationSettings));
+  }, [notificationSettings]);
 
   useEffect(() => {
       setManagementRooms(rooms);
@@ -179,6 +241,25 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
           setSaveStatus(`Lỗi lưu ${actionLabel}: ${message}`);
           return false;
       }
+  };
+
+  const updateNotificationDraft = (updater: (settings: NotificationSettings) => NotificationSettings) => {
+      setDraftNotificationSettings(prev => normalizeNotificationSettings(updater(prev)));
+  };
+
+  const updateNotificationDailyHour = (hour: number, checked: boolean) => {
+      updateNotificationDraft(prev => {
+          const current = new Set(prev.debtAlerts.dailyHours);
+          if (checked) current.add(hour);
+          else current.delete(hour);
+          return {
+              ...prev,
+              debtAlerts: {
+                  ...prev.debtAlerts,
+                  dailyHours: Array.from(current).sort((a, b) => a - b),
+              },
+          };
+      });
   };
 
   const normalizeName = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -1422,7 +1503,196 @@ const Management: React.FC<ManagementProps> = ({ users, rooms, roomTypes, roomPo
               </div>
           )}
 
-          {/* TAB 5: ADVANCED (TAGS & DANH MỤC THU CHI) */}
+          {/* TAB 5: NOTIFICATIONS */}
+          {activeTab === 'NOTIFICATIONS' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
+                  <div className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                              <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                                  <Bell size={18} className="text-blue-600" /> Cài đặt thông báo
+                              </h2>
+                              <p className="text-xs font-medium text-gray-500 mt-1">Áp dụng cho toàn bộ nhân viên trong tenant hiện tại.</p>
+                          </div>
+                          <div className="flex gap-2">
+                              <button
+                                  onClick={() => setDraftNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS)}
+                                  className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50"
+                              >
+                                  Mặc định
+                              </button>
+                              <button
+                                  onClick={() => runSaveAction('cài đặt thông báo', () => DataService.saveNotificationSettings(draftNotificationSettings))}
+                                  className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700"
+                              >
+                                  Lưu cài đặt
+                              </button>
+                          </div>
+                      </div>
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                          <NotificationToggle
+                              checked={draftNotificationSettings.enabled}
+                              title="Bật thông báo"
+                              description="Công tắc tổng cho mọi cảnh báo"
+                              onChange={(checked) => updateNotificationDraft(prev => ({ ...prev, enabled: checked }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.inAppEnabled}
+                              title="Trong ứng dụng"
+                              description="Hiện toast và lưu ở chuông"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({ ...prev, inAppEnabled: checked }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.soundEnabled}
+                              title="Âm báo"
+                              description="Phát âm thanh khi tới lịch"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({ ...prev, soundEnabled: checked }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.browserEnabled}
+                              title="Trình duyệt"
+                              description="Dùng Notification API nếu được cấp quyền"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({ ...prev, browserEnabled: checked }))}
+                          />
+                      </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+                          <h2 className="font-bold text-gray-800">Nhắc check-in / check-out</h2>
+                      </div>
+                      <div className="p-5 space-y-3">
+                          <NotificationToggle
+                              checked={draftNotificationSettings.bookingAlerts.checkInEnabled}
+                              title="Nhắc khách sắp vào"
+                              description="Áp dụng cho đơn đã xác nhận"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  bookingAlerts: { ...prev.bookingAlerts, checkInEnabled: checked },
+                              }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.bookingAlerts.checkOutEnabled}
+                              title="Nhắc khách sắp ra"
+                              description="Áp dụng cho đơn đang ở"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  bookingAlerts: { ...prev.bookingAlerts, checkOutEnabled: checked },
+                              }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.bookingAlerts.atTimeEnabled}
+                              title="Nhắc đúng giờ"
+                              description="Nhắc thêm tại đúng giờ vào/ra"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  bookingAlerts: { ...prev.bookingAlerts, atTimeEnabled: checked },
+                              }))}
+                          />
+                          <label className="block rounded-xl border border-gray-200 bg-white p-4">
+                              <span className="block text-sm font-bold text-gray-800">Nhắc trước</span>
+                              <select
+                                  value={draftNotificationSettings.bookingAlerts.minutesBefore}
+                                  disabled={!draftNotificationSettings.enabled}
+                                  onChange={(e) => updateNotificationDraft(prev => ({
+                                      ...prev,
+                                      bookingAlerts: { ...prev.bookingAlerts, minutesBefore: Number(e.target.value) },
+                                  }))}
+                                  className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                              >
+                                  {[5, 10, 15, 30, 60].map(minute => (
+                                      <option key={minute} value={minute}>{minute} phút</option>
+                                  ))}
+                              </select>
+                          </label>
+                      </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+                          <h2 className="font-bold text-gray-800">Cảnh báo công nợ</h2>
+                      </div>
+                      <div className="p-5 space-y-3">
+                          <NotificationToggle
+                              checked={draftNotificationSettings.debtAlerts.enabled}
+                              title="Bật cảnh báo công nợ"
+                              description="Chỉ nhắc đơn đang còn thiếu"
+                              disabled={!draftNotificationSettings.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  debtAlerts: { ...prev.debtAlerts, enabled: checked },
+                              }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.debtAlerts.atCheckoutEnabled}
+                              title="Nhắc đúng giờ trả phòng"
+                              description="Báo lại nếu vẫn còn nợ"
+                              disabled={!draftNotificationSettings.enabled || !draftNotificationSettings.debtAlerts.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  debtAlerts: { ...prev.debtAlerts, atCheckoutEnabled: checked },
+                              }))}
+                          />
+                          <NotificationToggle
+                              checked={draftNotificationSettings.debtAlerts.dailyReminderEnabled}
+                              title="Nhắc định kỳ trong ngày"
+                              description="Dùng các mốc giờ bên dưới"
+                              disabled={!draftNotificationSettings.enabled || !draftNotificationSettings.debtAlerts.enabled}
+                              onChange={(checked) => updateNotificationDraft(prev => ({
+                                  ...prev,
+                                  debtAlerts: { ...prev.debtAlerts, dailyReminderEnabled: checked },
+                              }))}
+                          />
+                          <label className="block rounded-xl border border-gray-200 bg-white p-4">
+                              <span className="block text-sm font-bold text-gray-800">Nhắc trước giờ trả</span>
+                              <select
+                                  value={draftNotificationSettings.debtAlerts.minutesBeforeCheckout}
+                                  disabled={!draftNotificationSettings.enabled || !draftNotificationSettings.debtAlerts.enabled}
+                                  onChange={(e) => updateNotificationDraft(prev => ({
+                                      ...prev,
+                                      debtAlerts: { ...prev.debtAlerts, minutesBeforeCheckout: Number(e.target.value) },
+                                  }))}
+                                  className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-800 outline-none focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                              >
+                                  {[30, 60, 120, 180].map(minute => (
+                                      <option key={minute} value={minute}>{minute} phút</option>
+                                  ))}
+                              </select>
+                          </label>
+                          <div className="rounded-xl border border-gray-200 bg-white p-4">
+                              <div className="text-sm font-bold text-gray-800">Mốc nhắc định kỳ</div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                  {[9, 12, 15, 18, 21].map(hour => {
+                                      const isActive = draftNotificationSettings.debtAlerts.dailyHours.includes(hour);
+                                      const isDisabled = !draftNotificationSettings.enabled || !draftNotificationSettings.debtAlerts.enabled || !draftNotificationSettings.debtAlerts.dailyReminderEnabled;
+                                      return (
+                                          <button
+                                              key={hour}
+                                              type="button"
+                                              disabled={isDisabled}
+                                              onClick={() => updateNotificationDailyHour(hour, !isActive)}
+                                              className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+                                                  isActive ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                          >
+                                              {hour}:00
+                                          </button>
+                                      );
+                                  })}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* TAB 6: ADVANCED (TAGS & DANH MỤC THU CHI) */}
           {activeTab === 'ADVANCED' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
                   {/* Quản lý Thẻ (Tags) */}

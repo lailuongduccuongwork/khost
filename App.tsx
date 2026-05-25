@@ -2,7 +2,24 @@ import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRe
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import { DataService } from './services/dataService';
-import { User, Room, Booking, Customer, Property, RoomType, UserRole, RoomStatus, BookingStatus, Tag, PERMISSIONS, Tenant, SubscriptionPlan, RoomPolicyRule } from './types';
+import {
+  User,
+  Room,
+  Booking,
+  Customer,
+  Property,
+  RoomType,
+  UserRole,
+  RoomStatus,
+  BookingStatus,
+  Tag,
+  PERMISSIONS,
+  Tenant,
+  SubscriptionPlan,
+  RoomPolicyRule,
+  NotificationSettings,
+  DEFAULT_NOTIFICATION_SETTINGS,
+} from './types';
 import { deriveBookingStatus } from './utils/bookingState';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
@@ -109,6 +126,7 @@ const App: React.FC = () => {
   const [roomPolicies, setRoomPolicies] = useState<RoomPolicyRule[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
 
   // --- NOTIFICATION ENGINE ---
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -157,8 +175,8 @@ const App: React.FC = () => {
       }, 3000);
   }, []);
 
-  useBookingAlert(bookings, handleNewNotification);
-  useDebtAlert(bookings, rooms, handleNewNotification);
+  useBookingAlert(bookings, handleNewNotification, notificationSettings);
+  useDebtAlert(bookings, rooms, handleNewNotification, notificationSettings);
 
   const handleMarkAllRead = () => {
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
@@ -272,6 +290,9 @@ const App: React.FC = () => {
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
         setRoomPolicies([]);
+        setNotificationSettings(prev =>
+          JSON.stringify(prev) === JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS) ? prev : DEFAULT_NOTIFICATION_SETTINGS
+        );
         return;
     }
 
@@ -338,6 +359,10 @@ const App: React.FC = () => {
     setRoomTypes(DataService.getRoomTypes());
     setRoomPolicies(DataService.getRoomPolicies());
     setTags(DataService.getTags());
+    const nextNotificationSettings = DataService.getNotificationSettings();
+    setNotificationSettings(prev =>
+      JSON.stringify(prev) === JSON.stringify(nextNotificationSettings) ? prev : nextNotificationSettings
+    );
 
     if (visibleProperties.length === 0) {
         setRooms([]);
@@ -912,6 +937,7 @@ const App: React.FC = () => {
                               roomPolicies={roomPolicies}
                               properties={properties}
                               tags={tags}
+                              notificationSettings={notificationSettings}
                               currentUser={effectiveUser}
                               onRefresh={manualRefresh}
                           />

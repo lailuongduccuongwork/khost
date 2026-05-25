@@ -494,7 +494,12 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       }
 
       setIsLoadingHistory(true);
-      DataService.fetchRecentHistory(80)
+      DataService.fetchBookingHistory({
+          bookingIds: [selectedHistoryBooking.id],
+          groupId: selectedHistoryBooking.groupId,
+          limit: 120,
+          fallbackLimit: 80,
+      })
           .then((logs) => {
               if (!cancelled) {
                   setRecentHistory(logs);
