@@ -17,12 +17,13 @@ interface HousekeepingProps {
   onRefresh: () => void;
   onUpdateStatus: (roomId: string, status: RoomStatus) => void;
   onOpenRoomMap?: (room: Room) => void;
+  canUpdateRoomStatus: boolean;
 }
 
 type FilterType = 'ALL' | 'DIRTY' | 'CLEAN' | 'OCCUPIED';
 type HousekeepingView = 'CURRENT' | 'DAY_SCHEDULE';
 
-const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, currentProperty, onRefresh, onUpdateStatus, onOpenRoomMap }) => {
+const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, currentProperty, onRefresh, onUpdateStatus, onOpenRoomMap, canUpdateRoomStatus }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [filter, setFilter] = useState<FilterType>('ALL');
   const [activeView, setActiveView] = useState<HousekeepingView>('CURRENT');
@@ -36,6 +37,10 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
   }, []);
 
   const handleAction = async (roomId: string, newStatus: RoomStatus) => {
+      if (!canUpdateRoomStatus) {
+          alert('Bạn không có quyền đổi trạng thái sạch/bẩn phòng.');
+          return;
+      }
       setStatusFeedback({ roomId, state: 'saving', message: 'Đang cập nhật...' });
       try {
           await Promise.resolve(onUpdateStatus(roomId, newStatus));
@@ -471,8 +476,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     <div className="w-full h-full flex flex-col">
                         <button 
                             onClick={() => handleAction(room.id, RoomStatus.VACANT_CLEAN)}
-                            disabled={isSavingThisRoom}
-                            className="flex-1 bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner"
+                            disabled={!canUpdateRoomStatus || isSavingThisRoom}
+                            className={`flex-1 bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner ${!canUpdateRoomStatus ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             {isSavingThisRoom ? <Loader2 size={28} className="animate-spin" /> : <Check size={32} strokeWidth={4} />}
                             <span className="text-[10px] font-black uppercase mt-1">{isSavingThisRoom ? 'Đang lưu' : 'SẠCH'}</span>
@@ -511,8 +516,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     <div className="w-full h-full flex flex-col">
                         <button 
                             onClick={() => handleAction(room.id, RoomStatus.VACANT_DIRTY)}
-                            disabled={isSavingThisRoom}
-                            className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-400 active:text-gray-600 flex flex-col items-center justify-center border-l border-gray-100 transition-colors"
+                            disabled={!canUpdateRoomStatus || isSavingThisRoom}
+                            className={`flex-1 bg-gray-50 hover:bg-gray-100 text-gray-400 active:text-gray-600 flex flex-col items-center justify-center border-l border-gray-100 transition-colors ${!canUpdateRoomStatus ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             {isSavingThisRoom ? <Loader2 size={20} className="animate-spin" /> : <RotateCcw size={20} />}
                             <span className="text-[9px] font-bold mt-1">{isSavingThisRoom ? 'Đang lưu' : 'Báo bẩn'}</span>

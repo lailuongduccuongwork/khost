@@ -406,6 +406,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const canEdit = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
   const canManageRooms = currentUser.permissions?.includes(PERMISSIONS.MANAGE_ROOMS);
+  const canUpdateRoomStatus = currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.SUPER_ADMIN || currentUser.permissions?.includes(PERMISSIONS.CAN_UPDATE_ROOM_STATUS);
   const allUsers = DataService.getUsers();
   const usernameByUserId = useMemo(() => {
       const map = new Map<string, string>();
@@ -1307,7 +1308,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   const handleStatusIconClick = (room: Room) => {
-      if (!canManageRooms) return; 
+      if (!canManageRooms || !canUpdateRoomStatus) return; 
       const insight = roomOperationalInsights.get(room.id);
       if (insight?.activeBooking) {
           alert('Phòng đang có booking active trong khung hiện tại. Không đổi sạch/bẩn trực tiếp từ sơ đồ để tránh sai trạng thái.');
@@ -1319,7 +1320,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   const confirmStatusChange = async () => {
-      if (!statusModal.room || isSavingRoomStatus) return;
+      if (!statusModal.room || isSavingRoomStatus || !canUpdateRoomStatus) return;
       setIsSavingRoomStatus(true);
       try {
           if (onUpdateStatus) {
@@ -2456,13 +2457,13 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                             </div>
                                             <button
                                                 type="button"
-                                                disabled={!canManageRooms || effectiveRoomStatus === RoomStatus.OCCUPIED || !!activeBooking}
+                                                disabled={!canManageRooms || !canUpdateRoomStatus || effectiveRoomStatus === RoomStatus.OCCUPIED || !!activeBooking}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
                                                     handleStatusIconClick(room);
                                                 }}
                                                 className="pt-0.5 shrink-0 rounded-full p-1 hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-70"
-                                                title={canManageRooms && effectiveRoomStatus !== RoomStatus.OCCUPIED && !activeBooking ? 'Đổi sạch/bẩn' : tooltip}
+                                                title={canManageRooms && canUpdateRoomStatus && effectiveRoomStatus !== RoomStatus.OCCUPIED && !activeBooking ? 'Đổi sạch/bẩn' : tooltip}
                                             >
                                                 {statusIcon}
                                             </button>
@@ -3053,7 +3054,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           </button>
                           <button 
                               onClick={confirmStatusChange} 
-                              disabled={isSavingRoomStatus}
+                              disabled={isSavingRoomStatus || !canUpdateRoomStatus}
                               className={`flex-1 py-2.5 text-white font-bold rounded-lg shadow-lg transition-colors ${statusModal.targetStatus === RoomStatus.VACANT_CLEAN ? 'bg-green-600 hover:bg-green-700 shadow-green-200' : 'bg-yellow-500 hover:bg-yellow-600 shadow-yellow-200'}`}
                           >
                               {isSavingRoomStatus ? 'Đang lưu...' : 'Xác nhận'}

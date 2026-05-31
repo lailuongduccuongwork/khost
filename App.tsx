@@ -903,6 +903,7 @@ const App: React.FC = () => {
                               onRefresh={manualRefresh}
                               onUpdateStatus={handleUpdateRoomStatus}
                               onOpenRoomMap={handleOpenRoomMapFromHousekeeping}
+                              canUpdateRoomStatus={effectiveUser.permissions?.includes(PERMISSIONS.CAN_UPDATE_ROOM_STATUS) || effectiveUser.role === UserRole.ADMIN}
                           />
                       )}
 

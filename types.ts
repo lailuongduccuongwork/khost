@@ -348,6 +348,7 @@ export const PERMISSIONS = {
   CAN_ADD_BOOKING: 'can_add_booking',
   CAN_EDIT_BOOKING: 'can_edit_booking',
   CAN_DELETE_BOOKING: 'can_delete_booking',
+  CAN_UPDATE_ROOM_STATUS: 'can_update_room_status',
   CAN_EXPORT_REPORT: 'can_export_report',
   VIEW_AUDIT_LOGS: 'view_audit_logs',
 };

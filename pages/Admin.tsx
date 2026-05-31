@@ -75,6 +75,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
           permissions: [
               PERMISSIONS.VIEW_DASHBOARD,
               PERMISSIONS.MANAGE_ROOMS,
+              PERMISSIONS.CAN_UPDATE_ROOM_STATUS,
               PERMISSIONS.CAN_ADD_BOOKING, 
               PERMISSIONS.CAN_EDIT_BOOKING
           ],
@@ -226,6 +227,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
   const permissionOptions = [
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
       { id: PERMISSIONS.MANAGE_ROOMS, label: 'Được phép vào Sơ đồ phòng / Buồng phòng' },
+      { id: PERMISSIONS.CAN_UPDATE_ROOM_STATUS, label: 'Được phép đổi trạng thái sạch/bẩn phòng' },
       { id: PERMISSIONS.MANAGE_BOOKINGS, label: 'Được phép vào Danh sách đơn' },
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
       { id: PERMISSIONS.ADMIN_SETTINGS, label: 'Được phép quản trị Cài đặt hệ thống' },
@@ -248,6 +250,24 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
       if (names.length <= 2) return names.join(', ');
       return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
   };
+
+  const roleLabels: Record<UserRole, string> = {
+      [UserRole.SUPER_ADMIN]: 'SUPER ADMIN',
+      [UserRole.ADMIN]: 'ADMIN',
+      [UserRole.MANAGER]: 'MANAGER',
+      [UserRole.RECEPTIONIST]: 'RECEPTIONIST',
+      [UserRole.HOUSEKEEPING]: 'BUỒNG PHÒNG',
+  };
+
+  const groupedUsers = (Object.values(UserRole) as UserRole[])
+      .map(role => ({
+          role,
+          label: roleLabels[role],
+          users: users
+              .filter(user => user.role === role)
+              .sort((a, b) => (a.fullName || a.username || '').localeCompare(b.fullName || b.username || '', 'vi'))
+      }))
+      .filter(group => group.users.length > 0);
 
   return (
     <div className="katka-liquid-page space-y-6 px-5 py-5 md:px-6 md:py-6">
@@ -283,44 +303,66 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {users.map(user => (
-              <tr key={user.id} className="hover:bg-gray-50/80">
-                <td className="px-5 py-4 font-medium text-gray-900">{user.fullName}</td>
-                <td className="px-5 py-4 text-gray-500">{user.username}</td>
-                <td className="px-5 py-4">
-                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                    user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700' :
-                    user.role === UserRole.MANAGER ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-5 py-4 text-sm text-gray-600 max-w-[220px] truncate" title={getPropertySummary(user)}>{getPropertySummary(user)}</td>
-                <td className="px-5 py-4 text-sm text-gray-600">
-                    {user.role === UserRole.ADMIN ? 'Toàn quyền' : `${user.permissions?.length || 0} quyền`}
-                </td>
-                <td className="px-5 py-4 text-right">
-                  <div className="flex justify-end gap-2">
-                      <button 
-                          onClick={() => openEditModal(user)}
-                          className="text-blue-600 hover:text-blue-700 px-3 py-1.5 text-sm font-semibold border border-blue-200 hover:bg-blue-50 rounded-lg"
-                          title="Xem chi tiết và chỉnh sửa"
-                      >
-                          Chi tiết
-                      </button>
-                      
-                      <button 
-                          onClick={() => handleDeleteClick(user)}
-                          className={`p-2 rounded-lg ${isLastAdmin(user) || isCurrentUser(user.id) ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600 hover:bg-red-50'}`}
-                          disabled={isLastAdmin(user) || isCurrentUser(user.id)}
-                          title={isLastAdmin(user) ? "Không thể xóa admin cuối cùng" : isCurrentUser(user.id) ? "Không thể tự xóa tài khoản đang đăng nhập" : "Xóa tài khoản"}
-                      >
-                          <Trash2 size={18} />
-                      </button>
-                  </div>
-                </td>
-              </tr>
+            {groupedUsers.map(group => (
+              <React.Fragment key={group.role}>
+                <tr className="bg-slate-50/90">
+                  <td colSpan={6} className="px-5 py-2 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    {group.label} ({group.users.length})
+                  </td>
+                </tr>
+                {group.users.map(user => (
+                  <tr key={user.id} className="hover:bg-gray-50/80">
+                    <td className="px-5 py-4 font-medium text-gray-900">{user.fullName}</td>
+                    <td className="px-5 py-4 text-gray-500">{user.username}</td>
+                    <td className="px-5 py-4">
+                      <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                        user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700' :
+                        user.role === UserRole.MANAGER ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-sm text-gray-600 max-w-[220px] truncate" title={getPropertySummary(user)}>{getPropertySummary(user)}</td>
+                    <td className="px-5 py-4 text-sm text-gray-600">
+                        {user.role === UserRole.ADMIN ? (
+                            'Toàn quyền'
+                        ) : (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span>{user.permissions?.length || 0} quyền</span>
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                                    user.permissions?.includes(PERMISSIONS.CAN_UPDATE_ROOM_STATUS)
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                    Sạch/Bẩn: {user.permissions?.includes(PERMISSIONS.CAN_UPDATE_ROOM_STATUS) ? 'Bật' : 'Tắt'}
+                                </span>
+                            </div>
+                        )}
+                    </td>
+                    <td className="px-5 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                          <button 
+                              onClick={() => openEditModal(user)}
+                              className="text-blue-600 hover:text-blue-700 px-3 py-1.5 text-sm font-semibold border border-blue-200 hover:bg-blue-50 rounded-lg"
+                              title="Xem chi tiết và chỉnh sửa"
+                          >
+                              Chi tiết
+                          </button>
+                          
+                          <button 
+                              onClick={() => handleDeleteClick(user)}
+                              className={`p-2 rounded-lg ${isLastAdmin(user) || isCurrentUser(user.id) ? 'text-gray-300 cursor-not-allowed' : 'text-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                              disabled={isLastAdmin(user) || isCurrentUser(user.id)}
+                              title={isLastAdmin(user) ? "Không thể xóa admin cuối cùng" : isCurrentUser(user.id) ? "Không thể tự xóa tài khoản đang đăng nhập" : "Xóa tài khoản"}
+                          >
+                              <Trash2 size={18} />
+                          </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </React.Fragment>
             ))}
           </tbody>
         </table>

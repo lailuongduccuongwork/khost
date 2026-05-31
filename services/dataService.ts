@@ -307,7 +307,18 @@ const assertNodeMutationAllowed = (
     assertPropertyWriteScope(item?.propertyId, mode === 'delete' ? `xóa ${node}` : `cập nhật ${node}`, source);
 };
 
-const assertRoomStatusMutationAllowed = (room: Room, source?: AuditSource) => {
+const assertRoomStatusMutationAllowed = (room: Room, source?: AuditSource, requireManualStatusPermission = false) => {
+    if (requireManualStatusPermission && source !== 'SYSTEM') {
+        const canManuallyUpdateRoomStatus =
+            currentAuditActor?.role === UserRole.ADMIN ||
+            currentAuditActor?.role === UserRole.SUPER_ADMIN ||
+            currentAuditActor?.permissions?.includes(PERMISSIONS.CAN_UPDATE_ROOM_STATUS);
+
+        if (!canManuallyUpdateRoomStatus) {
+            throw new Error('Bạn không có quyền đổi trạng thái sạch/bẩn phòng.');
+        }
+    }
+
     if (
         currentAuditActor?.role === UserRole.HOUSEKEEPING ||
         actorHasAnyPermission(
@@ -2303,7 +2314,7 @@ const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: Ro
     if (!roomBefore) {
         throw new Error(`Không tìm thấy phòng ${roomId} để cập nhật trạng thái.`);
     }
-    assertRoomStatusMutationAllowed(roomBefore, options.source);
+    assertRoomStatusMutationAllowed(roomBefore, options.source, !options.suppressLog);
     if (roomBefore.status === status) return;
 
     const existedInCache = CACHE.rooms.some((room) => room.id === roomId);
