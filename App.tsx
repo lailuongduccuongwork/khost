@@ -20,7 +20,6 @@ import {
   NotificationSettings,
   DEFAULT_NOTIFICATION_SETTINGS,
 } from './types';
-import { deriveBookingStatus } from './utils/bookingState';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
@@ -546,7 +545,7 @@ const App: React.FC = () => {
           DataService.cleanupExpiredHoldBookings({ source: 'SYSTEM' }).catch((error: any) => {
               console.error('Automation cleanup expired hold failed', error);
           });
-          const hasPotentialDrift = DataService.getBookings().some((booking) => deriveBookingStatus(booking) !== booking.status);
+          const hasPotentialDrift = DataService.hasOperationalStatusDrift();
           if (!hasPotentialDrift) return;
           DataService.syncOperationalStatuses({ source: 'SYSTEM' }).catch((error: any) => {
               console.error('Automation sync operational statuses failed', error);

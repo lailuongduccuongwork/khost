@@ -846,6 +846,18 @@ const normalizeLegacyRoomStatus = (status?: string): RoomStatus => {
     return RoomStatus.VACANT_CLEAN;
 };
 
+const attachPersistedBookingStatus = <T extends Record<string, any>>(booking: T, persistedStatus: BookingStatus): T => {
+    Object.defineProperty(booking, '__persistedStatus', {
+        value: persistedStatus,
+        enumerable: false,
+        configurable: true,
+    });
+    return booking;
+};
+
+const getPersistedBookingStatus = (booking?: any): BookingStatus | undefined =>
+    booking?.__persistedStatus || booking?.status;
+
 const removeUndefinedDeep = (value: any): any => {
     if (value === undefined) return null;
     if (value === null || typeof value !== 'object') return value;
@@ -896,7 +908,8 @@ const normalizeForNode = (node: string, item: any, tenantId: string | null) => {
             status: derivedStatus,
             isHold: normalizedBooking.isHold || derivedStatus === BookingStatus.HOLD,
         };
-        return tenantId ? { ...bookingWithDerivedStatus, tenantId: item.tenantId || tenantId } : bookingWithDerivedStatus;
+        const result = tenantId ? { ...bookingWithDerivedStatus, tenantId: item.tenantId || tenantId } : bookingWithDerivedStatus;
+        return attachPersistedBookingStatus(result, normalizedStatus);
     }
     if (node === 'rooms') {
         const normalizedRoom = {
@@ -2394,9 +2407,14 @@ const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
     const nowMs = Date.now();
     const nextBookings = CACHE.bookings.map((booking) => {
         const derivedStatus = deriveBookingStatus(booking, nowMs);
-        return booking.status === derivedStatus ? booking : { ...booking, status: derivedStatus };
+        const persistedStatus = getPersistedBookingStatus(booking) || booking.status;
+        const nextBooking = booking.status === derivedStatus ? booking : { ...booking, status: derivedStatus };
+        return attachPersistedBookingStatus(nextBooking, persistedStatus);
     });
-    const changedBookings = nextBookings.filter((booking, index) => booking.status !== CACHE.bookings[index]?.status);
+    const changedBookings = nextBookings.filter((booking, index) => {
+        const persistedStatus = getPersistedBookingStatus(CACHE.bookings[index]);
+        return persistedStatus !== booking.status;
+    });
 
     if (changedBookings.length > 0 && db && activeTenantId) {
         const basePath = getBaseRef();
@@ -2410,14 +2428,50 @@ const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
                 bookingCount: changedBookings.length,
             });
         }
+
+        const changedRoomIds = Array.from(new Set(changedBookings.map((booking) => booking.roomId).filter(Boolean)));
+        for (const roomId of changedRoomIds) {
+            const hasActiveBooking = nextBookings.some(
+                (booking) => booking.roomId === roomId && deriveBookingStatus(booking, nowMs) === BookingStatus.CHECKED_IN
+            );
+            const hasCheckedOutBooking = changedBookings.some(
+                (booking) => booking.roomId === roomId && booking.status === BookingStatus.CHECKED_OUT
+            );
+
+            if (hasActiveBooking) {
+                await _updateRoomStatus(roomId, RoomStatus.OCCUPIED, {
+                    source: options.source || 'SYSTEM',
+                    suppressLog: true,
+                });
+            } else if (hasCheckedOutBooking) {
+                await _updateRoomStatus(roomId, RoomStatus.VACANT_DIRTY, {
+                    source: options.source || 'SYSTEM',
+                    suppressLog: true,
+                });
+            }
+        }
     }
 
-    CACHE.bookings = nextBookings;
+    const changedBookingIds = new Set(changedBookings.map((booking) => booking.id));
+    CACHE.bookings = nextBookings.map((booking) =>
+        attachPersistedBookingStatus(
+            { ...booking },
+            changedBookingIds.has(booking.id) ? booking.status : getPersistedBookingStatus(booking) || booking.status
+        )
+    );
     _dataChangeCallback();
     await _syncRoomStatusesForRooms(
         nextBookings.filter((booking) => booking.status !== BookingStatus.DELETED).map((booking) => booking.roomId),
         { source: options.source || 'SYSTEM', suppressLog: true }
     );
+};
+
+const _hasOperationalStatusDrift = () => {
+    const nowMs = Date.now();
+    return CACHE.bookings.some((booking) => {
+        if (booking.status === BookingStatus.DELETED) return false;
+        return getPersistedBookingStatus(booking) !== deriveBookingStatus(booking, nowMs);
+    });
 };
 
 const _addBooking = async (booking: Booking, options: BookingActionOptions = {}) => {
@@ -4607,6 +4661,7 @@ export const DataService = {
         end: string,
         excludeId?: string
     ) => _validateRoomAvailabilityRemote(propertyId, roomId, start, end, excludeId),
+    hasOperationalStatusDrift: () => _hasOperationalStatusDrift(),
     syncOperationalStatuses: (options?: BookingActionOptions) => _syncOperationalStatuses(options),
 
     saveTenants: (list: Tenant[]) => _saveAuditedList('tenants', list),
