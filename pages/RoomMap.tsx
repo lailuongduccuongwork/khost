@@ -449,6 +449,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [isLoadingRecentHistory, setIsLoadingRecentHistory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); 
+  const isSavingBookingRef = useRef(false);
   const [isDeletingBooking, setIsDeletingBooking] = useState(false);
   
   // DRAG & DROP CHO ĐƠN ĐÃ CÓ
@@ -2004,49 +2005,55 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   const handleSaveBooking = async (options: { allowGuestFallback?: boolean } = {}) => {
-     if (isSubmitting) return; 
+     if (isSubmitting || isSavingBookingRef.current) return; 
      const resolvedGuestName = bookingMeta.guestName.trim();
      const resolvedGuestPhone = bookingMeta.guestPhone.trim();
      if (!resolvedGuestName && !options.allowGuestFallback) {
          setShowGuestFallbackConfirm(true);
          return;
      }
+     isSavingBookingRef.current = true;
+     setIsSubmitting(true);
+     const unlockSaveBooking = () => {
+         isSavingBookingRef.current = false;
+         setIsSubmitting(false);
+     };
      const finalGuestName = resolvedGuestName || 'Khách lẻ';
      const validRows = bookingRows.filter(r => r.roomId);
-     if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
+     if (validRows.length === 0) { unlockSaveBooking(); return alert("Vui lòng chọn ít nhất một phòng"); }
      const roomIds = validRows.map(r => r.roomId);
-     if (new Set(roomIds).size !== roomIds.length) return alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại.");
+     if (new Set(roomIds).size !== roomIds.length) { unlockSaveBooking(); return alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại."); }
      const requiredCategoryPropertyId = validRows
          .map(row => rooms.find(room => room.id === row.roomId)?.propertyId || row.tempPropId || '')
          .find(propertyId => !!propertyId && bookingFieldSettings[propertyId]?.requireBookingCategory);
      if (requiredCategoryPropertyId && !bookingMeta.bookingCategory) {
          const propertyName = properties.find(prop => prop.id === requiredCategoryPropertyId)?.name || requiredCategoryPropertyId;
-         return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Phân loại đơn.`);
+         unlockSaveBooking(); return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Phân loại đơn.`);
      }
      const requiredSourcePropertyId = validRows
          .map(row => rooms.find(room => room.id === row.roomId)?.propertyId || row.tempPropId || '')
          .find(propertyId => !!propertyId && bookingFieldSettings[propertyId]?.requireBookingSource);
      if (requiredSourcePropertyId && !bookingMeta.bookingSource) {
          const propertyName = properties.find(prop => prop.id === requiredSourcePropertyId)?.name || requiredSourcePropertyId;
-         return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Nguồn đơn.`);
+         unlockSaveBooking(); return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Nguồn đơn.`);
      }
 
      for (const [idx, row] of validRows.entries()) {
          const room = rooms.find(r => r.id === row.roomId);
          const startTime = new Date(row.checkIn).getTime();
          const endTime = new Date(row.checkOut).getTime();
-         if (startTime >= endTime) return alert(`Lỗi thời gian (Phòng ${room?.number || row.roomId}):\nThời gian Trả phòng phải lớn hơn thời gian Nhận phòng.\nVui lòng kiểm tra lại.`);
+         if (startTime >= endTime) { unlockSaveBooking(); return alert(`Lỗi thời gian (Phòng ${room?.number || row.roomId}):\nThời gian Trả phòng phải lớn hơn thời gian Nhận phòng.\nVui lòng kiểm tra lại.`); }
          const rowRoom = rooms.find(r => r.id === row.roomId);
-         if (!rowRoom) return alert(`Không tìm thấy phòng cho dòng ${idx + 1}.`);
+         if (!rowRoom) { unlockSaveBooking(); return alert(`Không tìm thấy phòng cho dòng ${idx + 1}.`); }
          if (row.tempPropId && rowRoom.propertyId !== row.tempPropId) {
-             return alert(`Lỗi chọn phòng (Dòng ${idx + 1}):\nPhòng ${rowRoom.number} không thuộc chi nhánh đã chọn. Vui lòng chọn lại phòng.`);
+             unlockSaveBooking(); return alert(`Lỗi chọn phòng (Dòng ${idx + 1}):\nPhòng ${rowRoom.number} không thuộc chi nhánh đã chọn. Vui lòng chọn lại phòng.`);
          }
          if (row.tempTypeId && rowRoom.typeId !== row.tempTypeId) {
-             return alert(`Lỗi chọn phòng (Dòng ${idx + 1}):\nPhòng ${rowRoom.number} không thuộc hạng phòng đã chọn. Vui lòng chọn lại phòng.`);
+             unlockSaveBooking(); return alert(`Lỗi chọn phòng (Dòng ${idx + 1}):\nPhòng ${rowRoom.number} không thuộc hạng phòng đã chọn. Vui lòng chọn lại phòng.`);
          }
          const hourlyOnlyViolation = getHourlyOnlyViolation(row.roomId, new Date(row.checkIn), new Date(row.checkOut));
          if (hourlyOnlyViolation) {
-             return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${hourlyOnlyViolation}`);
+             unlockSaveBooking(); return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${hourlyOnlyViolation}`);
          }
          const availability = await DataService.validateRoomAvailabilityRemote(
              rowRoom.propertyId,
@@ -2055,10 +2062,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
              row.checkOut,
              row.bookingId
          );
-         if (!availability.valid) return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${availability.reason}\n\nVui lòng chọn thời gian khác cách ít nhất 30 phút.`);
+         if (!availability.valid) { unlockSaveBooking(); return alert(`Lỗi đặt phòng (Phòng ${room?.number || row.roomId}):\n${availability.reason}\n\nVui lòng chọn thời gian khác cách ít nhất 30 phút.`); }
      }
 
-     setIsSubmitting(true);
      try {
          let groupId = bookingMeta.groupId;
          if (!groupId && validRows.length > 1) groupId = DataService.generateBookingId() + '_grp'; 
@@ -2151,9 +2157,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
          console.error(e);
          const message = e instanceof Error ? e.message : 'Không thể lưu đơn đặt phòng.';
          alert(`Không thể lưu đơn đặt phòng:\n${message}`);
-         setIsSubmitting(false); 
+         unlockSaveBooking(); 
      } finally {
-         setTimeout(() => setIsSubmitting(false), 500);
+         setTimeout(() => unlockSaveBooking(), 500);
      }
   };
 
