@@ -10,8 +10,11 @@ import {
     RoomStatus,
     Tag,
     TransactionCategory,
+    BookingCatalogItem,
+    BookingFieldSettings,
     RoomPolicyRule,
     normalizeNotificationSettings,
+    normalizeBookingFieldSettings,
 } from '../types';
 import { DataService } from '../services/dataService';
 import { 
@@ -28,6 +31,9 @@ interface ManagementProps {
   roomPolicies: RoomPolicyRule[];
   properties: Property[];
   tags: Tag[];
+  bookingCategories: BookingCatalogItem[];
+  bookingSources: BookingCatalogItem[];
+  bookingFieldSettings: BookingFieldSettings;
   notificationSettings: NotificationSettings;
   currentUser: User;
   onRefresh: () => void;
@@ -127,6 +133,9 @@ const Management: React.FC<ManagementProps> = ({
   roomPolicies,
   properties,
   tags,
+  bookingCategories,
+  bookingSources,
+  bookingFieldSettings,
   notificationSettings,
   currentUser,
   onRefresh,
@@ -144,6 +153,11 @@ const Management: React.FC<ManagementProps> = ({
   const [saveStatus, setSaveStatus] = useState('');
   const [draftTags, setDraftTags] = useState<Tag[]>(tags);
   const [draftCategories, setDraftCategories] = useState<TransactionCategory[]>(DataService.getTransactionCategories());
+  const [draftBookingCategories, setDraftBookingCategories] = useState<BookingCatalogItem[]>(bookingCategories);
+  const [draftBookingSources, setDraftBookingSources] = useState<BookingCatalogItem[]>(bookingSources);
+  const [draftBookingFieldSettings, setDraftBookingFieldSettings] = useState<BookingFieldSettings>(
+      normalizeBookingFieldSettings(bookingFieldSettings)
+  );
   const [draftNotificationSettings, setDraftNotificationSettings] = useState<NotificationSettings>(
       normalizeNotificationSettings(notificationSettings)
   );
@@ -178,7 +192,7 @@ const Management: React.FC<ManagementProps> = ({
       { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
       { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
       { id: 'NOTIFICATIONS', label: 'Thông báo', icon: Bell, desc: 'Nhắc lịch, công nợ' },
-      { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag' },
+      { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag, danh mục đơn' },
   ];
   const activeTabMeta = managementTabs.find(tab => tab.id === activeTab) || managementTabs[0];
   const ActiveTabIcon = activeTabMeta.icon;
@@ -194,6 +208,18 @@ const Management: React.FC<ManagementProps> = ({
   useEffect(() => {
       setDraftCategories(DataService.getTransactionCategories());
   }, [activeTab, tags]);
+
+  useEffect(() => {
+      setDraftBookingCategories(bookingCategories);
+  }, [bookingCategories]);
+
+  useEffect(() => {
+      setDraftBookingSources(bookingSources);
+  }, [bookingSources]);
+
+  useEffect(() => {
+      setDraftBookingFieldSettings(normalizeBookingFieldSettings(bookingFieldSettings));
+  }, [bookingFieldSettings]);
 
   useEffect(() => {
       setDraftNotificationSettings(normalizeNotificationSettings(notificationSettings));
@@ -263,6 +289,48 @@ const Management: React.FC<ManagementProps> = ({
   };
 
   const normalizeName = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+
+  const normalizeBookingCatalogDraft = (list: BookingCatalogItem[]) =>
+      list.map((item, index) => ({
+          ...item,
+          name: item.name.trim() || 'Chưa đặt tên',
+          isActive: item.isActive !== false,
+          sortOrder: index,
+      }));
+
+  const addBookingCatalogItem = (
+      list: BookingCatalogItem[],
+      setter: React.Dispatch<React.SetStateAction<BookingCatalogItem[]>>,
+      prefix: string,
+      name: string
+  ) => {
+      setter([...list, { id: `${prefix}_${Date.now()}`, name, isActive: true, sortOrder: list.length }]);
+  };
+
+  const updateBookingFieldRequirement = (
+      propertyId: string,
+      key: keyof BookingFieldSettings[string],
+      checked: boolean
+  ) => {
+      setDraftBookingFieldSettings(prev => ({
+          ...prev,
+          [propertyId]: {
+              requireBookingCategory: prev[propertyId]?.requireBookingCategory === true,
+              requireBookingSource: prev[propertyId]?.requireBookingSource === true,
+              [key]: checked,
+          },
+      }));
+  };
+
+  const normalizeBookingFieldSettingsForProperties = () =>
+      properties.reduce((acc, prop) => {
+          const current = draftBookingFieldSettings[prop.id];
+          acc[prop.id] = {
+              requireBookingCategory: current?.requireBookingCategory === true,
+              requireBookingSource: current?.requireBookingSource === true,
+          };
+          return acc;
+      }, {} as BookingFieldSettings);
 
   const getRoomTypePropertyId = (type: RoomType) => (type as RoomType & { propertyId?: string }).propertyId;
 
@@ -1741,6 +1809,103 @@ const Management: React.FC<ManagementProps> = ({
                                 </div>
                             ))}
                             {draftCategories.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có danh mục nào.</div>}
+                       </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                       <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                            <h2 className="font-bold text-gray-800 flex items-center gap-2"><TagIcon size={18} className="text-purple-600"/> Phân loại đơn</h2>
+                            <div className="flex gap-2">
+                                <button onClick={() => addBookingCatalogItem(draftBookingCategories, setDraftBookingCategories, 'bc', 'Phân loại mới')} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm mục</button>
+                                <button onClick={() => runSaveAction('phân loại đơn', () => DataService.saveBookingCategories(normalizeBookingCatalogDraft(draftBookingCategories)))} className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700">Lưu</button>
+                            </div>
+                       </div>
+                       <div className="p-5 space-y-3">
+                            {draftBookingCategories.map(item => (
+                                <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                    <label className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
+                                        <input
+                                            type="checkbox"
+                                            checked={item.isActive !== false}
+                                            onChange={(e) => setDraftBookingCategories(draftBookingCategories.map(entry => entry.id === item.id ? { ...entry, isActive: e.target.checked } : entry))}
+                                            className="accent-blue-600"
+                                        />
+                                        Bật
+                                    </label>
+                                    <input type="text" value={item.name} onChange={(e) => setDraftBookingCategories(draftBookingCategories.map(entry => entry.id === item.id ? {...entry, name: e.target.value} : entry))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
+                                    <button onClick={() => setDraftBookingCategories(draftBookingCategories.filter(entry => entry.id !== item.id))} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
+                                </div>
+                            ))}
+                            {draftBookingCategories.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có phân loại đơn nào.</div>}
+                       </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                       <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                            <h2 className="font-bold text-gray-800 flex items-center gap-2"><Building2 size={18} className="text-orange-600"/> Nguồn đơn</h2>
+                            <div className="flex gap-2">
+                                <button onClick={() => addBookingCatalogItem(draftBookingSources, setDraftBookingSources, 'bs', 'Nguồn mới')} className="text-sm bg-white border border-gray-300 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50">Thêm mục</button>
+                                <button onClick={() => runSaveAction('nguồn đơn', () => DataService.saveBookingSources(normalizeBookingCatalogDraft(draftBookingSources)))} className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700">Lưu</button>
+                            </div>
+                       </div>
+                       <div className="p-5 space-y-3">
+                            {draftBookingSources.map(item => (
+                                <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                    <label className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
+                                        <input
+                                            type="checkbox"
+                                            checked={item.isActive !== false}
+                                            onChange={(e) => setDraftBookingSources(draftBookingSources.map(entry => entry.id === item.id ? { ...entry, isActive: e.target.checked } : entry))}
+                                            className="accent-blue-600"
+                                        />
+                                        Bật
+                                    </label>
+                                    <input type="text" value={item.name} onChange={(e) => setDraftBookingSources(draftBookingSources.map(entry => entry.id === item.id ? {...entry, name: e.target.value} : entry))} className="flex-1 bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none px-1 text-sm font-medium" />
+                                    <button onClick={() => setDraftBookingSources(draftBookingSources.filter(entry => entry.id !== item.id))} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md"><Trash2 size={16}/></button>
+                                </div>
+                            ))}
+                            {draftBookingSources.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có nguồn đơn nào.</div>}
+                       </div>
+                  </div>
+
+                  <div className="md:col-span-2 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                       <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                            <div>
+                                <h2 className="font-bold text-gray-800 flex items-center gap-2"><Shield size={18} className="text-blue-600"/> Bắt buộc theo chi nhánh</h2>
+                                <p className="text-xs font-medium text-gray-500 mt-1">Khi bật, nhân viên phải chọn đủ trường tương ứng trước khi lưu đơn ở chi nhánh đó.</p>
+                            </div>
+                            <button onClick={() => runSaveAction('cấu hình bắt buộc danh mục đơn', () => DataService.saveBookingFieldSettings(normalizeBookingFieldSettingsForProperties()))} className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-blue-700">Lưu cài đặt</button>
+                       </div>
+                       <div className="p-5 space-y-3">
+                            {properties.map(prop => {
+                                const requirement = draftBookingFieldSettings[prop.id] || { requireBookingCategory: false, requireBookingSource: false };
+                                return (
+                                    <div key={prop.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                        <div className="font-bold text-gray-800">{prop.name}</div>
+                                        <div className="flex flex-wrap gap-3">
+                                            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={requirement.requireBookingCategory}
+                                                    onChange={(e) => updateBookingFieldRequirement(prop.id, 'requireBookingCategory', e.target.checked)}
+                                                    className="accent-blue-600"
+                                                />
+                                                Bắt buộc Phân loại đơn
+                                            </label>
+                                            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={requirement.requireBookingSource}
+                                                    onChange={(e) => updateBookingFieldRequirement(prop.id, 'requireBookingSource', e.target.checked)}
+                                                    className="accent-blue-600"
+                                                />
+                                                Bắt buộc Nguồn đơn
+                                            </label>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {properties.length === 0 && <div className="text-sm text-gray-400 text-center py-6">Chưa có chi nhánh nào.</div>}
                        </div>
                   </div>
               </div>

@@ -1,5 +1,7 @@
 import {
     Booking,
+    BookingCatalogItem,
+    BookingFieldSettings,
     BookingStatus,
     Customer,
     DEFAULT_NOTIFICATION_SETTINGS,
@@ -19,10 +21,13 @@ import {
     TransactionCategory,
     User,
     UserRole,
+    normalizeBookingFieldSettings,
     normalizeNotificationSettings,
 } from '../types';
 import {
     INITIAL_BOOKINGS,
+    INITIAL_BOOKING_CATEGORIES,
+    INITIAL_BOOKING_SOURCES,
     INITIAL_CUSTOMERS,
     INITIAL_PLANS,
     INITIAL_PROPERTIES,
@@ -92,6 +97,9 @@ const CACHE = {
     history: [] as HistoryLog[],
     tags: [] as Tag[],
     transactionCategories: [] as TransactionCategory[],
+    bookingCategories: [] as BookingCatalogItem[],
+    bookingSources: [] as BookingCatalogItem[],
+    bookingFieldSettings: {} as BookingFieldSettings,
     notificationSettings: DEFAULT_NOTIFICATION_SETTINGS as NotificationSettings,
     tenants: [] as Tenant[],
     plans: [] as SubscriptionPlan[],
@@ -115,6 +123,8 @@ type AuditedNode =
     | 'users'
     | 'tags'
     | 'transactionCategories'
+    | 'bookingCategories'
+    | 'bookingSources'
     | 'tenants'
     | 'plans';
 
@@ -255,6 +265,9 @@ const getNodeMutationPermissions = (node: string, mode: 'save' | 'delete') => {
         case 'tags':
         case 'transactionCategories':
             return [PERMISSIONS.MANAGE_ROOMS];
+        case 'bookingCategories':
+        case 'bookingSources':
+            return [PERMISSIONS.ADMIN_SETTINGS];
         case 'customers':
             return [
                 PERMISSIONS.MANAGE_BOOKINGS,
@@ -444,6 +457,20 @@ const COLLECTION_CONFIGS: Record<AuditedNode, CollectionConfig<any>> = {
         collectionLabel: 'danh mục thu chi',
         scopedByTenant: true,
         getLabel: (item: TransactionCategory) => item.name || item.id,
+    },
+    bookingCategories: {
+        entityType: 'BOOKING_CATEGORY',
+        label: 'phân loại đơn',
+        collectionLabel: 'danh mục phân loại đơn',
+        scopedByTenant: true,
+        getLabel: (item: BookingCatalogItem) => item.name || item.id,
+    },
+    bookingSources: {
+        entityType: 'BOOKING_SOURCE',
+        label: 'nguồn đơn',
+        collectionLabel: 'danh mục nguồn đơn',
+        scopedByTenant: true,
+        getLabel: (item: BookingCatalogItem) => item.name || item.id,
     },
     tenants: {
         entityType: 'TENANT',
@@ -1041,6 +1068,8 @@ const buildNodeMetadata = (node: AuditedNode, item: any) => {
                 roomNumber: getRoomNumber(item.roomId),
                 guestName: item.guestName,
                 guestPhone: item.guestPhone,
+                bookingCategory: item.bookingCategory || '',
+                bookingSource: item.bookingSource || '',
                 status: item.status,
                 checkInDate: item.checkInDate,
                 checkOutDate: item.checkOutDate,
@@ -1075,6 +1104,9 @@ const buildNodeMetadata = (node: AuditedNode, item: any) => {
             return { color: item.color };
         case 'transactionCategories':
             return { type: item.type };
+        case 'bookingCategories':
+        case 'bookingSources':
+            return { isActive: item.isActive !== false, sortOrder: item.sortOrder || 0 };
         case 'tenants':
             return {
                 status: item.status,
@@ -1375,8 +1407,16 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<RoomType>('roomTypes', 'roomTypes');
         bind<Tag>('tags', 'tags');
         bind<TransactionCategory>('transactionCategories', 'transactionCategories');
+        bind<BookingCatalogItem>('bookingCategories', 'bookingCategories');
+        bind<BookingCatalogItem>('bookingSources', 'bookingSources');
         bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
         bind<Customer>('customers', 'customers');
+
+        const bookingFieldSettingsUnsubscribe = trackedOnValue(`${basePath}/bookingFieldSettings`, (snap) => {
+            CACHE.bookingFieldSettings = normalizeBookingFieldSettings(snap.val());
+            _dataChangeCallback();
+        });
+        activeRealtimeUnsubscribers.push(bookingFieldSettingsUnsubscribe);
 
         const notificationSettingsUnsubscribe = trackedOnValue(`${basePath}/notificationSettings`, (snap) => {
             CACHE.notificationSettings = normalizeNotificationSettings(snap.val());
@@ -2047,6 +2087,8 @@ const _seedTenantData = (tenantId: string) => {
     updates[`${path}/customers`] = toMap(INITIAL_CUSTOMERS);
     updates[`${path}/tags`] = toMap(INITIAL_TAGS);
     updates[`${path}/transactionCategories`] = toMap(INITIAL_TRANSACTION_CATEGORIES);
+    updates[`${path}/bookingCategories`] = toMap(INITIAL_BOOKING_CATEGORIES);
+    updates[`${path}/bookingSources`] = toMap(INITIAL_BOOKING_SOURCES);
     updates[`system/tenants/${tenantId}/initialSeeded`] = true;
 
     trackedUpdateRoot(updates, { source: 'seed-tenant', tenantId }).then(() => {
@@ -2117,7 +2159,7 @@ const _saveListAsMap = async (node: string, list: any[]) => {
 
     // Small list settings must be hard-deleted when removed from the saved list
     // to avoid ghost items reappearing on realtime sync / page refresh.
-    const shouldDeleteRemovedListItems = ['roomPolicies', 'tags', 'transactionCategories'].includes(node);
+    const shouldDeleteRemovedListItems = ['roomPolicies', 'tags', 'transactionCategories', 'bookingCategories', 'bookingSources'].includes(node);
     if (shouldDeleteRemovedListItems) {
         // @ts-ignore
         const currentList = CACHE[node as keyof typeof CACHE];
@@ -2271,6 +2313,40 @@ const _saveAuditedList = async (node: AuditedNode, list: any[]) => {
 
     await _saveListAsMap(node, list);
     _auditCollectionMutation(node, previousList, normalizedList);
+};
+
+const _saveBookingFieldSettings = async (settings: BookingFieldSettings) => {
+    if (!db || !activeTenantId || activeTenantId === SYSTEM_TENANT_ID) {
+        throw new Error('Không thể lưu cấu hình danh mục đơn: thiếu kết nối tenant.');
+    }
+
+    const basePath = getBaseRef();
+    if (!basePath) {
+        throw new Error('Không thể lưu cấu hình danh mục đơn: không xác định được tenant hiện tại.');
+    }
+
+    assertActorHasAnyPermission([PERMISSIONS.ADMIN_SETTINGS], 'cập nhật cấu hình danh mục đơn');
+
+    const previous = cloneData(CACHE.bookingFieldSettings);
+    const normalized = normalizeBookingFieldSettings(settings);
+    await trackedSet(`${basePath}/bookingFieldSettings`, removeUndefinedDeep(normalized), { node: 'bookingFieldSettings' });
+
+    CACHE.bookingFieldSettings = normalized;
+    _dataChangeCallback();
+
+    if (JSON.stringify(previous) !== JSON.stringify(normalized)) {
+        _recordHistory({
+            action: 'UPDATE',
+            entityType: 'SYSTEM',
+            entityId: 'bookingFieldSettings',
+            entityLabel: 'Cấu hình danh mục đơn',
+            description: 'Cập nhật cấu hình danh mục đơn theo chi nhánh',
+            before: previous as unknown as Record<string, any>,
+            after: normalized as unknown as Record<string, any>,
+            metadata: { node: 'bookingFieldSettings' },
+            coalesceKey: 'booking-field-settings:update',
+        });
+    }
 };
 
 const _saveNotificationSettings = async (settings: NotificationSettings) => {
@@ -4374,6 +4450,23 @@ const _validateRoomAvailability = (roomId: string, start: string, end: string, e
     return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
 };
 
+const sortBookingCatalogItems = (list: BookingCatalogItem[]) =>
+    [...list].sort((a, b) => {
+        const orderA = Number.isFinite(a.sortOrder) ? Number(a.sortOrder) : 0;
+        const orderB = Number.isFinite(b.sortOrder) ? Number(b.sortOrder) : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.name || '').localeCompare(b.name || '', 'vi', { numeric: true });
+    });
+
+const getBookingCatalogList = (list: BookingCatalogItem[], fallback: BookingCatalogItem[]) => {
+    const source = list.length > 0 ? list : fallback;
+    return sortBookingCatalogItems(source).map(item => ({
+        ...item,
+        tenantId: activeTenantId && activeTenantId !== SYSTEM_TENANT_ID ? item.tenantId || activeTenantId : item.tenantId,
+        isActive: item.isActive !== false,
+    }));
+};
+
 export const DataService = {
     init: _initRealtimeConnection,
 
@@ -4650,6 +4743,9 @@ export const DataService = {
     getUsers: () => CACHE.users,
     getTags: () => CACHE.tags,
     getTransactionCategories: () => CACHE.transactionCategories,
+    getBookingCategories: () => getBookingCatalogList(CACHE.bookingCategories, INITIAL_BOOKING_CATEGORIES),
+    getBookingSources: () => getBookingCatalogList(CACHE.bookingSources, INITIAL_BOOKING_SOURCES),
+    getBookingFieldSettings: () => normalizeBookingFieldSettings(CACHE.bookingFieldSettings),
     getNotificationSettings: () => normalizeNotificationSettings(CACHE.notificationSettings),
     getHistory: () => CACHE.history,
     fetchRecentHistory: (limit?: number, tenantId?: string | null) => _fetchRecentHistory(limit, tenantId),
@@ -4676,6 +4772,9 @@ export const DataService = {
     saveRoomTypes: (list: RoomType[]) => _saveAuditedList('roomTypes', list),
     saveTags: (list: Tag[]) => _saveAuditedList('tags', list),
     saveTransactionCategories: (list: TransactionCategory[]) => _saveAuditedList('transactionCategories', list),
+    saveBookingCategories: (list: BookingCatalogItem[]) => _saveAuditedList('bookingCategories', list),
+    saveBookingSources: (list: BookingCatalogItem[]) => _saveAuditedList('bookingSources', list),
+    saveBookingFieldSettings: (settings: BookingFieldSettings) => _saveBookingFieldSettings(settings),
     saveNotificationSettings: (settings: NotificationSettings) => _saveNotificationSettings(settings),
 
     updateRoomStatus: _updateRoomStatus,

@@ -1,5 +1,5 @@
 
-import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag, Tenant, SubscriptionPlan, TransactionCategory } from '../types';
+import { Booking, BookingStatus, Customer, Property, Room, RoomStatus, RoomType, User, UserRole, PERMISSIONS, Tag, Tenant, SubscriptionPlan, TransactionCategory, BookingCatalogItem } from '../types';
 import { encodePasswordForView } from '../utils/security';
 
 // SaaS: Subscription Plans
@@ -47,6 +47,25 @@ export const INITIAL_TRANSACTION_CATEGORIES: TransactionCategory[] = [
 export const INITIAL_TAGS: Tag[] = [
   { id: 'tag1', tenantId: DEFAULT_TENANT_ID, name: 'Combo', color: '#22c55e' }, // Green-500
   { id: 'tag2', tenantId: DEFAULT_TENANT_ID, name: 'Staycation', color: '#38bdf8' }, // Sky-400
+];
+
+export const INITIAL_BOOKING_CATEGORIES: BookingCatalogItem[] = [
+  { id: 'COMBO', tenantId: DEFAULT_TENANT_ID, name: 'Combo', isActive: true, sortOrder: 0 },
+  { id: 'STAYCATION', tenantId: DEFAULT_TENANT_ID, name: 'Staycation', isActive: true, sortOrder: 1 },
+];
+
+export const INITIAL_BOOKING_SOURCES: BookingCatalogItem[] = [
+  { id: 'DIRECT', tenantId: DEFAULT_TENANT_ID, name: 'Khách trực tiếp', isActive: true, sortOrder: 0 },
+  { id: 'SMS', tenantId: DEFAULT_TENANT_ID, name: 'Sms', isActive: true, sortOrder: 1 },
+  { id: 'ZALO', tenantId: DEFAULT_TENANT_ID, name: 'Zalo', isActive: true, sortOrder: 2 },
+  { id: 'FACEBOOK', tenantId: DEFAULT_TENANT_ID, name: 'Facebook', isActive: true, sortOrder: 3 },
+  { id: 'TIKTOK', tenantId: DEFAULT_TENANT_ID, name: 'TikTok', isActive: true, sortOrder: 4 },
+  { id: 'INSTAGRAM', tenantId: DEFAULT_TENANT_ID, name: 'Instagram', isActive: true, sortOrder: 5 },
+  { id: 'BOOKING', tenantId: DEFAULT_TENANT_ID, name: 'Booking.com', isActive: true, sortOrder: 6 },
+  { id: 'AGODA', tenantId: DEFAULT_TENANT_ID, name: 'Agoda', isActive: true, sortOrder: 7 },
+  { id: 'TRAVELOKA', tenantId: DEFAULT_TENANT_ID, name: 'Traveloka', isActive: true, sortOrder: 8 },
+  { id: 'TRIP', tenantId: DEFAULT_TENANT_ID, name: 'Trip.com', isActive: true, sortOrder: 9 },
+  { id: 'EXPEDIA', tenantId: DEFAULT_TENANT_ID, name: 'Expedia', isActive: true, sortOrder: 10 },
 ];
 
 export const INITIAL_ROOM_TYPES: RoomType[] = [

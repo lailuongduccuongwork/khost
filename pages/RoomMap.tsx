@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog, RoomPolicyRule } from '../types';
+import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog, RoomPolicyRule, BookingCatalogItem, BookingFieldSettings } from '../types';
 import { DataService } from '../services/dataService';
 import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, User as UserIcon, Edit2, Building2, Loader2, LogIn, LogOut } from 'lucide-react';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
@@ -16,6 +16,9 @@ interface RoomMapProps {
   bookings: Booking[];
   customers: Customer[];
   tags: Tag[];
+  bookingCategories: BookingCatalogItem[];
+  bookingSources: BookingCatalogItem[];
+  bookingFieldSettings: BookingFieldSettings;
   properties: Property[];
   onRefresh: () => void;
   onUpdateStatus?: (roomId: string, status: RoomStatus) => void | Promise<void>;
@@ -49,6 +52,24 @@ const parsePolicyDateToDayMs = (dateText?: string) => {
 };
 
 const DEFAULT_HOURLY_ONLY_MAX_STAY_HOURS = 12;
+
+const sortBookingCatalogItems = (list: BookingCatalogItem[]) =>
+    [...list].sort((a, b) => {
+        const orderA = Number.isFinite(a.sortOrder) ? Number(a.sortOrder) : 0;
+        const orderB = Number.isFinite(b.sortOrder) ? Number(b.sortOrder) : 0;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.name || '').localeCompare(b.name || '', 'vi', { numeric: true });
+    });
+
+const getBookingCatalogOptions = (items: BookingCatalogItem[], selectedValue?: string) => {
+    const activeItems = sortBookingCatalogItems(items.filter(item => item.isActive !== false));
+    if (!selectedValue || activeItems.some(item => item.id === selectedValue)) return activeItems;
+    const selectedItem = items.find(item => item.id === selectedValue);
+    return [
+        selectedItem || { id: selectedValue, name: selectedValue, isActive: false },
+        ...activeItems,
+    ];
+};
 
 const normalizeHourlyOnlyMaxStayHours = (value?: number) => {
     const numericValue = Number(value);
@@ -374,7 +395,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings: _incomingBookings, customers, tags, properties, onRefresh: _onRefresh, onUpdateStatus, currentProperty, currentUser, searchSeed = '', searchSeedNonce = 0 }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings: _incomingBookings, customers, tags, bookingCategories, bookingSources, bookingFieldSettings, properties, onRefresh: _onRefresh, onUpdateStatus, currentProperty, currentUser, searchSeed = '', searchSeedNonce = 0 }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -453,10 +474,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const customerSuggestionBlurTimerRef = useRef<number | null>(null);
   const [bookingMeta, setBookingMeta] = useState<{
       id?: string; groupId?: string; guestName: string; guestPhone: string;
+      bookingCategory: string; bookingSource: string;
       totalPrice: number; paidAmount: number; notes: string; status: BookingStatus;
       isManualPrice: boolean; tags: string[]; extraFees: ExtraFee[]; 
   }>({
-      guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
+      guestName: '', guestPhone: '', bookingCategory: '', bookingSource: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: []
   });
 
   const [pendingFee, setPendingFee] = useState<{ categoryId: string, amount: number }>({ categoryId: '', amount: 0 });
@@ -467,6 +489,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   }
   const [bookingRows, setBookingRows] = useState<BookingRow[]>([]);
   const [originalBookingIds, setOriginalBookingIds] = useState<string[]>([]);
+  const bookingCategoryOptions = useMemo(
+      () => getBookingCatalogOptions(bookingCategories, bookingMeta.bookingCategory),
+      [bookingCategories, bookingMeta.bookingCategory]
+  );
+  const bookingSourceOptions = useMemo(
+      () => getBookingCatalogOptions(bookingSources, bookingMeta.bookingSource),
+      [bookingSources, bookingMeta.bookingSource]
+  );
+  const selectedBookingPropertyIds = useMemo(() => {
+      return Array.from(new Set(
+          bookingRows
+              .map(row => rooms.find(room => room.id === row.roomId)?.propertyId || row.tempPropId || '')
+              .filter(Boolean)
+      ));
+  }, [bookingRows, rooms]);
+  const modalRequiresBookingCategory = selectedBookingPropertyIds.some(propertyId => bookingFieldSettings[propertyId]?.requireBookingCategory);
+  const modalRequiresBookingSource = selectedBookingPropertyIds.some(propertyId => bookingFieldSettings[propertyId]?.requireBookingSource);
   const [modalAvailabilityBookings, setModalAvailabilityBookings] = useState<Booking[]>([]);
   const [isLoadingModalAvailability, setIsLoadingModalAvailability] = useState(false);
   const [showQuickFinder, setShowQuickFinder] = useState(false);
@@ -1472,6 +1511,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
           setBookingMeta({
               id: mainBooking.id, groupId: mainBooking.groupId, guestName: mainBooking.guestName || '', guestPhone: mainBooking.guestPhone || '',
+              bookingCategory: mainBooking.bookingCategory || '', bookingSource: mainBooking.bookingSource || '',
               totalPrice: roomTotal, paidAmount: totalGroupPaid, notes: mainBooking.notes || '', status: mainBooking.status || BookingStatus.CONFIRMED,
               isManualPrice: true, tags: mainBooking.tags || [], extraFees: loadedFees
           });
@@ -1486,7 +1526,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           });
           setBookingRows(rows); setOriginalBookingIds(groupBookings.map(b => b.id));
       } else {
-          setBookingMeta({ guestName: '', guestPhone: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: [] });
+          setBookingMeta({ guestName: '', guestPhone: '', bookingCategory: '', bookingSource: '', totalPrice: 0, paidAmount: 0, notes: '', status: BookingStatus.CONFIRMED, isManualPrice: false, tags: [], extraFees: [] });
           setOriginalBookingIds([]);
           
           let checkIn = defaultDates ? defaultDates.start : '';
@@ -1976,6 +2016,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
      if (validRows.length === 0) return alert("Vui lòng chọn ít nhất một phòng");
      const roomIds = validRows.map(r => r.roomId);
      if (new Set(roomIds).size !== roomIds.length) return alert("Lỗi: Bạn đang chọn cùng 1 phòng cho nhiều dòng khác nhau trong đơn. Vui lòng kiểm tra lại.");
+     const requiredCategoryPropertyId = validRows
+         .map(row => rooms.find(room => room.id === row.roomId)?.propertyId || row.tempPropId || '')
+         .find(propertyId => !!propertyId && bookingFieldSettings[propertyId]?.requireBookingCategory);
+     if (requiredCategoryPropertyId && !bookingMeta.bookingCategory) {
+         const propertyName = properties.find(prop => prop.id === requiredCategoryPropertyId)?.name || requiredCategoryPropertyId;
+         return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Phân loại đơn.`);
+     }
+     const requiredSourcePropertyId = validRows
+         .map(row => rooms.find(room => room.id === row.roomId)?.propertyId || row.tempPropId || '')
+         .find(propertyId => !!propertyId && bookingFieldSettings[propertyId]?.requireBookingSource);
+     if (requiredSourcePropertyId && !bookingMeta.bookingSource) {
+         const propertyName = properties.find(prop => prop.id === requiredSourcePropertyId)?.name || requiredSourcePropertyId;
+         return alert(`Chi nhánh ${propertyName} đang bắt buộc chọn Nguồn đơn.`);
+     }
 
      for (const [idx, row] of validRows.entries()) {
          const room = rooms.find(r => r.id === row.roomId);
@@ -2027,6 +2081,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
              const commonData = {
                  groupId: groupId || null, propertyId: selectedRoom?.propertyId || currentProperty.id, roomId: row.roomId,
                  customerId: 'c_guest', guestName: finalGuestName, guestPhone: resolvedGuestPhone,
+                 bookingCategory: bookingMeta.bookingCategory || '', bookingSource: bookingMeta.bookingSource || '',
                  checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice, 
                  paidAmount: thisPaid, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
                  extraFees: idx === 0 ? (bookingMeta.extraFees || []) : []
@@ -2074,11 +2129,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
          const receiptBookingCodes = upserts.map(item => item.booking.id).filter(Boolean);
          const primaryBranchName = receiptRooms[0]?.branchName || currentProperty.name || 'K-Host';
          const receiptIssuer = (currentUser.fullName || currentUser.username || 'K-Host').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'K-Host';
+         const receiptBookingCategory = bookingCategoryOptions.find(option => option.id === bookingMeta.bookingCategory)?.name || '';
+         const receiptBookingSource = bookingSourceOptions.find(option => option.id === bookingMeta.bookingSource)?.name || '';
 
          setReceiptData({
              guestName: finalGuestName, guestPhone: resolvedGuestPhone, notes: bookingMeta.notes,
              tags: selectedTags, total: receiptTotal, paid: bookingMeta.paidAmount, rooms: receiptRooms, extraFees: receiptFees, roomPrice: bookingMeta.totalPrice,
              bookingCode: receiptBookingCodes[0] || '--',
+             bookingCategory: receiptBookingCategory,
+             bookingSource: receiptBookingSource,
              roomCount: receiptRooms.length,
              branchName: primaryBranchName,
              issuedAt: new Date().toISOString(),
@@ -3185,7 +3244,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       <div className="px-0.5 mb-1">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Thông tin cơ bản</p>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2.5">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-2.5">
                           <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
                               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Khách hàng</label>
                               <input
@@ -3220,6 +3279,34 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                   }}
                               />
                               {!isReadOnly && renderCustomerSuggestionList(phoneCustomerSuggestions)}
+                          </div>
+                          <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Phân loại đơn{modalRequiresBookingCategory ? ' *' : ''}</label>
+                              <select
+                                  disabled={isReadOnly}
+                                  className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent"
+                                  value={bookingMeta.bookingCategory}
+                                  onChange={e => setBookingMeta({...bookingMeta, bookingCategory: e.target.value})}
+                              >
+                                  <option value="">-- Phân loại --</option>
+                                  {bookingCategoryOptions.map(option => (
+                                      <option key={option.id} value={option.id}>{option.name}</option>
+                                  ))}
+                              </select>
+                          </div>
+                          <div className="relative bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Nguồn đơn{modalRequiresBookingSource ? ' *' : ''}</label>
+                              <select
+                                  disabled={isReadOnly}
+                                  className="w-full text-gray-900 font-semibold text-sm outline-none bg-transparent"
+                                  value={bookingMeta.bookingSource}
+                                  onChange={e => setBookingMeta({...bookingMeta, bookingSource: e.target.value})}
+                              >
+                                  <option value="">-- Nguồn đơn --</option>
+                                  {bookingSourceOptions.map(option => (
+                                      <option key={option.id} value={option.id}>{option.name}</option>
+                                  ))}
+                              </select>
                           </div>
                       </div>
 
@@ -3672,6 +3759,23 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                 <span className="text-gray-600">Còn lại</span>
                                                 <span className={`font-black ${receiptData.total - receiptData.paid > 0 ? 'text-orange-700' : 'text-emerald-600'}`}>
                                                     {formatNumber(receiptData.total - receiptData.paid)} đ
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section className="rounded-[22px] bg-gray-50 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06)]">
+                                        <div className="space-y-2 font-semibold">
+                                            <div className="flex justify-between items-center gap-3">
+                                                <span className="text-gray-600">Phân loại đơn</span>
+                                                <span className={`text-right ${receiptData.bookingCategory ? 'font-black text-gray-950' : 'font-semibold text-gray-400'}`}>
+                                                    {receiptData.bookingCategory || 'Chưa chọn'}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center gap-3">
+                                                <span className="text-gray-600">Nguồn đơn</span>
+                                                <span className={`text-right ${receiptData.bookingSource ? 'font-black text-gray-950' : 'font-semibold text-gray-400'}`}>
+                                                    {receiptData.bookingSource || 'Chưa chọn'}
                                                 </span>
                                             </div>
                                         </div>

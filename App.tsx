@@ -19,6 +19,8 @@ import {
   RoomPolicyRule,
   NotificationSettings,
   DEFAULT_NOTIFICATION_SETTINGS,
+  BookingCatalogItem,
+  BookingFieldSettings,
 } from './types';
 import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
@@ -125,6 +127,9 @@ const App: React.FC = () => {
   const [roomPolicies, setRoomPolicies] = useState<RoomPolicyRule[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [bookingCategories, setBookingCategories] = useState<BookingCatalogItem[]>([]);
+  const [bookingSources, setBookingSources] = useState<BookingCatalogItem[]>([]);
+  const [bookingFieldSettings, setBookingFieldSettings] = useState<BookingFieldSettings>({});
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
 
   // --- NOTIFICATION ENGINE ---
@@ -289,6 +294,9 @@ const App: React.FC = () => {
         setPlanList(DataService.getPlans());
         setSystemUsers(DataService.getSystemUsers());
         setRoomPolicies([]);
+        setBookingCategories([]);
+        setBookingSources([]);
+        setBookingFieldSettings({});
         setNotificationSettings(prev =>
           JSON.stringify(prev) === JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS) ? prev : DEFAULT_NOTIFICATION_SETTINGS
         );
@@ -358,6 +366,9 @@ const App: React.FC = () => {
     setRoomTypes(DataService.getRoomTypes());
     setRoomPolicies(DataService.getRoomPolicies());
     setTags(DataService.getTags());
+    setBookingCategories(DataService.getBookingCategories());
+    setBookingSources(DataService.getBookingSources());
+    setBookingFieldSettings(DataService.getBookingFieldSettings());
     const nextNotificationSettings = DataService.getNotificationSettings();
     setNotificationSettings(prev =>
       JSON.stringify(prev) === JSON.stringify(nextNotificationSettings) ? prev : nextNotificationSettings
@@ -882,6 +893,9 @@ const App: React.FC = () => {
                               bookings={bookings}
                               customers={customers}
                               tags={tags}
+                              bookingCategories={bookingCategories}
+                              bookingSources={bookingSources}
+                              bookingFieldSettings={bookingFieldSettings}
                               properties={properties}
                               onRefresh={manualRefresh}
                               onUpdateStatus={handleUpdateRoomStatus}
@@ -937,6 +951,9 @@ const App: React.FC = () => {
                               roomPolicies={roomPolicies}
                               properties={properties}
                               tags={tags}
+                              bookingCategories={bookingCategories}
+                              bookingSources={bookingSources}
+                              bookingFieldSettings={bookingFieldSettings}
                               notificationSettings={notificationSettings}
                               currentUser={effectiveUser}
                               onRefresh={manualRefresh}

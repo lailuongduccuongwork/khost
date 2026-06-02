@@ -100,6 +100,21 @@
             ".validate": "newData.hasChildren(['id', 'tenantId']) && newData.child('id').val() === $categoryId && newData.child('tenantId').val() === $tenantId"
           }
         },
+        "bookingCategories": {
+          "$categoryId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'name']) && newData.child('id').val() === $categoryId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "bookingSources": {
+          "$sourceId": {
+            ".validate": "newData.hasChildren(['id', 'tenantId', 'name']) && newData.child('id').val() === $sourceId && newData.child('tenantId').val() === $tenantId"
+          }
+        },
+        "bookingFieldSettings": {
+          "$propertyId": {
+            ".validate": "!newData.exists() || (newData.hasChildren(['requireBookingCategory', 'requireBookingSource']) && newData.child('requireBookingCategory').isBoolean() && newData.child('requireBookingSource').isBoolean())"
+          }
+        },
         "notificationSettings": {
           ".validate": "newData.hasChildren(['enabled', 'inAppEnabled', 'soundEnabled', 'browserEnabled', 'bookingAlerts', 'debtAlerts'])"
         },

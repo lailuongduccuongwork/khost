@@ -64,6 +64,21 @@ export interface TransactionCategory {
     type: 'REVENUE' | 'EXPENSE'; // Thu hoặc Chi
 }
 
+export interface BookingCatalogItem {
+    id: string;
+    tenantId?: string;
+    name: string;
+    isActive?: boolean;
+    sortOrder?: number;
+}
+
+export interface BookingFieldRequirement {
+    requireBookingCategory: boolean;
+    requireBookingSource: boolean;
+}
+
+export type BookingFieldSettings = Record<string, BookingFieldRequirement>;
+
 export interface ExtraFee {
     id: string;
     categoryId: string; // Link tới TransactionCategory
@@ -176,6 +191,18 @@ export const normalizeNotificationSettings = (value?: any): NotificationSettings
   };
 };
 
+export const normalizeBookingFieldSettings = (value?: any): BookingFieldSettings => {
+  const source = value && typeof value === 'object' ? value : {};
+  return Object.keys(source).reduce((acc, propertyId) => {
+    const item = source[propertyId] && typeof source[propertyId] === 'object' ? source[propertyId] : {};
+    acc[propertyId] = {
+      requireBookingCategory: item.requireBookingCategory === true,
+      requireBookingSource: item.requireBookingSource === true,
+    };
+    return acc;
+  }, {} as BookingFieldSettings);
+};
+
 export interface Property {
   id: string;
   tenantId?: string; // Multi-tenant Foreign Key
@@ -247,6 +274,8 @@ export interface Booking {
   // Snapshot of guest info at time of booking (in case customer record changes or for quick access)
   guestName: string;
   guestPhone: string;
+  bookingCategory?: string;
+  bookingSource?: string;
   
   groupId?: string; // New field: Links multiple bookings together as a group
   
@@ -310,6 +339,8 @@ export type HistoryEntityType =
   | 'ROOM_POLICY'
   | 'TAG'
   | 'TRANSACTION_CATEGORY'
+  | 'BOOKING_CATEGORY'
+  | 'BOOKING_SOURCE'
   | 'REPORT'
   | 'TENANT'
   | 'PLAN'
