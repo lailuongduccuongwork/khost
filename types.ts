@@ -244,6 +244,8 @@ export interface RoomPolicyRule {
   isActive: boolean;
   startDate: string; // yyyy-mm-dd
   endDate?: string; // yyyy-mm-dd (inclusive)
+  startTime?: string; // HH:mm, dùng cho LOCKED
+  endTime?: string; // HH:mm, dùng cho LOCKED
   recurrence: RoomPolicyRecurrence;
   weekdays?: number[]; // 0-6 (CN-T7), dùng cho WEEKLY
   checkInHour?: number; // mặc định 14

@@ -109,12 +109,63 @@ const roomMatchesPolicy = (policy: RoomPolicyRule, room: Room) => {
     return matchProperty && matchType && matchRoom;
 };
 
+const getPolicyTimeValue = (time: string | undefined, fallback: string) => {
+    return typeof time === 'string' && /^\d{2}:\d{2}$/.test(time) ? time : fallback;
+};
+
+const getLegacyPolicyHourTime = (hour: number | undefined, fallback: string) => {
+    const numericHour = Number(hour);
+    if (!Number.isFinite(numericHour)) return fallback;
+    const normalizedHour = Math.max(0, Math.min(23, Math.floor(numericHour)));
+    return `${String(normalizedHour).padStart(2, '0')}:00`;
+};
+
+const getLockedPolicyStartTime = (policy: RoomPolicyRule) => {
+    return getPolicyTimeValue(policy.startTime, getLegacyPolicyHourTime(policy.checkInHour, '00:00'));
+};
+
+const getLockedPolicyEndTime = (policy: RoomPolicyRule) => {
+    return getPolicyTimeValue(policy.endTime, getLegacyPolicyHourTime(policy.checkOutHour, '23:59'));
+};
+
+const getPolicyTimeParts = (time: string) => {
+    const [hour, minute] = time.split(':').map(Number);
+    return {
+        hour: Number.isFinite(hour) ? hour : 0,
+        minute: Number.isFinite(minute) ? minute : 0,
+    };
+};
+
+const getPolicyDateTimeMs = (date: string | undefined, time: string) => {
+    if (!date) return null;
+    const ms = new Date(`${date}T${time}:00`).getTime();
+    return Number.isFinite(ms) ? ms : null;
+};
+
 const getPolicyWindowsForRange = (policy: RoomPolicyRule, rangeStartMs: number, rangeEndMs: number): RoomPolicyWindow[] => {
     if (!policy.isActive) return [];
 
     const windows: RoomPolicyWindow[] = [];
-    const checkInHour = Number.isFinite(policy.checkInHour) ? Number(policy.checkInHour) : 14;
-    const checkOutHour = Number.isFinite(policy.checkOutHour) ? Number(policy.checkOutHour) : 12;
+    const lockedStartTime = getLockedPolicyStartTime(policy);
+    const lockedEndTime = getLockedPolicyEndTime(policy);
+
+    if (policy.mode === 'LOCKED' && policy.recurrence !== 'WEEKLY' && policy.endDate) {
+        const startMs = getPolicyDateTimeMs(policy.startDate, lockedStartTime);
+        let endMs = getPolicyDateTimeMs(policy.endDate, lockedEndTime);
+        if (startMs !== null && endMs !== null) {
+            if (endMs <= startMs) endMs = addDays(new Date(endMs), 1).getTime();
+            if (endMs > rangeStartMs && startMs < rangeEndMs) {
+                windows.push({
+                    policyId: policy.id,
+                    mode: policy.mode,
+                    reason: policy.reason,
+                    startMs,
+                    endMs,
+                });
+            }
+        }
+        return windows;
+    }
 
     let cursor = startOfDay(addDays(new Date(rangeStartMs), -2));
     const cursorEnd = startOfDay(addDays(new Date(rangeEndMs), 2)).getTime();
@@ -125,8 +176,13 @@ const getPolicyWindowsForRange = (policy: RoomPolicyRule, rangeStartMs: number, 
             const windowStart = new Date(cursor);
             const windowEnd = addDays(new Date(cursor), 1);
             if (policy.mode === 'LOCKED') {
-                windowStart.setHours(checkInHour, 0, 0, 0);
-                windowEnd.setHours(checkOutHour, 0, 0, 0);
+                const startParts = getPolicyTimeParts(lockedStartTime);
+                const endParts = getPolicyTimeParts(lockedEndTime);
+                windowStart.setHours(startParts.hour, startParts.minute, 0, 0);
+                windowEnd.setHours(endParts.hour, endParts.minute, 0, 0);
+                if (windowEnd.getTime() <= windowStart.getTime()) {
+                    windowEnd.setTime(addDays(windowEnd, 1).getTime());
+                }
             }
 
             const startMs = windowStart.getTime();

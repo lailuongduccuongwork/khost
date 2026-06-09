@@ -181,6 +181,8 @@ const Management: React.FC<ManagementProps> = ({
   const [policyRecurrence, setPolicyRecurrence] = useState<'NONE' | 'WEEKLY'>('NONE');
   const [policyStartDate, setPolicyStartDate] = useState(todayISO);
   const [policyEndDate, setPolicyEndDate] = useState('');
+  const [policyStartTime, setPolicyStartTime] = useState('00:00');
+  const [policyEndTime, setPolicyEndTime] = useState('23:59');
   const [policyWeekdays, setPolicyWeekdays] = useState<number[]>([6, 0]); // T7 + CN
   const [policyPropertyIds, setPolicyPropertyIds] = useState<string[]>([]);
   const [policyRoomTypeIds, setPolicyRoomTypeIds] = useState<string[]>([]);
@@ -455,6 +457,25 @@ const Management: React.FC<ManagementProps> = ({
       return branchText ? `${roomText} • ${branchText}` : roomText;
   };
 
+  const policyTimeSummary = (rule: RoomPolicyRule) => {
+      if (rule.mode !== 'LOCKED') return `${rule.startDate} → ${rule.endDate || 'Không giới hạn'}`;
+      const startTime = rule.startTime || (Number.isFinite(rule.checkInHour) ? `${String(Number(rule.checkInHour)).padStart(2, '0')}:00` : '00:00');
+      const endTime = rule.endTime || (Number.isFinite(rule.checkOutHour) ? `${String(Number(rule.checkOutHour)).padStart(2, '0')}:00` : '23:59');
+      return rule.endDate ? `${rule.startDate} ${startTime} → ${rule.endDate} ${endTime}` : `${rule.startDate} ${startTime} → Không giới hạn`;
+  };
+
+  const handlePolicyStartDateTimeChange = (value: string) => {
+      const [date, time] = value.split('T');
+      if (date) setPolicyStartDate(date);
+      if (time) setPolicyStartTime(time.slice(0, 5));
+  };
+
+  const handlePolicyEndDateTimeChange = (value: string) => {
+      const [date, time] = value.split('T');
+      if (date) setPolicyEndDate(date);
+      if (time) setPolicyEndTime(time.slice(0, 5));
+  };
+
   const resetPolicyForm = () => {
       setPolicyMode('LOCKED');
       setPolicyMaxStayHours(12);
@@ -462,6 +483,8 @@ const Management: React.FC<ManagementProps> = ({
       setPolicyRecurrence('NONE');
       setPolicyStartDate(todayISO);
       setPolicyEndDate('');
+      setPolicyStartTime('00:00');
+      setPolicyEndTime('23:59');
       setPolicyWeekdays([6, 0]);
       setPolicyPropertyIds([]);
       setPolicyRoomTypeIds([]);
@@ -681,8 +704,16 @@ const Management: React.FC<ManagementProps> = ({
 
   const handleCreateRoomPolicy = async () => {
       if (!policyStartDate) return alert('Vui lòng chọn ngày bắt đầu.');
-      if (policyEndDate && policyEndDate < policyStartDate) return alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
-      if (policyRecurrence === 'WEEKLY' && policyWeekdays.length === 0) return alert('Vui lòng chọn ít nhất 1 ngày trong tuần.');
+      const normalizedPolicyEndDate = policyMode === 'LOCKED' ? (policyEndDate || policyStartDate) : policyEndDate;
+      if (normalizedPolicyEndDate && normalizedPolicyEndDate < policyStartDate) return alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
+      if (policyMode === 'LOCKED') {
+          const startDateTimeMs = new Date(`${policyStartDate}T${policyStartTime}`).getTime();
+          const endDateTimeMs = new Date(`${normalizedPolicyEndDate}T${policyEndTime}`).getTime();
+          if (!Number.isFinite(startDateTimeMs) || !Number.isFinite(endDateTimeMs) || endDateTimeMs <= startDateTimeMs) {
+              return alert('Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu.');
+          }
+      }
+      if (policyMode !== 'LOCKED' && policyRecurrence === 'WEEKLY' && policyWeekdays.length === 0) return alert('Vui lòng chọn ít nhất 1 ngày trong tuần.');
       if (policyRoomIds.length === 0 && policyPropertyIds.length === 0 && policyRoomTypeIds.length === 0) {
           return alert('Vui lòng chọn phòng hoặc chọn theo chi nhánh/hạng phòng để áp dụng hàng loạt.');
       }
@@ -697,9 +728,11 @@ const Management: React.FC<ManagementProps> = ({
           reason: policyReason.trim(),
           isActive: true,
           startDate: policyStartDate,
-          endDate: policyEndDate || undefined,
-          recurrence: policyRecurrence,
-          weekdays: policyRecurrence === 'WEEKLY' ? [...policyWeekdays].sort((a, b) => a - b) : [],
+          endDate: normalizedPolicyEndDate || undefined,
+          startTime: policyMode === 'LOCKED' ? policyStartTime : undefined,
+          endTime: policyMode === 'LOCKED' ? policyEndTime : undefined,
+          recurrence: policyMode === 'LOCKED' ? 'NONE' : policyRecurrence,
+          weekdays: policyMode === 'LOCKED' ? [] : policyRecurrence === 'WEEKLY' ? [...policyWeekdays].sort((a, b) => a - b) : [],
           propertyIds: [...policyPropertyIds],
           roomTypeIds: [...policyRoomTypeIds],
           roomIds: [...policyRoomIds],
@@ -1218,40 +1251,66 @@ const Management: React.FC<ManagementProps> = ({
                                   </select>
                               </label>
 
-                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-                                  Kiểu lịch
-                                  <select
-                                      value={policyRecurrence}
-                                      onChange={(e) => setPolicyRecurrence(e.target.value as 'NONE' | 'WEEKLY')}
-                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
-                                  >
-                                      <option value="NONE">Theo khoảng ngày</option>
-                                      <option value="WEEKLY">Lặp hàng tuần</option>
-                                  </select>
-                              </label>
+                              {policyMode === 'LOCKED' ? (
+                                  <>
+                                      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                          Bắt đầu
+                                          <input
+                                              type="datetime-local"
+                                              value={`${policyStartDate}T${policyStartTime}`}
+                                              onChange={(e) => handlePolicyStartDateTimeChange(e.target.value)}
+                                              className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                          />
+                                      </label>
 
-                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-                                  Ngày bắt đầu
-                                  <input
-                                      type="date"
-                                      value={policyStartDate}
-                                      onChange={(e) => setPolicyStartDate(e.target.value)}
-                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
-                                  />
-                              </label>
+                                      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                          Kết thúc
+                                          <input
+                                              type="datetime-local"
+                                              value={`${policyEndDate || policyStartDate}T${policyEndTime}`}
+                                              onChange={(e) => handlePolicyEndDateTimeChange(e.target.value)}
+                                              className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                          />
+                                      </label>
+                                  </>
+                              ) : (
+                                  <>
+                                      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                          Kiểu lịch
+                                          <select
+                                              value={policyRecurrence}
+                                              onChange={(e) => setPolicyRecurrence(e.target.value as 'NONE' | 'WEEKLY')}
+                                              className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                          >
+                                              <option value="NONE">Theo khoảng ngày</option>
+                                              <option value="WEEKLY">Lặp hàng tuần</option>
+                                          </select>
+                                      </label>
 
-                              <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-                                  Ngày kết thúc
-                                  <input
-                                      type="date"
-                                      value={policyEndDate}
-                                      onChange={(e) => setPolicyEndDate(e.target.value)}
-                                      className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
-                                  />
-                                  <div className="mt-1 text-[11px] font-medium normal-case text-gray-500">
-                                      Để trống = lặp không giới hạn (đến khi bạn tạm dừng/mở khoá).
-                                  </div>
-                              </label>
+                                      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                          Ngày bắt đầu
+                                          <input
+                                              type="date"
+                                              value={policyStartDate}
+                                              onChange={(e) => setPolicyStartDate(e.target.value)}
+                                              className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                          />
+                                      </label>
+
+                                      <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                                          Ngày kết thúc
+                                          <input
+                                              type="date"
+                                              value={policyEndDate}
+                                              onChange={(e) => setPolicyEndDate(e.target.value)}
+                                              className="mt-1.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-blue-500"
+                                          />
+                                          <div className="mt-1 text-[11px] font-medium normal-case text-gray-500">
+                                              Để trống = lặp không giới hạn (đến khi bạn tạm dừng/mở khoá).
+                                          </div>
+                                      </label>
+                                  </>
+                              )}
                           </div>
 
                           {policyMode === 'HOURLY_ONLY' && (
@@ -1277,7 +1336,7 @@ const Management: React.FC<ManagementProps> = ({
                               </div>
                           )}
 
-                          {policyRecurrence === 'WEEKLY' && (
+                          {policyMode !== 'LOCKED' && policyRecurrence === 'WEEKLY' && (
                               <div>
                                   <div className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-2">Ngày áp dụng trong tuần</div>
                                   <div className="flex flex-wrap gap-2">
@@ -1507,7 +1566,7 @@ const Management: React.FC<ManagementProps> = ({
                                                   </span>
                                               </td>
                                               <td className="px-4 py-3 text-xs font-semibold text-gray-700">
-                                                  <div>{policy.startDate} → {policy.endDate || 'Không giới hạn'}</div>
+                                                  <div>{policyTimeSummary(policy)}</div>
                                                   {policy.recurrence === 'WEEKLY' && <div className="text-blue-600 mt-0.5">Lặp: {weekdayLabel || '--'}</div>}
                                                   {policy.mode === 'HOURLY_ONLY' && (
                                                       <div className="text-gray-500 mt-0.5">
