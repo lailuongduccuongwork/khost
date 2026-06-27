@@ -193,6 +193,32 @@ interface BookingGroupSaveParams {
     deleteIds?: string[];
 }
 
+interface BookingIndexSummary {
+    id: string;
+    tenantId?: string;
+    propertyId: string;
+    roomId: string;
+    customerId: string;
+    guestName: string;
+    guestPhone: string;
+    groupId?: string | null;
+    checkInDate: string;
+    checkOutDate: string;
+    status: BookingStatus | string;
+    createdAt: string;
+    updatedAt?: string;
+    createdBy: string;
+    bookingCategory?: string;
+    bookingSource?: string;
+    isHold?: boolean;
+    holdUntil?: string | null;
+    totalPrice: number;
+    paidAmount: number;
+    tags?: string[];
+    hasNotes?: boolean;
+    expenseFeeTotal?: number;
+}
+
 let currentAuditActor: AuditActor | null = null;
 const recentAuditEntries = new Map<string, { id: string; timestamp: number }>();
 const HOLD_CLEANUP_THROTTLE_MS = 10000;
@@ -1410,7 +1436,10 @@ const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => 
         bind<BookingCatalogItem>('bookingCategories', 'bookingCategories');
         bind<BookingCatalogItem>('bookingSources', 'bookingSources');
         bind<RoomPolicyRule>('roomPolicies', 'roomPolicies');
-        bind<Customer>('customers', 'customers');
+        trackedGet(`${basePath}/customers`).then((snap) => {
+            CACHE.customers = snapshotToArray<Customer>(snap);
+            _dataChangeCallback();
+        });
 
         const bookingFieldSettingsUnsubscribe = trackedOnValue(`${basePath}/bookingFieldSettings`, (snap) => {
             CACHE.bookingFieldSettings = normalizeBookingFieldSettings(snap.val());
@@ -1788,13 +1817,14 @@ const _fetchRoomByIdRemote = async (roomId: string) => {
     return matchedRoom;
 };
 
-const _fetchBookingById = async (bookingId: string) => {
+const _fetchBookingById = async (bookingId: string, options: { forceRemote?: boolean } = {}) => {
     if (!_ensureFirebase() || !bookingId) return null;
 
     const cached = CACHE.bookings.find((booking) => booking.id === bookingId) || null;
-    if (cached && cached.status !== BookingStatus.DELETED) return cached;
+    if (!options.forceRemote && cached && cached.status !== BookingStatus.DELETED) return cached;
 
     const remote = await _fetchBookingByIdRemote(bookingId);
+    if (options.forceRemote) return remote;
     return remote || cached;
 };
 
@@ -1846,9 +1876,10 @@ const _fetchOperationalBookingsForProperties = async (
         scopeIds.flatMap((propertyId) =>
             dayKeys.map(async (dateKey) => {
                 const snap = await trackedGet(`${basePath}/${BOOKING_INDEX_NODE}/${propertyId}/${dateKey}`);
-                snapshotToArray<Booking>(snap).forEach((booking) => {
+                snapshotToArray<Booking>(snap).forEach((record) => {
+                    const booking = normalizeBookingIndexRecord(record);
                     if (!booking?.id) return;
-                    unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+                    unique.set(booking.id, booking);
                 });
             })
         )
@@ -1933,9 +1964,10 @@ const _subscribeOperationalBookings = (
     const emitIndexRows = () => {
         const unique = new Map<string, Booking>();
         snapshotMap.forEach((storedSnap) => {
-            snapshotToArray<Booking>(storedSnap).forEach((booking) => {
+            snapshotToArray<Booking>(storedSnap).forEach((record) => {
+                const booking = normalizeBookingIndexRecord(record);
                 if (!booking?.id) return;
-                unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+                unique.set(booking.id, booking);
             });
         });
 
@@ -4238,6 +4270,74 @@ const getDateKeysBetween = (startInput: string | Date, endInput: string | Date) 
     return keys;
 };
 
+const getBookingExpenseFeeTotal = (booking: Pick<Booking, 'extraFees'> | any) =>
+    (booking.extraFees || [])
+        .filter((fee: any) => fee?.type === 'EXPENSE')
+        .reduce((sum: number, fee: any) => sum + (Number(fee.amount) || 0), 0);
+
+const normalizeBookingTagIds = (value: any) => {
+    if (!Array.isArray(value)) return [] as string[];
+    return value
+        .map((tag) => typeof tag === 'string' ? tag : tag?.id)
+        .filter((tagId): tagId is string => typeof tagId === 'string' && tagId.trim().length > 0);
+};
+
+const buildBookingIndexSummary = (booking: Booking): BookingIndexSummary => ({
+    id: booking.id,
+    tenantId: booking.tenantId || activeTenantId || undefined,
+    propertyId: booking.propertyId,
+    roomId: booking.roomId,
+    customerId: booking.customerId || 'c_guest',
+    guestName: booking.guestName || '',
+    guestPhone: booking.guestPhone || '',
+    groupId: booking.groupId || null,
+    checkInDate: booking.checkInDate,
+    checkOutDate: booking.checkOutDate,
+    status: getPersistedBookingStatus(booking) || booking.status,
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt || booking.createdAt,
+    createdBy: booking.createdBy,
+    bookingCategory: booking.bookingCategory || '',
+    bookingSource: booking.bookingSource || '',
+    isHold: !!booking.isHold || booking.status === BookingStatus.HOLD,
+    holdUntil: booking.holdUntil || null,
+    totalPrice: Number(booking.totalPrice) || 0,
+    paidAmount: Number(booking.paidAmount) || 0,
+    tags: normalizeBookingTagIds(booking.tags),
+    hasNotes: !!String(booking.notes || '').trim(),
+    expenseFeeTotal: getBookingExpenseFeeTotal(booking),
+});
+
+const normalizeBookingIndexRecord = (record: any): Booking | null => {
+    if (!record || typeof record !== 'object') return null;
+
+    const tags = normalizeBookingTagIds(record.tags?.length ? record.tags : record.tagIds);
+    const expenseFeeTotal = Number(record.expenseFeeTotal) || getBookingExpenseFeeTotal(record);
+    const hasNotes = typeof record.hasNotes === 'boolean'
+        ? record.hasNotes
+        : !!String(record.notes || '').trim();
+
+    const booking = {
+        ...record,
+        customerId: record.customerId || 'c_guest',
+        guestName: record.guestName || '',
+        guestPhone: record.guestPhone || '',
+        bookingCategory: record.bookingCategory || '',
+        bookingSource: record.bookingSource || '',
+        groupId: record.groupId || undefined,
+        status: record.status || BookingStatus.CONFIRMED,
+        totalPrice: Number(record.totalPrice) || 0,
+        paidAmount: Number(record.paidAmount) || 0,
+        tags,
+        hasNotes,
+        expenseFeeTotal,
+        notes: typeof record.notes === 'string' ? record.notes : '',
+        extraFees: Array.isArray(record.extraFees) ? record.extraFees : [],
+    };
+
+    return normalizeForNode('bookings', booking, activeTenantId) as Booking;
+};
+
 const buildBookingIndexDiff = (basePath: string, previousBooking: Booking | null, nextBooking: Booking | null) => {
     const updates: Record<string, unknown> = {};
     const previousPaths = new Set<string>();
@@ -4255,8 +4355,9 @@ const buildBookingIndexDiff = (basePath: string, previousBooking: Booking | null
     });
 
     if (nextBooking) {
+        const summary = buildBookingIndexSummary(nextBooking);
         getDateKeysBetween(nextBooking.checkInDate, nextBooking.checkOutDate).forEach((dateKey) => {
-            updates[`${basePath}/${BOOKING_INDEX_NODE}/${nextBooking.propertyId}/${dateKey}/${nextBooking.id}`] = nextBooking;
+            updates[`${basePath}/${BOOKING_INDEX_NODE}/${nextBooking.propertyId}/${dateKey}/${nextBooking.id}`] = summary;
         });
     }
 
@@ -4773,7 +4874,7 @@ export const DataService = {
         errorCallback?: (error: unknown) => void,
         paddingDays?: number
     ) => _subscribeOperationalBookings(propertyIds, start, end, callback, errorCallback, paddingDays),
-    fetchBookingById: (bookingId: string) => _fetchBookingById(bookingId),
+    fetchBookingById: (bookingId: string, options?: { forceRemote?: boolean }) => _fetchBookingById(bookingId, options),
     getBookings: (propertyId?: string) => {
         const nowMs = Date.now();
         if (nowMs - lastHoldCleanupAttemptMs > HOLD_CLEANUP_THROTTLE_MS) {

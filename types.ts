@@ -290,10 +290,13 @@ export interface Booking {
   
   // Added field for extra fees
   extraFees?: ExtraFee[]; 
+  expenseFeeTotal?: number;
   
   createdAt: string;
+  updatedAt?: string;
   createdBy: string; // User ID
   notes?: string;
+  hasNotes?: boolean;
   tags?: string[]; // Array of Tag IDs
   
   importBatchId?: string; // For undoing imports

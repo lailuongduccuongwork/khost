@@ -506,6 +506,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); 
   const [isSubmitting, setIsSubmitting] = useState(false); 
   const isSavingBookingRef = useRef(false);
+  const fullBookingCacheRef = useRef<Map<string, Booking>>(new Map());
+  const fullBookingTrustedIdsRef = useRef<Set<string>>(new Set());
+  const fullBookingRequestCacheRef = useRef<Map<string, Promise<Booking | null>>>(new Map());
   const [isDeletingBooking, setIsDeletingBooking] = useState(false);
   
   // DRAG & DROP CHO ĐƠN ĐÃ CÓ
@@ -832,8 +835,64 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   }, [currentProperty.id, properties]);
   const operationalPropertyKey = useMemo(() => operationalPropertyIds.join('|'), [operationalPropertyIds]);
 
+  const getBookingUpdatedAtMs = (booking?: Partial<Booking> | null) => {
+      const value = booking?.updatedAt || booking?.createdAt;
+      if (!value) return 0;
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) ? time : 0;
+  };
+
+  const isFullBookingCacheFresh = (summary: Partial<Booking>, cached: Booking) => {
+      const summaryUpdatedAtMs = getBookingUpdatedAtMs(summary);
+      if (summaryUpdatedAtMs <= 0) return true;
+      return getBookingUpdatedAtMs(cached) >= summaryUpdatedAtMs;
+  };
+
+  const invalidateFullBookingCache = (bookingIds: string[]) => {
+      bookingIds.filter(Boolean).forEach((id) => {
+          fullBookingCacheRef.current.delete(id);
+          fullBookingTrustedIdsRef.current.delete(id);
+          fullBookingRequestCacheRef.current.delete(id);
+      });
+  };
+
+  const upsertFullBookingCache = (bookingsToCache: Booking[]) => {
+      bookingsToCache.forEach((booking) => {
+          if (booking?.id) {
+              fullBookingCacheRef.current.set(booking.id, booking);
+              fullBookingTrustedIdsRef.current.add(booking.id);
+          }
+      });
+  };
+
+  const fetchFullBookingForDetail = async (summary: Partial<Booking>) => {
+      if (!summary.id) return null;
+
+      const cached = fullBookingCacheRef.current.get(summary.id);
+      if (cached && fullBookingTrustedIdsRef.current.has(summary.id) && isFullBookingCacheFresh(summary, cached)) return cached;
+
+      const existingRequest = fullBookingRequestCacheRef.current.get(summary.id);
+      if (existingRequest) return existingRequest;
+
+      const request = DataService.fetchBookingById(summary.id, { forceRemote: true })
+          .then((booking) => {
+              if (booking && deriveBookingStatus(booking, now.getTime()) !== BookingStatus.DELETED) {
+                  upsertFullBookingCache([booking]);
+                  return booking;
+              }
+              return null;
+          })
+          .finally(() => {
+              fullBookingRequestCacheRef.current.delete(summary.id!);
+          });
+
+      fullBookingRequestCacheRef.current.set(summary.id, request);
+      return request;
+  };
+
   const mergeOperationalBookings = (upserts: Booking[], deleteIds: string[] = []) => {
       const deleteIdSet = new Set(deleteIds.filter(Boolean));
+      if (deleteIds.length > 0) invalidateFullBookingCache(deleteIds);
       setOperationalBookings((current) => {
           const byId = new Map<string, Booking>();
           current.forEach((booking) => {
@@ -1114,6 +1173,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       }
       return { viewStart: vStart, viewEnd: vEnd };
   }, [startDate, timelineMode]);
+  const operationalBookingPaddingDays = timelineMode === 'DAY' ? 1 : timelineMode === 'WEEK' ? 2 : 3;
 
   const refreshOperationalBookings = async () => {
       if (operationalPropertyIds.length === 0) {
@@ -1126,7 +1186,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
               operationalPropertyIds,
               viewStart.toISOString(),
               viewEnd.toISOString(),
-              14
+              operationalBookingPaddingDays
           );
           setOperationalBookings(next);
       } catch (error) {
@@ -1166,9 +1226,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
               setOperationalBookings([]);
               setIsLoadingOperationalBookings(false);
           },
-          14
+          operationalBookingPaddingDays
       );
-  }, [operationalPropertyKey, viewStart.getTime(), viewEnd.getTime(), currentProperty.id, properties.length]);
+  }, [operationalPropertyKey, viewStart.getTime(), viewEnd.getTime(), currentProperty.id, properties.length, operationalBookingPaddingDays]);
 
   const filteredBookings = useMemo(() => {
     let res = activeRoomMapBookings.filter((b) => {
@@ -1368,9 +1428,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       }
 
       const leaderFees = leader.extraFees || [];
-      const extraExpense = leaderFees
+      const computedExtraExpense = leaderFees
           .filter((fee) => fee.type === 'EXPENSE')
           .reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+      const extraExpense = computedExtraExpense || Number(leader.expenseFeeTotal) || 0;
       const netRevenue = groupBookings.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
       const paidAmount = groupBookings.reduce((sum, item) => sum + (Number(item.paidAmount) || 0), 0);
       const totalBill = netRevenue + extraExpense;
@@ -1546,14 +1607,14 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       if (!isNaN(d.getTime())) setStartDate(d);
   };
 
-  const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}) => {
+  const openModal = (booking: Partial<Booking> | null, editMode: boolean, defaultRoomId?: string, defaultDates?: {start: string, end: string}, preloadedGroupBookings?: Booking[]) => {
       setIsEditMode(editMode); setShowDeleteConfirm(false); refreshCategories(); 
       setShowBookingHistory(false);
       setPendingFee({ categoryId: '', amount: 0 }); setIsSubmitting(false); 
       
       if (editMode && booking) {
-          let groupBookings: Booking[] = [booking as Booking];
-          if (booking.groupId) {
+          let groupBookings: Booking[] = preloadedGroupBookings?.length ? preloadedGroupBookings : [booking as Booking];
+          if (!preloadedGroupBookings?.length && booking.groupId) {
               const nowMs = now.getTime();
               groupBookings = roomMapBookings.filter(b => b.groupId === booking.groupId && isActiveRoomMapBooking(b, nowMs));
               if (groupBookings.length === 0) groupBookings = [booking as Booking];
@@ -1606,6 +1667,37 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           setBookingRows([{ tempId: 'init', roomId: defaultRoomId || '', tempPropId: initPropId, tempTypeId: initTypeId, checkIn: checkIn, checkOut: checkOut, price: 0 }]);
       }
       setShowModal(true);
+  };
+
+  const openBookingDetail = async (booking: Booking) => {
+      if (!booking?.id) return;
+
+      try {
+          const nowMs = now.getTime();
+          const groupSummaries = booking.groupId
+              ? roomMapBookings.filter(b => b.groupId === booking.groupId && isActiveRoomMapBooking(b, nowMs))
+              : [booking];
+          const uniqueSummaries = Array.from(
+              new Map(
+                  [...groupSummaries, booking]
+                      .filter((item) => item?.id)
+                      .map((item) => [item.id, item])
+              ).values()
+          );
+
+          const loadedBookings = await Promise.all(uniqueSummaries.map((item) => fetchFullBookingForDetail(item)));
+          const missingSummary = uniqueSummaries.find((item, index) => !loadedBookings[index]);
+          if (missingSummary) {
+              throw new Error(`Không tải được dữ liệu đầy đủ của đơn ${missingSummary.id}. Vui lòng tải lại trang rồi thử lại.`);
+          }
+
+          const fullBookings = loadedBookings.filter(Boolean) as Booking[];
+          openModal(fullBookings[0], true, undefined, undefined, fullBookings);
+      } catch (error) {
+          console.error('Open booking detail failed', { bookingId: booking.id, groupId: booking.groupId, error });
+          const message = error instanceof Error ? error.message : 'Không thể tải chi tiết đơn.';
+          alert(`Không thể mở chi tiết đơn:\n${message}`);
+      }
   };
 
   const handleAddRow = () => {
@@ -1913,7 +2005,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       const { booking, newRoom, newCheckIn, newCheckOut } = moveConfirmModal;
       setIsSavingMove(true);
       try {
-          const latestBooking = await DataService.fetchBookingById(booking.id);
+          const latestBooking = await DataService.fetchBookingById(booking.id, { forceRemote: true });
           if (!latestBooking || deriveBookingStatus(latestBooking, now.getTime()) === BookingStatus.DELETED) {
               throw new Error(`Đơn ${booking.id} đã bị xóa hoặc không còn tồn tại. Vui lòng tải lại dữ liệu.`);
           }
@@ -1929,8 +2021,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
               throw new Error(validate.reason || 'Phòng không còn khả dụng cho khung thời gian này.');
           }
 
-          const updatedBooking = { ...latestBooking, roomId: newRoom.id, propertyId: newRoom.propertyId, checkInDate: newCheckIn!.toISOString(), checkOutDate: newCheckOut!.toISOString() };
+          const updatedBooking = { ...latestBooking, roomId: newRoom.id, propertyId: newRoom.propertyId, checkInDate: newCheckIn!.toISOString(), checkOutDate: newCheckOut!.toISOString(), updatedAt: new Date().toISOString() };
           await DataService.updateBooking(updatedBooking);
+          upsertFullBookingCache([updatedBooking]);
           mergeOperationalBookings([updatedBooking]);
           setMoveConfirmModal(null);
       } catch (error) {
@@ -2122,8 +2215,9 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
      }
 
      try {
+         const saveTimestamp = new Date().toISOString();
          let groupId = bookingMeta.groupId;
-         if (!groupId && validRows.length > 1) groupId = DataService.generateBookingId() + '_grp'; 
+         if (!groupId && validRows.length > 1) groupId = DataService.generateBookingId() + '_grp';
          const roomTotal = bookingMeta.totalPrice;
          const pricePerRoom = Math.floor(roomTotal / validRows.length);
 
@@ -2136,26 +2230,29 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
          for (const [idx, row] of validRows.entries()) {
              let thisPrice = idx === 0 ? pricePerRoom + (roomTotal % validRows.length) : pricePerRoom;
-             if (idx === 0) thisPrice += feeNet; 
-             const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0; 
+             if (idx === 0) thisPrice += feeNet;
+             const thisPaid = idx === 0 ? bookingMeta.paidAmount : 0;
              const selectedRoom = rooms.find(r => r.id === row.roomId);
 
              const commonData = {
                  groupId: groupId || null, propertyId: selectedRoom?.propertyId || currentProperty.id, roomId: row.roomId,
                  customerId: 'c_guest', guestName: finalGuestName, guestPhone: resolvedGuestPhone,
                  bookingCategory: bookingMeta.bookingCategory || '', bookingSource: bookingMeta.bookingSource || '',
-                 checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice, 
+                 checkInDate: row.checkIn, checkOutDate: row.checkOut, status: bookingMeta.status, totalPrice: thisPrice,
                  paidAmount: thisPaid, notes: bookingMeta.notes || '', tags: bookingMeta.tags || [],
-                 extraFees: idx === 0 ? (bookingMeta.extraFees || []) : []
+                 extraFees: idx === 0 ? (bookingMeta.extraFees || []) : [],
+                 updatedAt: saveTimestamp
              };
 
              if (row.bookingId) {
-                 const existingBooking = roomMapBookings.find(b => b.id === row.bookingId);
+                 const existingBooking = fullBookingTrustedIdsRef.current.has(row.bookingId)
+                     ? fullBookingCacheRef.current.get(row.bookingId)
+                     : roomMapBookings.find(b => b.id === row.bookingId);
                  const updatedB: Booking = {
                      ...commonData,
                      id: row.bookingId,
                      createdBy: existingBooking?.createdBy || currentUser.id,
-                     createdAt: existingBooking?.createdAt || new Date().toISOString()
+                     createdAt: existingBooking?.createdAt || saveTimestamp
                  };
                  upserts.push({ booking: updatedB, mode: 'update' });
              } else {
@@ -2163,7 +2260,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                      ...commonData,
                      id: DataService.generateBookingId(),
                      createdBy: currentUser.id,
-                     createdAt: new Date().toISOString()
+                     createdAt: saveTimestamp
                  };
                  upserts.push({ booking: newB, mode: 'create' });
              }
@@ -2176,6 +2273,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
              },
              { staffId: currentUser.id }
          );
+         invalidateFullBookingCache(idsToDelete);
+         upsertFullBookingCache(upserts.map((item) => item.booking));
          mergeOperationalBookings(upserts.map((item) => item.booking), idsToDelete);
 
          const receiptRooms = validRows.map(row => {
@@ -2232,6 +2331,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
               if (await DataService.deleteBooking(id, currentUser.id)) successCount++;
           }
           if (successCount > 0) {
+              invalidateFullBookingCache(idsToDelete);
               mergeOperationalBookings([], idsToDelete);
               alert(`Đã xóa ${successCount} đơn thành công!`); setShowDeleteConfirm(false); setShowModal(false);
           } else {
@@ -2689,7 +2789,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                 const isGroup = !!b.groupId;
                                                 const isCompactCard = width < (timelineMode === 'DAY' ? 8 : 5);
                                                 const showGroupBadge = isGroup;
-                                                const showNoteBadge = !!b.notes && (!isCompactCard || !isGroup);
+                                                const showNoteBadge = (!!b.notes || !!b.hasNotes) && (!isCompactCard || !isGroup);
                                                 const roomLayout = bookingLayoutByRoom.get(room.id);
                                                 const laneCount = roomLayout?.laneCount ?? 1;
                                                 const laneIndex = roomLayout?.byBookingId.get(b.id)?.lane ?? 0;
@@ -2718,7 +2818,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                             zIndex: movingBookingId === b.id ? 25 : 10,
                                                             pointerEvents: isDraggingBooking ? 'none' : 'auto' 
                                                         }} 
-                                                        onClick={(e) => { e.stopPropagation(); openModal(b, true, undefined, undefined); }}
+                                                        onClick={(e) => { e.stopPropagation(); openBookingDetail(b); }}
                                                     >
                                                         <div className="absolute top-0.5 right-0.5 flex items-center gap-1 z-[12]">
                                                             {showGroupBadge && <div className="bg-blue-500 text-white w-3.5 h-3.5 flex items-center justify-center text-[8px] border border-white rounded-md font-bold shadow-sm" title="Khách đoàn"><Users size={8} /></div>}
@@ -2847,7 +2947,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                     
                                     <td className="p-4 text-xs text-gray-600">{creator?.username || b.createdBy}</td>
                                     <td className="p-4 text-center">
-                                        <button onClick={() => openModal(b, true, undefined, undefined)} className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
+                                        <button onClick={() => openBookingDetail(b)} className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
                                             Chi tiết
                                         </button>
                                     </td>
