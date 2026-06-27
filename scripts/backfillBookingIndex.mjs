@@ -159,6 +159,27 @@ const normalizeBookingTagIds = (value) => {
         .filter((tagId) => typeof tagId === 'string' && tagId.trim().length > 0);
 };
 
+const canonicalizeIndexValue = (value) => {
+    if (value === null || value === undefined) return undefined;
+    if (Array.isArray(value)) {
+        const arrayValue = value
+            .map((item) => canonicalizeIndexValue(item))
+            .filter((item) => item !== undefined);
+        return arrayValue.length > 0 ? arrayValue : undefined;
+    }
+    if (typeof value === 'object') {
+        const objectValue = {};
+        Object.entries(value).forEach(([key, itemValue]) => {
+            const normalizedValue = canonicalizeIndexValue(itemValue);
+            if (normalizedValue !== undefined) objectValue[key] = normalizedValue;
+        });
+        return Object.keys(objectValue).length > 0 ? objectValue : undefined;
+    }
+    return value;
+};
+
+const canonicalizeIndexRecord = (record) => canonicalizeIndexValue(record) || {};
+
 const buildBookingIndexSummary = (booking) => ({
     id: booking.id,
     tenantId: booking.tenantId || undefined,
@@ -281,7 +302,7 @@ const buildExpectedIndex = (bookingsNode, tenantId, tenantBasePath) => {
             return;
         }
 
-        const summary = buildBookingIndexSummary(booking);
+        const summary = canonicalizeIndexRecord(buildBookingIndexSummary(booking));
         indexedBookingIds.add(booking.id);
         dateKeys.forEach((dateKey) => {
             expected.set(
@@ -313,12 +334,37 @@ const getMismatchType = (dbPath, current, expected) => {
     const parsed = parseIndexPath(dbPath);
     if (!expected) return 'EXTRA_INDEX_PATH';
     if (!current) return 'MISSING_INDEX_PATH';
+    const canonicalCurrent = canonicalizeIndexRecord(current);
+    const canonicalExpected = canonicalizeIndexRecord(expected);
     if (parsed.propertyId !== expected.propertyId) return 'PROPERTY_ID_PATH_MISMATCH';
-    if (current.propertyId !== expected.propertyId) return 'PROPERTY_ID_VALUE_MISMATCH';
-    if (current.roomId !== expected.roomId) return 'ROOM_ID_MISMATCH';
-    if (normalizeLegacyBookingStatus(current.status) !== expected.status) return 'STATUS_MISMATCH';
-    if (stableStringify(current) !== stableStringify(expected)) return 'SUMMARY_MISMATCH';
+    if (canonicalCurrent.propertyId !== canonicalExpected.propertyId) return 'PROPERTY_ID_VALUE_MISMATCH';
+    if (canonicalCurrent.roomId !== canonicalExpected.roomId) return 'ROOM_ID_MISMATCH';
+    if (normalizeLegacyBookingStatus(canonicalCurrent.status) !== canonicalExpected.status) return 'STATUS_MISMATCH';
+    if (stableStringify(canonicalCurrent) !== stableStringify(canonicalExpected)) return 'SUMMARY_MISMATCH';
     return '';
+};
+
+const buildDiffSample = (dbPath, current, expected, mismatchType) => {
+    const canonicalExpected = canonicalizeIndexRecord(expected);
+    const canonicalCurrent = canonicalizeIndexRecord(current);
+    const expectedKeys = new Set(Object.keys(canonicalExpected));
+    const currentKeys = new Set(Object.keys(canonicalCurrent));
+    const expectedOnlyKeys = Array.from(expectedKeys).filter((key) => !currentKeys.has(key)).sort();
+    const currentOnlyKeys = Array.from(currentKeys).filter((key) => !expectedKeys.has(key)).sort();
+    const differentValueKeys = Array.from(expectedKeys)
+        .filter((key) => currentKeys.has(key) && stableStringify(canonicalExpected[key]) !== stableStringify(canonicalCurrent[key]))
+        .sort();
+
+    return {
+        dbPath,
+        bookingId: canonicalExpected?.id || canonicalCurrent?.id || parseIndexPath(dbPath).bookingId,
+        mismatchType,
+        expected: canonicalExpected,
+        current: canonicalCurrent,
+        expectedOnlyKeys,
+        currentOnlyKeys,
+        differentValueKeys,
+    };
 };
 
 const analyzeIndex = (expected, existing) => {
@@ -326,6 +372,7 @@ const analyzeIndex = (expected, existing) => {
     const extra = [];
     const mismatched = [];
     const heavyFields = [];
+    const diffSamples = [];
 
     expected.forEach((expectedBooking, dbPath) => {
         const current = existing.get(dbPath);
@@ -347,6 +394,9 @@ const analyzeIndex = (expected, existing) => {
                 status: current.status,
                 expectedStatus: expectedBooking.status,
             });
+            if (diffSamples.length < 5) {
+                diffSamples.push(buildDiffSample(dbPath, current, expectedBooking, type));
+            }
         }
     });
 
@@ -362,7 +412,7 @@ const analyzeIndex = (expected, existing) => {
         }
     });
 
-    return { missing, extra, mismatched, heavyFields };
+    return { missing, extra, mismatched, heavyFields, diffSamples };
 };
 
 const chunkEntries = (entries, size) => {
@@ -398,7 +448,9 @@ const buildUpdates = (expected, existing) => {
 
     expected.forEach((summary, dbPath) => {
         const current = existing.get(dbPath);
-        if (!current || stableStringify(current) !== stableStringify(summary)) {
+        const canonicalCurrent = current ? canonicalizeIndexRecord(current) : null;
+        const canonicalSummary = canonicalizeIndexRecord(summary);
+        if (!canonicalCurrent || stableStringify(canonicalCurrent) !== stableStringify(canonicalSummary)) {
             updates[dbPath] = summary;
         }
     });
@@ -421,6 +473,7 @@ const summarizeAnalysis = (analysis) => ({
     extraSamples: analysis.extra.slice(0, 10),
     mismatchSamples: analysis.mismatched.slice(0, 10),
     heavyFieldSamples: analysis.heavyFields.slice(0, 10),
+    diffSamples: analysis.diffSamples.slice(0, 5),
 });
 
 const processTenant = async (tenantId) => {
