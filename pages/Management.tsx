@@ -17,6 +17,7 @@ import {
     normalizeBookingFieldSettings,
 } from '../types';
 import { DataService } from '../services/dataService';
+import { isPropertyOperational, isRoomOperational } from '../utils/operationalVisibility';
 import { 
     Building2, BedDouble, Shield, Settings, Plus, Trash2, Edit2, 
     Check, X, Tag as TagIcon, DollarSign, AlertTriangle, ArrowDownAZ, ArrowUpZA, GripVertical, Info, Users, Key, ChevronDown,
@@ -202,6 +203,11 @@ const Management: React.FC<ManagementProps> = ({
       () => properties.map(prop => prop.id).filter(Boolean).sort(),
       [properties]
   );
+  const managementPropertyById = useMemo(
+      () => new Map(properties.map(prop => [prop.id, prop])),
+      [properties]
+  );
+  const operationalVisibilityActor = currentUser.fullName || currentUser.username || currentUser.id || 'ADMIN';
 
   useEffect(() => {
       setDraftTags(tags);
@@ -614,12 +620,61 @@ const Management: React.FC<ManagementProps> = ({
       runSaveAction('cấu hình Tổng quan của chi nhánh', () => DataService.saveProperties(nextProperties));
   };
 
+  const handleTogglePropertyOperationalVisibility = (propertyId: string) => {
+      const property = properties.find(prop => prop.id === propertyId);
+      if (!property) return;
+      const isHidden = !isPropertyOperational(property);
+      const confirmed = window.confirm(isHidden
+          ? `Hiện lại chi nhánh ${property.name} trên các màn vận hành?`
+          : `Chi nhánh ${property.name} sẽ bị ẩn khỏi Tổng quan, Buồng phòng, Sơ đồ phòng, Danh sách đơn, Báo cáo và các dropdown vận hành. Dữ liệu cũ không bị xóa.`
+      );
+      if (!confirmed) return;
+      const now = new Date().toISOString();
+      const nextProperties = properties.map(prop =>
+          prop.id === propertyId
+              ? {
+                  ...prop,
+                  hiddenFromOperations: !isHidden,
+                  isOperationalActive: isHidden,
+                  hiddenAt: isHidden ? prop.hiddenAt : now,
+                  hiddenBy: isHidden ? prop.hiddenBy : operationalVisibilityActor,
+                }
+              : prop
+      );
+      runSaveAction(isHidden ? 'hiện lại chi nhánh vận hành' : 'ẩn chi nhánh khỏi vận hành', () => DataService.saveProperties(nextProperties));
+  };
+
   const handleToggleRoomDashboardExclusion = (roomId: string) => {
       const nextRooms = managementRooms.map(room =>
           room.id === roomId ? { ...room, excludeFromDashboard: !room.excludeFromDashboard } : room
       );
       setManagementRooms(nextRooms);
       runSaveAction('cấu hình Tổng quan của phòng', () => DataService.saveRooms(nextRooms));
+  };
+
+  const handleToggleRoomOperationalVisibility = (roomId: string) => {
+      const room = managementRooms.find(item => item.id === roomId);
+      if (!room) return;
+      const isHidden = room.hiddenFromOperations === true || room.isOperationalActive === false;
+      const confirmed = window.confirm(isHidden
+          ? `Hiện lại phòng ${room.number} trên các màn vận hành?`
+          : `Phòng ${room.number} sẽ bị ẩn khỏi Sơ đồ phòng, Buồng phòng và dropdown tạo/sửa booking. Booking cũ không bị xóa.`
+      );
+      if (!confirmed) return;
+      const now = new Date().toISOString();
+      const nextRooms = managementRooms.map(item =>
+          item.id === roomId
+              ? {
+                  ...item,
+                  hiddenFromOperations: !isHidden,
+                  isOperationalActive: isHidden,
+                  hiddenAt: isHidden ? item.hiddenAt : now,
+                  hiddenBy: isHidden ? item.hiddenBy : operationalVisibilityActor,
+                }
+              : item
+      );
+      setManagementRooms(nextRooms);
+      runSaveAction(isHidden ? 'hiện lại phòng vận hành' : 'ẩn phòng khỏi vận hành', () => DataService.saveRooms(nextRooms));
   };
 
   const handleAddRoomType = (propertyId: string) => {
@@ -881,12 +936,15 @@ const Management: React.FC<ManagementProps> = ({
                                       </div>
                                   </th>
                                   <th className="px-6 py-4 w-1/2">Địa chỉ</th>
+                                  <th className="px-6 py-4 w-44 text-center">Vận hành</th>
                                   <th className="px-6 py-4 w-44 text-center">Tổng quan</th>
                                   <th className="px-6 py-4 w-32 text-center">Thao tác</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
-                              {[...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).map((prop, index) => (
+                              {[...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).map((prop, index) => {
+                                  const propertyHiddenFromOperations = !isPropertyOperational(prop);
+                                  return (
                                   <tr 
                                       key={prop.id} 
                                       draggable
@@ -915,6 +973,20 @@ const Management: React.FC<ManagementProps> = ({
                                       <td className="px-6 py-4 text-center">
                                           <button
                                               type="button"
+                                              onClick={() => handleTogglePropertyOperationalVisibility(prop.id)}
+                                              className={`rounded-full px-3 py-1.5 text-xs font-black transition-colors ${
+                                                  propertyHiddenFromOperations
+                                                      ? 'border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                                      : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                              }`}
+                                              title="Ẩn/hiện chi nhánh khỏi các màn vận hành"
+                                          >
+                                              {propertyHiddenFromOperations ? 'Đã ẩn' : 'Đang hiện'}
+                                          </button>
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
+                                          <button
+                                              type="button"
                                               onClick={() => handleTogglePropertyDashboardExclusion(prop.id)}
                                               className={`rounded-full px-3 py-1.5 text-xs font-black transition-colors ${
                                                   prop.excludeFromDashboard
@@ -932,7 +1004,8 @@ const Management: React.FC<ManagementProps> = ({
                                           <button onClick={() => confirmDelete('property', prop.id, `Chi nhánh ${prop.name}`)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
                                       </td>
                                   </tr>
-                              ))}
+                                  );
+                              })}
                           </tbody>
                       </table>
                   </div>
@@ -979,6 +1052,7 @@ const Management: React.FC<ManagementProps> = ({
                           {[...properties].sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0)).filter(propertyMatchesRoomManagementSearch).map(prop => {
                               const typesInProp = getTypesInProp(prop.id);
                               const roomsInProp = managementRooms.filter(r => r.propertyId === prop.id).sort((a,b) => (a.sortOrder||0) - (b.sortOrder||0));
+                              const propertyHiddenFromOperations = !isPropertyOperational(prop);
                               const isCollapsed = collapsedPropertyIds.includes(prop.id);
                               const query = normalizeName(roomManagementSearch);
                               const propertyNameMatches = query && normalizeName(prop.name).includes(query);
@@ -1005,9 +1079,22 @@ const Management: React.FC<ManagementProps> = ({
                                               <div className="mt-1 text-xs font-bold text-slate-300">
                                                   {typesInProp.length} hạng phòng • {roomsInProp.length} phòng
                                                   {isSearchActive && ` • đang hiện ${displayedTypesInProp.length} hạng, ${displayedRoomsInProp.length} phòng`}
+                                                  {propertyHiddenFromOperations && ' • Đã ẩn vận hành'}
                                               </div>
                                           </div>
                                           <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                                              <button
+                                                  type="button"
+                                                  onClick={() => handleTogglePropertyOperationalVisibility(prop.id)}
+                                                  className={`rounded-lg px-3 py-1.5 text-xs font-black transition-colors ${
+                                                      propertyHiddenFromOperations
+                                                          ? 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                                                          : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                                                  }`}
+                                                  title="Ẩn/hiện chi nhánh khỏi các màn vận hành"
+                                              >
+                                                  {propertyHiddenFromOperations ? 'Hiện lại vận hành' : 'Ẩn khỏi vận hành'}
+                                              </button>
                                               <button
                                                   type="button"
                                                   onClick={() => handleTogglePropertyDashboardExclusion(prop.id)}
@@ -1159,6 +1246,9 @@ const Management: React.FC<ManagementProps> = ({
                                                                       {roomsOfType.map((room) => {
                                                                           const roomIndexInProp = roomsInProp.findIndex(item => item.id === room.id);
                                                                           const safeDropIndex = roomIndexInProp >= 0 ? roomIndexInProp : 0;
+                                                                          const roomHiddenFromOperations = !isRoomOperational(room, managementPropertyById);
+                                                                          const roomHiddenByProperty = propertyHiddenFromOperations;
+                                                                          const roomSelfHidden = room.hiddenFromOperations === true || room.isOperationalActive === false;
                                                                           return (
                                                                               <div
                                                                                   key={room.id}
@@ -1188,6 +1278,25 @@ const Management: React.FC<ManagementProps> = ({
                                                                                           <option key={t.id} value={t.id}>{t.name}</option>
                                                                                       ))}
                                                                                   </select>
+                                                                                  <button
+                                                                                      type="button"
+                                                                                      disabled={roomHiddenByProperty}
+                                                                                      onClick={() => handleToggleRoomOperationalVisibility(room.id)}
+                                                                                      className={`w-full rounded-lg px-2 py-1.5 text-[11px] font-black transition-colors ${
+                                                                                          roomHiddenByProperty
+                                                                                              ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-500'
+                                                                                              : roomHiddenFromOperations
+                                                                                                ? 'border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                                                                                : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                                                                      }`}
+                                                                                      title={roomHiddenByProperty ? 'Chi nhánh đã ẩn khỏi vận hành' : 'Ẩn/hiện phòng khỏi các màn vận hành'}
+                                                                                  >
+                                                                                      {roomHiddenByProperty
+                                                                                          ? 'Ẩn do chi nhánh'
+                                                                                          : roomSelfHidden
+                                                                                            ? 'Hiện lại vận hành'
+                                                                                            : 'Ẩn khỏi vận hành'}
+                                                                                  </button>
                                                                                   <button
                                                                                       type="button"
                                                                                       disabled={Boolean(prop.excludeFromDashboard)}

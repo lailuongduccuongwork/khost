@@ -210,6 +210,11 @@ export interface Property {
   address: string;
   sortOrder?: number; // Order for display
   excludeFromDashboard?: boolean; // Không tính chi nhánh này vào Tổng quan
+  isOperationalActive?: boolean; // Ẩn/hiện chi nhánh khỏi các màn vận hành
+  hiddenFromOperations?: boolean;
+  hiddenAt?: string;
+  hiddenBy?: string;
+  hiddenReason?: string;
 }
 
 export interface RoomType {
@@ -231,6 +236,11 @@ export interface Room {
   floor: number;
   sortOrder?: number; // Order for display
   excludeFromDashboard?: boolean; // Không tính phòng này vào Tổng quan
+  isOperationalActive?: boolean; // Ẩn/hiện phòng khỏi các màn vận hành
+  hiddenFromOperations?: boolean;
+  hiddenAt?: string;
+  hiddenBy?: string;
+  hiddenReason?: string;
 }
 
 export type RoomPolicyMode = 'LOCKED' | 'HOURLY_ONLY';

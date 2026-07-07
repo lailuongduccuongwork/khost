@@ -41,7 +41,7 @@ import {
 import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
 import { deriveBookingStatus, deriveRoomOperationalStatus, isBookingOccupyingRoom } from '../utils/bookingState';
 import { initializeApp } from 'firebase/app';
-import { equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, set, update } from 'firebase/database';
+import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, set, startAt, update } from 'firebase/database';
 
 declare const XLSX: any;
 declare global {
@@ -111,6 +111,10 @@ let realtimeConnectionState: 'UNKNOWN' | 'CONNECTED' | 'DISCONNECTED' = 'UNKNOWN
 let disconnectRealtimeConnectionWatcher: (() => void) | null = null;
 const CONNECTION_PREFLIGHT_TIMEOUT_MS = 2000;
 const BOOKING_INDEX_NODE = 'bookingIndexByPropertyDate';
+const DASHBOARD_BOOKING_RANGE_CACHE_TTL_MS = 15000;
+const dashboardBookingRangeInFlight = new Map<string, Promise<Booking[]>>();
+const dashboardBookingRangeCache = new Map<string, { expiresAt: number; rows: Booking[] }>();
+const dashboardBookingDetailInFlight = new Map<string, Promise<Booking | null>>();
 
 type AuditSource = 'WEB' | 'SYSTEM' | 'IMPORT';
 type AuditedNode =
@@ -607,6 +611,12 @@ const trackedGet = async (path: string) => {
 const trackedGetByChild = async (path: string, child: string, value: string) => {
     const snap = await get(query(ref(db, path), orderByChild(child), equalTo(value)));
     debugFirebaseTraffic('READ:getByChild', path, snap.val(), { exists: snap.exists(), child, value });
+    return snap;
+};
+
+const trackedGetByChildRange = async (path: string, child: string, startValue: string, endValue: string) => {
+    const snap = await get(query(ref(db, path), orderByChild(child), startAt(startValue), endAt(endValue)));
+    debugFirebaseTraffic('READ:getByChildRange', path, snap.val(), { exists: snap.exists(), child, startValue, endValue });
     return snap;
 };
 
@@ -1793,6 +1803,20 @@ const _fetchBookingByIdRemote = async (bookingId: string) => {
     return normalizeForNode('bookings', { id: bookingId, ...snap.val() }, activeTenantId) as Booking;
 };
 
+const _fetchDashboardBookingDetail = (bookingId: string) => {
+    const requestKey = `${activeTenantId || 'NO_TENANT'}|${bookingId}`;
+    const pending = dashboardBookingDetailInFlight.get(requestKey);
+    if (pending) return pending;
+
+    const request = _fetchBookingByIdRemote(bookingId).finally(() => {
+        if (dashboardBookingDetailInFlight.get(requestKey) === request) {
+            dashboardBookingDetailInFlight.delete(requestKey);
+        }
+    });
+    dashboardBookingDetailInFlight.set(requestKey, request);
+    return request;
+};
+
 const _fetchRoomByIdRemote = async (roomId: string) => {
     if (!_ensureFirebase() || !roomId) return null;
 
@@ -1897,6 +1921,80 @@ const _fetchOperationalBookingsForProperties = async (
     }
 
     return filterBookingsForRange(Array.from(unique.values()), lowerBoundMs, upperBoundMs);
+};
+
+const _fetchDashboardBookingsForProperties = async (
+    propertyIds: string[] | undefined,
+    start: string,
+    end: string,
+    paddingDays: number = 0
+) => {
+    if (!_ensureFirebase()) return [] as Booking[];
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as Booking[];
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0) return [] as Booking[];
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || endDate.getTime() <= startDate.getTime()) return [] as Booking[];
+
+    const requestKey = `${activeTenantId || 'NO_TENANT'}|${scopeIds.join(',')}|${startDate.toISOString()}|${endDate.toISOString()}|${paddingDays}`;
+    const cached = dashboardBookingRangeCache.get(requestKey);
+    if (cached && cached.expiresAt > Date.now()) return cloneData(cached.rows);
+
+    const pending = dashboardBookingRangeInFlight.get(requestKey);
+    if (pending) return pending.then((rows) => cloneData(rows));
+
+    const request = (async () => {
+        const scopeSet = new Set(scopeIds);
+        const unique = new Map<string, Booking>();
+        const addBooking = (booking: Booking | null) => {
+            if (!booking?.id) return;
+            if (!booking.propertyId || !scopeSet.has(booking.propertyId)) return;
+            if (booking.status === BookingStatus.DELETED || isExpiredHoldBooking(booking)) return;
+            unique.set(booking.id, booking);
+        };
+
+        const endInclusive = new Date(endDate.getTime() - 1).toISOString();
+        try {
+            const createdSnap = await trackedGetByChildRange(`${basePath}/bookings`, 'createdAt', startDate.toISOString(), endInclusive);
+            snapshotToArray<Booking>(createdSnap).forEach((booking) => {
+                addBooking(normalizeForNode('bookings', booking, activeTenantId) as Booking);
+            });
+        } catch (error) {
+            console.error('Dashboard booking createdAt range load failed', error);
+        }
+
+        const operationalSummaries = await _fetchOperationalBookingsForProperties(scopeIds, start, end, paddingDays);
+        await Promise.all(
+            operationalSummaries.map(async (summary) => {
+                if (!summary?.id || unique.has(summary.id)) return;
+                try {
+                    addBooking((await _fetchDashboardBookingDetail(summary.id)) || summary);
+                } catch (error) {
+                    console.error('Dashboard booking detail load failed', error);
+                    addBooking(summary);
+                }
+            })
+        );
+
+        const rows = Array.from(unique.values());
+        dashboardBookingRangeCache.set(requestKey, { expiresAt: Date.now() + DASHBOARD_BOOKING_RANGE_CACHE_TTL_MS, rows: cloneData(rows) });
+        return rows;
+    })();
+
+    dashboardBookingRangeInFlight.set(requestKey, request);
+
+    try {
+        return cloneData(await request);
+    } finally {
+        if (dashboardBookingRangeInFlight.get(requestKey) === request) {
+            dashboardBookingRangeInFlight.delete(requestKey);
+        }
+    }
 };
 
 const _subscribeOperationalBookings = (
@@ -4866,6 +4964,8 @@ export const DataService = {
         _fetchOperationalBookings(propertyId, start, end, paddingDays),
     fetchOperationalBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string, paddingDays?: number) =>
         _fetchOperationalBookingsForProperties(propertyIds, start, end, paddingDays),
+    fetchDashboardBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string, paddingDays?: number) =>
+        _fetchDashboardBookingsForProperties(propertyIds, start, end, paddingDays),
     subscribeOperationalBookings: (
         propertyIds: string[] | undefined,
         start: string,

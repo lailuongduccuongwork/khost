@@ -9,6 +9,7 @@ interface DashboardProps {
   rooms: Room[];
   properties: Property[];
   currentPropertyId: string;
+  onDateRangeChange?: (range: { startIso: string; endIso: string; key: string } | null) => void;
 }
 
 type DatePreset = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_30_DAYS' | 'THIS_QUARTER' | 'LAST_QUARTER' | 'THIS_YEAR' | 'LAST_YEAR' | 'CUSTOM';
@@ -189,7 +190,7 @@ const StatTile: React.FC<{ label: string; value: string; sub?: string; tone?: st
   </div>
 );
 
-const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, currentPropertyId }) => {
+const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, currentPropertyId, onDateRangeChange }) => {
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -317,6 +318,17 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
     const endExclusive = endExclusiveOfLocalDay(endDate);
     return { start, endExclusive, startMs: start.getTime(), endExclusiveMs: endExclusive.getTime() };
   }, [startDate, endDate, dateRangeInfo.valid]);
+
+  useEffect(() => {
+    if (!onDateRangeChange) return;
+    if (!rangeBounds) {
+      onDateRangeChange(null);
+      return;
+    }
+    const startIso = rangeBounds.start.toISOString();
+    const endIso = rangeBounds.endExclusive.toISOString();
+    onDateRangeChange({ startIso, endIso, key: `${startIso}|${endIso}` });
+  }, [onDateRangeChange, rangeBounds?.startMs, rangeBounds?.endExclusiveMs]);
 
   const propertyById = useMemo(() => {
     const map = new Map<string, Property>();
