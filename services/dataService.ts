@@ -772,6 +772,29 @@ const _disposeActiveRealtimeBindings = () => {
     activeRealtimeUnsubscribers = [];
 };
 
+const _clearSessionCache = () => {
+    _disposeActiveRealtimeBindings();
+    activeTenantId = null;
+    _dataChangeCallback = () => {};
+    CACHE.properties = [];
+    CACHE.rooms = [];
+    CACHE.roomPolicies = [];
+    CACHE.roomTypes = [];
+    CACHE.bookings = [];
+    CACHE.customers = [];
+    CACHE.users = [];
+    CACHE.history = [];
+    CACHE.tags = [];
+    CACHE.transactionCategories = [];
+    CACHE.bookingCategories = [];
+    CACHE.bookingSources = [];
+    CACHE.bookingFieldSettings = {};
+    CACHE.notificationSettings = DEFAULT_NOTIFICATION_SETTINGS;
+    dashboardBookingRangeInFlight.clear();
+    dashboardBookingRangeCache.clear();
+    dashboardBookingDetailInFlight.clear();
+};
+
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 const snapshotToArray = <T extends { id?: string; number?: string; name?: string }>(snap: any): T[] => {
@@ -4721,6 +4744,7 @@ const getBookingCatalogList = (list: BookingCatalogItem[], fallback: BookingCata
 
 export const DataService = {
     init: _initRealtimeConnection,
+    clearSessionCache: () => _clearSessionCache(),
 
     setAuditActor: (user: User | null) => {
         currentAuditActor = user
