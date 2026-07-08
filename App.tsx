@@ -513,7 +513,7 @@ const App: React.FC = () => {
     }
 
     const loaders: Promise<any>[] = [DataService.loadRoomsForPropertiesView(targetPropertyIds)];
-    if (currentPage !== 'room-map') {
+    if (currentPage !== 'room-map' && currentPage !== 'reports') {
       loaders.push(DataService.loadBookingsForPropertiesView(targetPropertyIds));
     }
 
@@ -521,7 +521,7 @@ const App: React.FC = () => {
       .then((results) => {
         if (cancelled) return;
         const nextRooms = (results[0] || []) as Room[];
-        const nextBookings = currentPage === 'room-map' ? [] : (((results[1] || []) as Booking[]));
+        const nextBookings = currentPage === 'room-map' || currentPage === 'reports' ? [] : (((results[1] || []) as Booking[]));
         const visibleRooms = currentPage === 'management' || currentPage === 'reports' ? nextRooms : filterOperationalRooms(nextRooms, operationalProperties);
         const visibleRoomIds = new Set(visibleRooms.map((room) => room.id));
         setRooms(visibleRooms);

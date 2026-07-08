@@ -35,13 +35,16 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, properties, tags, currentPropertyId, currentUser }) => {
+const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, roomTypes, properties, tags, currentPropertyId, currentUser }) => {
   const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
   
   // Filter States
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [reportSourceBookings, setReportSourceBookings] = useState<Booking[]>([]);
+  const [isReportLoading, setIsReportLoading] = useState(false);
+  const [reportLoadError, setReportLoadError] = useState('');
   
   // Sort State
   const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
@@ -69,13 +72,13 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
           .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   }, [rooms, targetPropertySet]);
 
-  const reportRoomIds = useMemo(() => new Set(reportRooms.map((room) => room.id)), [reportRooms]);
-
   const reportBookings = useMemo(() => {
-      return bookings
-          .filter((booking) => targetPropertySet.has(booking.propertyId))
-          .filter((booking) => reportRoomIds.has(booking.roomId));
-  }, [bookings, targetPropertySet, reportRoomIds]);
+      return reportSourceBookings
+          .filter((booking) => targetPropertySet.has(booking.propertyId));
+  }, [reportSourceBookings, targetPropertySet]);
+
+  const reportRangeKey = startDate && endDate ? `${startDate}|${endDate}` : '';
+  const reportPropertyKey = useMemo(() => targetPropertyIds.slice().sort().join(','), [targetPropertyIds]);
 
   // --- Date Logic Helpers ---
   const getRange = (preset: DatePreset): { start: Date, end: Date } | null => {
@@ -197,6 +200,43 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
       else setEndDate(val);
   };
 
+  useEffect(() => {
+      if (!reportRangeKey || targetPropertyIds.length === 0) {
+          setReportSourceBookings([]);
+          setIsReportLoading(false);
+          setReportLoadError('');
+          return;
+      }
+
+      let cancelled = false;
+      setIsReportLoading(true);
+      setReportLoadError('');
+
+      DataService.fetchReportBookingsForProperties(
+          targetPropertyIds,
+          `${startDate}T00:00:00`,
+          `${endDate}T23:59:59\uf8ff`
+      )
+          .then((rows) => {
+              if (cancelled) return;
+              setReportSourceBookings(rows);
+          })
+          .catch((error) => {
+              if (cancelled) return;
+              console.error('Report booking range load failed', error);
+              setReportSourceBookings([]);
+              setReportLoadError('Không tải được dữ liệu báo cáo. Vui lòng thử lại.');
+          })
+          .finally(() => {
+              if (cancelled) return;
+              setIsReportLoading(false);
+          });
+
+      return () => {
+          cancelled = true;
+      };
+  }, [reportRangeKey, reportPropertyKey]);
+
 
   // --- Formatting Helpers ---
   const formatDateTime = (isoDate: string) => {
@@ -306,14 +346,10 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
   };
 
   // --- INTEGRITY CHECK ---
-  // Only allow bookings where Room, RoomType AND Property still exist
+  // Reports are historical, so missing room/type metadata should not blank valid bookings.
   const isValidLinkage = (b: Booking) => {
       const room = reportRooms.find(r => r.id === b.roomId);
-      if (!room) return false; // Room deleted
-      if (isArchiveBucketRoom(room)) return false;
-
-      const type = roomTypes.find(t => t.id === room.typeId);
-      if (!type) return false; // Type deleted
+      if (room && isArchiveBucketRoom(room)) return false;
 
       const prop = properties.find(p => p.id === b.propertyId);
       if (!prop) return false; // Property deleted
@@ -586,6 +622,18 @@ const Reports: React.FC<ReportsProps> = ({ bookings, rooms, users, roomTypes, pr
               <Calendar size={16} /> Báo cáo Đặt phòng
           </button>
       </div>
+
+      {isReportLoading && (
+          <div className="bg-blue-50 border border-blue-100 text-blue-700 rounded-xl px-4 py-3 text-sm font-semibold">
+              Đang tải dữ liệu báo cáo...
+          </div>
+      )}
+
+      {reportLoadError && (
+          <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl px-4 py-3 text-sm font-semibold">
+              {reportLoadError}
+          </div>
+      )}
 
       {/* REVENUE TAB */}
       {activeTab === 'REVENUE' && (

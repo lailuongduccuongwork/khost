@@ -2020,6 +2020,39 @@ const _fetchDashboardBookingsForProperties = async (
     }
 };
 
+const _fetchReportBookingsForProperties = async (
+    propertyIds: string[] | undefined,
+    start: string,
+    end: string
+) => {
+    if (!_ensureFirebase()) return [] as Booking[];
+
+    const basePath = getBaseRef();
+    if (!basePath) return [] as Booking[];
+
+    const scopeIds = normalizePropertyScope(propertyIds);
+    if (scopeIds.length === 0 || !start || !end || end < start) return [] as Booking[];
+
+    const scopeSet = new Set(scopeIds);
+    const unique = new Map<string, Booking>();
+    const addBooking = (booking: Booking) => {
+        if (!booking?.id) return;
+        if (!booking.propertyId || !scopeSet.has(booking.propertyId)) return;
+        if (booking.status === BookingStatus.DELETED || isExpiredHoldBooking(booking)) return;
+        unique.set(booking.id, normalizeForNode('bookings', booking, activeTenantId) as Booking);
+    };
+
+    const [checkOutSnap, createdSnap] = await Promise.all([
+        trackedGetByChildRange(`${basePath}/bookings`, 'checkOutDate', start, end),
+        trackedGetByChildRange(`${basePath}/bookings`, 'createdAt', start, end),
+    ]);
+
+    snapshotToArray<Booking>(checkOutSnap).forEach(addBooking);
+    snapshotToArray<Booking>(createdSnap).forEach(addBooking);
+
+    return Array.from(unique.values());
+};
+
 const _subscribeOperationalBookings = (
     propertyIds: string[] | undefined,
     start: string,
@@ -4990,6 +5023,8 @@ export const DataService = {
         _fetchOperationalBookingsForProperties(propertyIds, start, end, paddingDays),
     fetchDashboardBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string, paddingDays?: number) =>
         _fetchDashboardBookingsForProperties(propertyIds, start, end, paddingDays),
+    fetchReportBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string) =>
+        _fetchReportBookingsForProperties(propertyIds, start, end),
     subscribeOperationalBookings: (
         propertyIds: string[] | undefined,
         start: string,
