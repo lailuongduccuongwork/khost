@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "backfill:booking-index": "node scripts/backfillBookingIndex.mjs"
+    "backfill:booking-index": "node scripts/backfillBookingIndex.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "firebase": "^12.11.0",

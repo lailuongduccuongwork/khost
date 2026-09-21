@@ -451,7 +451,7 @@ const DateTimeControl = ({
 
 
 // --- Main Component ---
-const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings: _incomingBookings, customers, tags, bookingCategories, bookingSources, bookingFieldSettings, properties, onRefresh: _onRefresh, onUpdateStatus, currentProperty, currentUser, searchSeed = '', searchSeedNonce = 0 }) => {
+const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, bookings: currentRoomBookings, customers, tags, bookingCategories, bookingSources, bookingFieldSettings, properties, onRefresh: _onRefresh, onUpdateStatus, currentProperty, currentUser, searchSeed = '', searchSeedNonce = 0 }) => {
   const [viewType, setViewType] = useState<'GRID' | 'LIST'>('GRID');
   const [timelineMode, setTimelineMode] = useState<ViewMode>('WEEK');
   const [startDate, setStartDate] = useState(startOfDay(new Date())); 
@@ -525,7 +525,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       isOpen: boolean; room: Room | null; targetStatus: RoomStatus;
   }>({ isOpen: false, room: null, targetStatus: RoomStatus.VACANT_CLEAN });
   const [isSavingRoomStatus, setIsSavingRoomStatus] = useState(false);
-  const [roomStatusOverrides, setRoomStatusOverrides] = useState<Record<string, RoomStatus>>({});
 
   const [receiptData, setReceiptData] = useState<any | null>(null);
   const [customerSuggestionField, setCustomerSuggestionField] = useState<'name' | 'phone' | null>(null);
@@ -735,7 +734,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       };
 
       const seenBookingIds = new Set<string>();
-      const suggestionBookingSources = [_incomingBookings, modalAvailabilityBookings, activeRoomMapBookings];
+      const suggestionBookingSources = [currentRoomBookings, modalAvailabilityBookings, activeRoomMapBookings];
 
       customers.forEach((customer) => addSuggestion(customer.name, customer.phone, 1));
       suggestionBookingSources.forEach((source) => {
@@ -751,7 +750,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           if (left.sourcePriority !== right.sourcePriority) return left.sourcePriority - right.sourcePriority;
           return left.name.localeCompare(right.name, 'vi');
       });
-  }, [_incomingBookings, activeRoomMapBookings, customers, modalAvailabilityBookings, now]);
+  }, [currentRoomBookings, activeRoomMapBookings, customers, modalAvailabilityBookings, now]);
 
   const nameCustomerSuggestions = useMemo(() => {
       const query = normalizeCustomerSearchText(bookingMeta.guestName);
@@ -962,18 +961,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       properties.forEach((property) => map.set(property.id, property));
       return map;
   }, [properties]);
-
-  useEffect(() => {
-      setRoomStatusOverrides((current) => {
-          const next: Record<string, RoomStatus> = {};
-          rooms.forEach((room) => {
-              if (current[room.id] && current[room.id] !== room.status) {
-                  next[room.id] = current[room.id];
-              }
-          });
-          return Object.keys(next).length === Object.keys(current).length ? current : next;
-      });
-  }, [rooms]);
 
   const roomTypeNameById = useMemo(() => {
       const map = new Map<string, string>();
@@ -1306,20 +1293,20 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const roomOperationalInsights = useMemo(() => {
       const nowMs = now.getTime();
-      const map = new Map<string, { activeBooking: Booking | null; nextBooking: Booking | null }>();
+      const map = new Map<string, { activeBooking: Booking | null; nextBooking: Booking | null; status: RoomStatus }>();
 
       rooms.forEach((room) => {
-          const roomBookings = roomMapBookings.filter((booking) => booking.roomId === room.id && isActiveRoomMapBooking(booking, nowMs));
+          const roomBookings = currentRoomBookings.filter((booking) => booking.roomId === room.id);
           const activeBooking = getActiveBookingForRoom(roomBookings, room.id, nowMs);
           const nextBooking = roomBookings
               .filter((booking) => deriveBookingStatus(booking, nowMs) === BookingStatus.CONFIRMED && new Date(booking.checkInDate).getTime() > nowMs)
               .sort((a, b) => new Date(a.checkInDate).getTime() - new Date(b.checkInDate).getTime())[0] || null;
 
-          map.set(room.id, { activeBooking, nextBooking });
+          map.set(room.id, { activeBooking, nextBooking, status: deriveRoomOperationalStatus(room, roomBookings, nowMs) });
       });
 
       return map;
-  }, [rooms, roomMapBookings, now]);
+  }, [rooms, currentRoomBookings, now]);
 
   const roomTrustSummary = useMemo(() => {
       const summary = {
@@ -1331,9 +1318,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       };
 
       sortedRooms.forEach((room) => {
-          if (room.status === RoomStatus.OCCUPIED) summary.occupied += 1;
-          if (room.status === RoomStatus.VACANT_DIRTY) summary.dirty += 1;
-          if (room.status === RoomStatus.VACANT_CLEAN) summary.clean += 1;
+          const status = roomOperationalInsights.get(room.id)?.status;
+          if (status === RoomStatus.OCCUPIED) summary.occupied += 1;
+          if (status === RoomStatus.VACANT_DIRTY) summary.dirty += 1;
+          if (status === RoomStatus.VACANT_CLEAN) summary.clean += 1;
 
           const insight = roomOperationalInsights.get(room.id);
           if (insight?.nextBooking) summary.arriving += 1;
@@ -1458,10 +1446,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const getRoomMapEffectiveStatus = (room: Room) => {
       const insight = roomOperationalInsights.get(room.id);
-      const overriddenRoom = roomStatusOverrides[room.id]
-          ? { ...room, status: roomStatusOverrides[room.id] }
-          : room;
-      return deriveRoomOperationalStatus(overriddenRoom, insight?.activeBooking ? [insight.activeBooking] : [], now.getTime());
+      return insight?.status ?? deriveRoomOperationalStatus(room, currentRoomBookings, now.getTime());
   };
 
   const handleStatusIconClick = (room: Room) => {
@@ -1485,10 +1470,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           } else {
               await Promise.resolve(DataService.updateRoomStatus(statusModal.room.id, statusModal.targetStatus));
           }
-          setRoomStatusOverrides((current) => ({
-              ...current,
-              [statusModal.room!.id]: statusModal.targetStatus,
-          }));
           setStatusModal({ isOpen: false, room: null, targetStatus: RoomStatus.VACANT_CLEAN });
       } catch (error) {
           const message = error instanceof Error ? error.message : 'Không thể cập nhật trạng thái phòng.';

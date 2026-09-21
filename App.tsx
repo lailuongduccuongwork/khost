@@ -124,6 +124,7 @@ const App: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [isBookingsScopeLoading, setIsBookingsScopeLoading] = useState(false);
+  const [bookingScopeError, setBookingScopeError] = useState<string | null>(null);
   const [dashboardBookingRange, setDashboardBookingRange] = useState<DashboardBookingRange | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
@@ -565,7 +566,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
     if (properties.length === 0) return;
-    if (currentPage !== 'bookings') return;
+    if (currentPage !== 'bookings' && currentPage !== 'housekeeping' && currentPage !== 'room-map') return;
 
     const targetPropertyIds = scopedOperationalPropertyIds;
 
@@ -576,14 +577,18 @@ const App: React.FC = () => {
     }
 
     setIsBookingsScopeLoading(true);
+    setBookingScopeError(null);
+    // Cleanliness needs the complete stay history, independent of the visible calendar range.
     return DataService.subscribeBookingsForPropertiesView(
       targetPropertyIds,
       (nextBookings) => {
+        setBookingScopeError(null);
         setBookings(nextBookings.filter((booking) => operationalRoomIds.has(booking.roomId)));
         setIsBookingsScopeLoading(false);
       },
       (error) => {
         console.error('Scoped housekeeping booking realtime sync failed', error);
+        setBookingScopeError('Không tải được lịch sử sử dụng phòng. Vui lòng tải lại trang để kiểm tra trạng thái.');
         setIsBookingsScopeLoading(false);
       }
     );
@@ -592,7 +597,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
     if (properties.length === 0) return;
-    if (currentPage !== 'dashboard' && currentPage !== 'housekeeping') return;
+    if (currentPage !== 'dashboard') return;
 
     const targetPropertyIds = scopedOperationalPropertyIds;
 
@@ -603,30 +608,6 @@ const App: React.FC = () => {
     }
 
     setIsBookingsScopeLoading(true);
-
-    if (currentPage === 'housekeeping') {
-      const start = new Date();
-      start.setDate(start.getDate() - 1);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date();
-      end.setDate(end.getDate() + 8);
-      end.setHours(0, 0, 0, 0);
-
-      return DataService.subscribeOperationalBookings(
-        targetPropertyIds,
-        start.toISOString(),
-        end.toISOString(),
-        (nextBookings) => {
-          setBookings(nextBookings.filter((booking) => operationalRoomIds.has(booking.roomId)));
-          setIsBookingsScopeLoading(false);
-        },
-        (error) => {
-          console.error('Scoped housekeeping operational booking sync failed', error);
-          setIsBookingsScopeLoading(false);
-        },
-        0
-      );
-    }
 
     if (!dashboardBookingRange) {
       setBookings([]);
@@ -748,16 +729,11 @@ const App: React.FC = () => {
       initDataService('SYSTEM');
   };
 
-  const handleUpdateRoomStatus = (roomId: string, status: RoomStatus) => {
-      const previousRooms = rooms;
-      setRooms((currentRooms) =>
-          currentRooms.map((room) => (room.id === roomId ? { ...room, status } : room))
-      );
-
-      return Promise.resolve(DataService.updateRoomStatus(roomId, status)).catch((error) => {
-          setRooms(previousRooms);
-          throw error;
-      });
+  const handleUpdateRoomStatus = async (roomId: string, status: RoomStatus) => {
+      const savedRoom = await DataService.updateRoomStatus(roomId, status);
+      if (savedRoom) {
+          setRooms((currentRooms) => currentRooms.map((room) => room.id === roomId ? savedRoom : room));
+      }
   };
 
   const effectiveUser = useMemo(() => {
@@ -1001,7 +977,13 @@ const App: React.FC = () => {
                           />
                       )}
 
-                      {currentPage === 'room-map' && (
+                      {(currentPage === 'room-map' || currentPage === 'housekeeping') && (isBookingsScopeLoading || bookingScopeError) && (
+                          <div role="status" className="p-6 text-center text-gray-600">
+                              {bookingScopeError || 'Đang kiểm tra trạng thái phòng…'}
+                          </div>
+                      )}
+
+                      {currentPage === 'room-map' && !isBookingsScopeLoading && !bookingScopeError && (
                           <RoomMap
                               rooms={operationalRooms}
                               roomTypes={roomTypes}
@@ -1022,7 +1004,7 @@ const App: React.FC = () => {
                           />
                       )}
 
-                      {currentPage === 'housekeeping' && (
+                      {currentPage === 'housekeeping' && !isBookingsScopeLoading && !bookingScopeError && (
                           <Housekeeping
                               rooms={operationalRooms}
                               bookings={bookings}

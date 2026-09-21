@@ -41,7 +41,7 @@ import {
 import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
 import { deriveBookingStatus, deriveRoomOperationalStatus, isBookingOccupyingRoom } from '../utils/bookingState';
 import { initializeApp } from 'firebase/app';
-import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, set, startAt, update } from 'firebase/database';
+import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, runTransaction, serverTimestamp, set, startAt, update } from 'firebase/database';
 
 declare const XLSX: any;
 declare global {
@@ -180,6 +180,7 @@ interface RoomStatusOptions {
     source?: AuditSource;
     staffId?: string;
     suppressLog?: boolean;
+    expectedRoom?: Pick<Room, 'status' | 'lastCleanedAt'>;
 }
 
 interface BookingActionOptions {
@@ -1705,6 +1706,8 @@ const subscribeScopedCollectionByProperty = <T extends { id?: string }>(
     let propertyUnsubscribes: Array<() => void> = [];
 
     const emit = () => {
+        // Do not expose an incomplete property scope as empty/clean rooms.
+        if (!snapshotMap.has('fallback') && snapshotMap.size < scopeIds.length) return;
         const unique = new Map<string, T>();
         snapshotMap.forEach((snap) => {
             snapshotToArray<T>(snap).forEach((item) => {
@@ -2357,9 +2360,26 @@ const _saveListAsMap = async (node: string, list: any[]) => {
         }
     }
 
+    const storedRooms = node === 'rooms' ? (await trackedGet(`${basePath}/rooms`)).val() || {} : {};
     normalizedList.forEach((item) => {
         if (item?.id) {
-            updates[`${basePath}/${node}/${item.id}`] = item;
+            const path = `${basePath}/${node}/${item.id}`;
+            if (node === 'rooms' && storedRooms[item.id]) {
+                // Editing a name/order must not restore stale cleanliness data from an open settings tab.
+                const keys = new Set([...Object.keys(storedRooms[item.id]), ...Object.keys(item)]);
+                keys.forEach((key) => {
+                    if (key === 'status' || key === 'lastCleanedAt') return;
+                    updates[`${path}/${key}`] = item[key] ?? null;
+                });
+                item.status = storedRooms[item.id].status;
+                if (storedRooms[item.id].lastCleanedAt !== undefined) {
+                    item.lastCleanedAt = storedRooms[item.id].lastCleanedAt;
+                } else {
+                    delete item.lastCleanedAt;
+                }
+            } else {
+                updates[path] = item;
+            }
         }
     });
 
@@ -2368,6 +2388,7 @@ const _saveListAsMap = async (node: string, list: any[]) => {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] = normalizedList;
         _dataChangeCallback();
+        return normalizedList;
     } catch (error) {
         console.error(`Bulk save ${node} failed`, error);
         throw error;
@@ -2495,10 +2516,8 @@ const _saveAuditedList = async (node: AuditedNode, list: any[]) => {
         // @ts-ignore
         CACHE[node as keyof typeof CACHE] || []
     ) as any[];
-    const normalizedList = list.map((item) => normalizeForNode(node, item, activeTenantId));
-
-    await _saveListAsMap(node, list);
-    _auditCollectionMutation(node, previousList, normalizedList);
+    const savedList = await _saveListAsMap(node, list);
+    if (savedList) _auditCollectionMutation(node, previousList, savedList);
 };
 
 const _saveBookingFieldSettings = async (settings: BookingFieldSettings) => {
@@ -2579,40 +2598,53 @@ const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: Ro
         throw new Error('Không thể cập nhật trạng thái phòng: không xác định được tenant hiện tại.');
     }
 
-    let roomBefore = CACHE.rooms.find((room) => room.id === roomId);
-    if (!roomBefore) {
-        const roomSnap = await trackedGet(`${basePath}/rooms/${roomId}`);
-        if (roomSnap.exists()) {
-            roomBefore = normalizeForNode('rooms', { id: roomId, ...roomSnap.val() }, activeTenantId) as Room;
-        }
-    }
+    const tenantId = activeTenantId;
+    const roomPath = `${basePath}/rooms/${roomId}`;
+    const roomSnap = await trackedGet(roomPath);
+    let roomBefore = roomSnap.exists()
+        ? normalizeForNode('rooms', { id: roomId, ...roomSnap.val() }, tenantId) as Room
+        : null;
     if (!roomBefore) {
         throw new Error(`Không tìm thấy phòng ${roomId} để cập nhật trạng thái.`);
     }
     assertRoomStatusMutationAllowed(roomBefore, options.source, !options.suppressLog);
-    if (roomBefore.status === status) return;
+    const isManual = !options.suppressLog && options.source !== 'SYSTEM';
+    const confirmsCleaning = isManual && status === RoomStatus.VACANT_CLEAN;
+    if (isManual) {
+        const roomBookings = await _fetchBookingsForProperties([roomBefore.propertyId]);
+        if (roomBookings.some((booking) => booking.roomId === roomId && isBookingOccupyingRoom(booking))) {
+            throw new Error('Phòng đang có khách ở. Vui lòng cập nhật giờ trả phòng trước khi báo sạch/bẩn.');
+        }
+    }
+    if (activeTenantId !== tenantId) throw new Error('Chi nhánh làm việc đã thay đổi. Vui lòng thử lại.');
 
-    const existedInCache = CACHE.rooms.some((room) => room.id === roomId);
-    const roomAfter: Room = { ...roomBefore, status };
-    CACHE.rooms = existedInCache
-        ? CACHE.rooms.map((room) => (room.id === roomId ? roomAfter : room))
-        : [...CACHE.rooms, roomAfter];
-    _dataChangeCallback();
+    // A stale automatic sync must not overwrite a newer cleaning confirmation.
+    const expectedStatus = (options.expectedRoom || roomBefore).status;
+    const expectedCleanedAt = (options.expectedRoom || roomBefore).lastCleanedAt;
+    const result = await runTransaction(ref(db, roomPath), (current) => {
+        if (!current) return;
+        if (!isManual && (current.status !== expectedStatus || current.lastCleanedAt !== expectedCleanedAt)) return;
+        if (current.status === status && !confirmsCleaning) return;
+        roomBefore = normalizeForNode('rooms', current, tenantId) as Room;
+        return {
+            ...current,
+            status,
+            ...(confirmsCleaning ? { lastCleanedAt: serverTimestamp() } : {}),
+        };
+    }, { applyLocally: false });
+    const roomAfter = normalizeForNode('rooms', result.snapshot.val(), tenantId) as Room | null;
+    if (!result.committed || !roomAfter) return roomAfter;
 
-    try {
-        await trackedUpdateRoot({ [`${basePath}/rooms/${roomId}/status`]: status }, { operation: 'room-status-sync' });
-    } catch (error: any) {
-        // Rollback local optimistic state when remote write fails.
-        CACHE.rooms = existedInCache
-            ? CACHE.rooms.map((room) => (room.id === roomId ? roomBefore! : room))
-            : CACHE.rooms.filter((room) => room.id !== roomId);
+    if (activeTenantId === tenantId) {
+        CACHE.rooms = CACHE.rooms.some((room) => room.id === roomId)
+            ? CACHE.rooms.map((room) => room.id === roomId ? roomAfter : room)
+            : [...CACHE.rooms, roomAfter];
         _dataChangeCallback();
-        console.error('Sync room status failed', error);
-        throw error;
     }
 
     if (!options.suppressLog) {
         _recordHistory({
+            tenantId,
             action: 'STATUS_CHANGE',
             entityType: 'ROOM',
             entityId: roomId,
@@ -2632,6 +2664,7 @@ const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: Ro
             coalesceKey: `room:${roomId}:status`,
         });
     }
+    return roomAfter;
 };
 
 const _syncRoomStatusesForRooms = async (roomIds: string[], options: RoomStatusOptions = {}) => {
@@ -2653,16 +2686,16 @@ const _syncRoomStatusesForRooms = async (roomIds: string[], options: RoomStatusO
             : CACHE.bookings;
 
     const nowMs = Date.now();
-    targetRooms.forEach((room) => {
+    await Promise.all(targetRooms.map(async (room) => {
         const targetStatus = deriveRoomOperationalStatus(
             room,
             bookingsSource.filter((booking) => booking.roomId === room.id),
             nowMs
         );
         if (room.status !== targetStatus) {
-            _updateRoomStatus(room.id, targetStatus, { ...options, suppressLog: true });
+            await _updateRoomStatus(room.id, targetStatus, { ...options, suppressLog: true, expectedRoom: room });
         }
-    });
+    }));
 };
 
 const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
@@ -2689,28 +2722,6 @@ const _syncOperationalStatuses = async (options: BookingActionOptions = {}) => {
                 operation: 'sync-operational-booking-statuses',
                 bookingCount: changedBookings.length,
             });
-        }
-
-        const changedRoomIds = Array.from(new Set(changedBookings.map((booking) => booking.roomId).filter(Boolean)));
-        for (const roomId of changedRoomIds) {
-            const hasActiveBooking = nextBookings.some(
-                (booking) => booking.roomId === roomId && deriveBookingStatus(booking, nowMs) === BookingStatus.CHECKED_IN
-            );
-            const hasCheckedOutBooking = changedBookings.some(
-                (booking) => booking.roomId === roomId && booking.status === BookingStatus.CHECKED_OUT
-            );
-
-            if (hasActiveBooking) {
-                await _updateRoomStatus(roomId, RoomStatus.OCCUPIED, {
-                    source: options.source || 'SYSTEM',
-                    suppressLog: true,
-                });
-            } else if (hasCheckedOutBooking) {
-                await _updateRoomStatus(roomId, RoomStatus.VACANT_DIRTY, {
-                    source: options.source || 'SYSTEM',
-                    suppressLog: true,
-                });
-            }
         }
     }
 

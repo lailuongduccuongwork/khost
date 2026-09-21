@@ -40,11 +40,25 @@ export const getActiveBookingForRoom = (
         .sort((left, right) => new Date(left.checkInDate).getTime() - new Date(right.checkInDate).getTime())[0];
 
 export const deriveRoomOperationalStatus = (
-    room: Pick<Room, 'id' | 'status'>,
+    room: Pick<Room, 'id' | 'status' | 'lastCleanedAt'>,
     bookings: Booking[],
     nowInput: number | Date = Date.now()
 ): RoomStatus => {
     if (getActiveBookingForRoom(bookings, room.id, nowInput)) return RoomStatus.OCCUPIED;
+    if (room.status === RoomStatus.VACANT_DIRTY) return RoomStatus.VACANT_DIRTY;
+
+    const nowMs = toNow(nowInput);
+    const cleanedAt = Number.isFinite(room.lastCleanedAt)
+        ? room.lastCleanedAt!
+        : 0;
+    const hasUncleanedStay = bookings.some((booking) => {
+        if (booking.roomId !== room.id || deriveBookingStatus(booking, nowMs) !== BookingStatus.CHECKED_OUT) return false;
+        const checkInMs = toTime(booking.checkInDate);
+        const checkOutMs = toTime(booking.checkOutDate);
+        return Number.isFinite(checkInMs) && Number.isFinite(checkOutMs) &&
+            checkOutMs > checkInMs && checkOutMs <= nowMs && checkOutMs > cleanedAt;
+    });
+    if (hasUncleanedStay) return RoomStatus.VACANT_DIRTY;
     if (room.status === RoomStatus.OCCUPIED) return RoomStatus.VACANT_DIRTY;
-    return room.status === RoomStatus.VACANT_DIRTY ? RoomStatus.VACANT_DIRTY : RoomStatus.VACANT_CLEAN;
+    return RoomStatus.VACANT_CLEAN;
 };

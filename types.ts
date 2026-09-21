@@ -233,6 +233,8 @@ export interface Room {
   typeId: string;
   propertyId: string;
   status: RoomStatus;
+  // Firebase server time (milliseconds) of the last explicit cleaning confirmation.
+  lastCleanedAt?: number;
   floor: number;
   sortOrder?: number; // Order for display
   excludeFromDashboard?: boolean; // Không tính phòng này vào Tổng quan
