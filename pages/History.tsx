@@ -163,23 +163,23 @@ const HistoryPage: React.FC<HistoryPageProps> = ({ history, users, currentUser }
     }, [history]);
 
     return (
-        <div className="katka-liquid-page space-y-6 animate-fade-in">
+        <div className="katka-liquid-page history-page space-y-6 animate-fade-in">
             <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 md:p-6">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold uppercase tracking-wide">
                             <Shield size={14} />
-                            Realtime Audit Log
+                            Nhật ký hoạt động
                         </div>
-                        <h2 className="text-2xl font-bold text-gray-900 mt-3">Lịch sử thao tác toàn hệ thống tenant</h2>
+                        <h2 className="text-2xl font-bold text-gray-900 mt-3">Lịch sử thao tác</h2>
                         <p className="text-sm text-gray-500 mt-2 max-w-3xl">
-                            Trang này lưu toàn bộ thao tác đang lấy được trong app hiện tại theo thời gian thực, mặc định dành cho ADMIN và có thể phân quyền thêm cho vai trò khác sau.
+                            Tra cứu các thao tác đang được ghi nhận, theo thời gian, nhân sự và loại hoạt động.
                         </p>
                     </div>
-                    <div className="bg-slate-900 text-white rounded-2xl px-4 py-4 min-w-[260px]">
-                        <div className="text-xs uppercase tracking-wider text-slate-400">Người đang xem</div>
+                    <div className="bg-gray-50 text-gray-800 rounded-2xl px-4 py-4 min-w-[260px]">
+                        <div className="text-xs uppercase tracking-wider text-gray-500">Người đang xem</div>
                         <div className="text-lg font-bold mt-1">{currentUser.fullName}</div>
-                        <div className="text-sm text-slate-300 mt-1">{currentUser.username} • {currentUser.role}</div>
+                        <div className="text-sm text-gray-500 mt-1">{currentUser.username} • {currentUser.role}</div>
                     </div>
                 </div>
             </div>

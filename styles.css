@@ -6,36 +6,37 @@
   color-scheme: light;
   --khost-safe-top: env(safe-area-inset-top, 0px);
   --khost-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --katka-bg: #f2f2f7;
+  --katka-bg: #f5f5f7;
   --katka-card: #ffffff;
-  --katka-card-muted: #f8f8fc;
-  --katka-text: #1c1c1e;
-  --katka-subtext: #4b5563;
-  --katka-caption: #8e8e93;
-  --katka-border: rgba(28, 28, 30, 0.1);
-  --katka-accent: #2563eb;
-  --katka-accent-weak: #e8f0ff;
+  --katka-card-muted: #f7f7f9;
+  --katka-text: #202124;
+  --katka-subtext: #60636b;
+  --katka-caption: #6d717b;
+  --katka-border: rgba(28, 28, 30, 0.085);
+  --katka-accent: #2463d4;
+  --katka-action: #2463d4;
+  --katka-accent-weak: #eaf1ff;
   --katka-money-primary: #2563eb;
   --katka-money-danger: #ef4444;
-  --katka-shadow-soft: 0px 4px 20px rgba(15, 23, 42, 0.06);
-  --katka-shadow-strong: 0px 12px 32px rgba(15, 23, 42, 0.1);
+  --katka-shadow-soft: 0 2px 5px rgba(20, 24, 32, 0.025), 0 0 1px rgba(20, 24, 32, 0.04);
+  --katka-shadow-strong: 0 24px 80px rgba(20, 24, 32, 0.16), 0 2px 8px rgba(20, 24, 32, 0.06);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --katka-bg: #0d1118;
-  --katka-card: #171d27;
-  --katka-card-muted: #1d2432;
-  --katka-text: #f4f7ff;
-  --katka-subtext: #dbe3f4;
-  --katka-caption: #b3bdd1;
-  --katka-border: rgba(179, 191, 214, 0.25);
+  --katka-bg: #191a1d;
+  --katka-card: #232428;
+  --katka-card-muted: #2a2b30;
+  --katka-text: #f1f1f3;
+  --katka-subtext: #c2c3cb;
+  --katka-caption: #9c9fa9;
+  --katka-border: rgba(235, 235, 245, 0.1);
   --katka-accent: #5ea8ff;
   --katka-accent-weak: rgba(94, 168, 255, 0.18);
   --katka-money-primary: #66b3ff;
   --katka-money-danger: #ff6b83;
-  --katka-shadow-soft: 0px 8px 26px rgba(0, 0, 0, 0.34);
-  --katka-shadow-strong: 0px 18px 44px rgba(0, 0, 0, 0.52);
+  --katka-shadow-soft: 0 2px 6px rgba(0, 0, 0, 0.1);
+  --katka-shadow-strong: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
 *,
@@ -52,7 +53,9 @@ body,
 
 body {
   margin: 0;
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   background: var(--katka-bg);
   color: var(--katka-text);
   text-rendering: optimizeLegibility;
@@ -75,9 +78,7 @@ body {
 }
 
 .katka-app {
-  background:
-    radial-gradient(1200px 560px at 20% -15%, rgba(37, 99, 235, 0.1), transparent 60%),
-    var(--katka-bg);
+  background: var(--katka-bg);
 }
 
 .katka-system-bg {
@@ -98,129 +99,19 @@ body {
   box-shadow: var(--katka-shadow-strong);
 }
 
-.katka-glass {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(20px) saturate(165%);
-  -webkit-backdrop-filter: blur(20px) saturate(165%);
+/* Compatibility names for existing views. Surfaces are opaque by design. */
+.katka-glass, .katka-liquid-shell {
+  background: var(--katka-card);
+  border: 1px solid var(--katka-border);
   box-shadow: var(--katka-shadow-soft);
 }
-
-:root[data-theme='dark'] .katka-glass {
-  background: rgba(20, 26, 38, 0.78);
-  border-color: rgba(179, 191, 214, 0.22);
-}
-
-.katka-liquid-shell {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.64));
-  border-color: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: blur(22px) saturate(172%);
-  -webkit-backdrop-filter: blur(22px) saturate(172%);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12), 0 1px 0 rgba(255, 255, 255, 0.62) inset;
-}
-
-:root[data-theme='dark'] .katka-liquid-shell {
-  background: linear-gradient(145deg, rgba(23, 32, 47, 0.82), rgba(16, 23, 35, 0.74));
-  border-color: rgba(171, 195, 232, 0.25) !important;
-  box-shadow: 0 18px 42px rgba(3, 8, 17, 0.58), 0 1px 0 rgba(176, 199, 236, 0.14) inset;
-}
-
-.katka-liquid-sidebar {
-  backdrop-filter: blur(24px) saturate(170%);
-  -webkit-backdrop-filter: blur(24px) saturate(170%);
-}
-
-.katka-liquid-page {
-  --katka-liquid-bg: rgba(255, 255, 255, 0.78);
-  --katka-liquid-bg-soft: rgba(255, 255, 255, 0.66);
-  --katka-liquid-border: rgba(255, 255, 255, 0.7);
-  --katka-liquid-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  --katka-liquid-shadow-hover: 0 14px 30px rgba(15, 23, 42, 0.12);
-  --katka-liquid-blur: blur(16px) saturate(158%);
-}
-
-:root[data-theme='dark'] .katka-liquid-page {
-  --katka-liquid-bg: rgba(24, 35, 52, 0.84);
-  --katka-liquid-bg-soft: rgba(18, 28, 43, 0.8);
-  --katka-liquid-border: rgba(171, 195, 232, 0.24);
-  --katka-liquid-shadow: 0 14px 30px rgba(3, 8, 17, 0.42);
-  --katka-liquid-shadow-hover: 0 18px 36px rgba(3, 8, 17, 0.52);
-  --katka-liquid-blur: blur(14px) saturate(146%);
-}
-
-.katka-liquid-page .bg-white,
-.katka-liquid-page .bg-gray-50,
-.katka-liquid-page .bg-gray-100,
-.katka-liquid-page .bg-gray-50\/50,
-.katka-liquid-page .bg-gray-50\/40 {
-  background: linear-gradient(145deg, var(--katka-liquid-bg), var(--katka-liquid-bg-soft));
-  border-color: var(--katka-liquid-border);
-  backdrop-filter: var(--katka-liquid-blur);
-  -webkit-backdrop-filter: var(--katka-liquid-blur);
-}
-
-.katka-liquid-page [class*="bg-white/"],
-.katka-liquid-page [class*="bg-gray-50/"],
-.katka-liquid-page [class*="bg-gray-100/"] {
-  background: linear-gradient(145deg, var(--katka-liquid-bg), var(--katka-liquid-bg-soft));
-  border-color: var(--katka-liquid-border);
-  backdrop-filter: var(--katka-liquid-blur);
-  -webkit-backdrop-filter: var(--katka-liquid-blur);
-}
-
-.katka-liquid-page .shadow-sm,
-.katka-liquid-page .shadow-xl,
-.katka-liquid-page .shadow-2xl {
-  box-shadow: var(--katka-liquid-shadow);
-}
-
-.katka-liquid-page .border-gray-100,
-.katka-liquid-page .border-gray-200,
-.katka-liquid-page .border-gray-300 {
-  border-color: var(--katka-liquid-border);
-}
-
-.katka-liquid-page input:not([type='checkbox']):not([type='radio']):not([type='file']),
-.katka-liquid-page select,
-.katka-liquid-page textarea {
-  background: linear-gradient(145deg, var(--katka-liquid-bg), var(--katka-liquid-bg-soft));
-  border-color: var(--katka-liquid-border);
-  backdrop-filter: blur(10px) saturate(140%);
-  -webkit-backdrop-filter: blur(10px) saturate(140%);
-}
-
-.katka-liquid-page input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
-.katka-liquid-page select:focus,
-.katka-liquid-page textarea:focus {
-  outline: none;
-  border-color: rgba(94, 168, 255, 0.62);
-  box-shadow: 0 0 0 3px rgba(94, 168, 255, 0.16);
-}
-
-@media (hover: hover) {
-  .katka-liquid-page button,
-  .katka-liquid-page [role="button"],
-  .katka-liquid-page .transition-all {
-    transition: transform 0.18s ease, box-shadow 0.24s ease, background-color 0.22s ease, color 0.22s ease, border-color 0.22s ease;
-  }
-
-  .katka-liquid-page button:hover,
-  .katka-liquid-page [role="button"]:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--katka-liquid-shadow-hover);
-  }
-}
-
-.katka-liquid-page button:active,
-.katka-liquid-page [role="button"]:active {
-  transform: scale(0.98);
-}
+.katka-liquid-page { min-width: 0; }
 
 .katka-primary-btn {
-  background: var(--katka-accent);
+  background: var(--katka-action);
   color: #ffffff;
   border: 1px solid transparent;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .katka-primary-btn:hover {
@@ -238,7 +129,7 @@ body {
   background: var(--katka-card);
   border: 1px solid var(--katka-border);
   color: var(--katka-text);
-  border-radius: 14px;
+  border-radius: 10px;
 }
 
 .katka-input:focus {
@@ -372,9 +263,9 @@ body {
 }
 
 :root[data-theme='dark'] .katka-focus-modal {
-  --katka-card: #141b26;
-  --katka-card-muted: #1a2230;
-  --katka-border: rgba(179, 191, 214, 0.2);
+  --katka-card: #232428;
+  --katka-card-muted: #2a2b30;
+  --katka-border: rgba(235, 235, 245, 0.1);
 }
 
 :root[data-theme='dark'] .katka-focus-modal .text-blue-500,
@@ -408,15 +299,15 @@ body {
 }
 
 .katka-app .rounded-lg {
-  border-radius: 16px;
+  border-radius: 10px;
 }
 
 .katka-app .rounded-xl {
-  border-radius: 20px;
+  border-radius: 14px;
 }
 
 .katka-app .rounded-2xl {
-  border-radius: 24px;
+  border-radius: 18px;
 }
 
 .katka-app .shadow-sm,
@@ -486,32 +377,32 @@ body {
 }
 
 .report-col-net {
-  background-color: #f3e8ff;
+  background-color: #f6f4fa;
   color: #6b21a8;
 }
 
 .report-col-paid {
-  background-color: #dbeafe;
+  background-color: #f1f5fc;
   color: #1d4ed8;
 }
 
 .report-col-debt {
-  background-color: #fee2e2;
+  background-color: #fdf2f2;
   color: #b91c1c;
 }
 
 .report-col-net-cell {
-  background-color: rgba(243, 232, 255, 0.65);
+  background-color: rgba(246, 244, 250, 0.5);
   color: #6b21a8;
 }
 
 .report-col-paid-cell {
-  background-color: rgba(219, 234, 254, 0.65);
+  background-color: rgba(241, 245, 252, 0.5);
   color: #1d4ed8;
 }
 
 .report-col-debt-cell {
-  background-color: rgba(254, 226, 226, 0.65);
+  background-color: rgba(253, 242, 242, 0.5);
 }
 
 .performance-anomaly-header {
@@ -682,7 +573,7 @@ body {
 :root[data-theme='dark'] .katka-app .text-blue-700,
 :root[data-theme='dark'] .katka-app .text-blue-800,
 :root[data-theme='dark'] .katka-app .text-blue-900 {
-  color: #ffffff;
+  color: #91b9ff;
 }
 
 :root[data-theme='dark'] .katka-app .bg-amber-50,
@@ -968,84 +859,282 @@ body {
   }
 }
 
-/* Scoped Liquid Glass overrides (kept at end so legacy rules don't override) */
-.katka-app .katka-liquid-shell {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.66)) !important;
-  border-color: rgba(255, 255, 255, 0.74) !important;
-  backdrop-filter: blur(24px) saturate(175%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(175%) !important;
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14), 0 1px 0 rgba(255, 255, 255, 0.65) inset !important;
+
+/* K-Host design system: quiet surfaces, clear hierarchy, restrained motion. */
+:root { --workspace-sidebar: #eeeef1; --workspace-hover: #e5e6eb; --control-radius: 9px; }
+:root[data-theme='dark'] { --workspace-sidebar: #202125; --workspace-hover: #2f3036; }
+::selection { background: var(--katka-accent-weak); color: var(--katka-text); }
+button, input, select, textarea { font: inherit; }
+button, summary, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+:where(button, a, summary, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--katka-accent);
+  outline-offset: 3px;
 }
-
-:root[data-theme='dark'] .katka-app .katka-liquid-shell {
-  background: linear-gradient(145deg, rgba(24, 35, 52, 0.84), rgba(16, 23, 35, 0.76)) !important;
-  border-color: rgba(171, 195, 232, 0.28) !important;
-  box-shadow: 0 18px 42px rgba(3, 8, 17, 0.58), 0 1px 0 rgba(176, 199, 236, 0.14) inset !important;
+.katka-app :is(.font-black, .font-extrabold) { font-weight: 600; }
+.katka-app .font-bold { font-weight: 600; }
+.katka-app :is(h1, h2, h3) { letter-spacing: -.025em; }
+.katka-app .uppercase { text-transform: none; letter-spacing: .015em; }
+.katka-app :is(.tracking-widest, .tracking-wider) { letter-spacing: .035em; }
+.katka-app :is(.text-gray-950, .text-slate-900, .text-slate-950) { color: var(--katka-text); }
+.katka-app :is(.text-slate-500, .text-slate-600) { color: var(--katka-subtext); }
+.katka-app .border-gray-50 { border-color: var(--katka-border); }
+.katka-app .bg-white\/80 { background: var(--katka-card); }
+.katka-app :is(.shadow-lg, .shadow-md) { box-shadow: var(--katka-shadow-soft); }
+.katka-app .bg-blue-600 { background-color: var(--katka-action); }
+.katka-app .hover\:bg-blue-700:hover { background-color: #1954bf; }
+.katka-app :is(button, [role='button'], a, .tap-target) {
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
-
-.katka-app .katka-liquid-page .bg-white,
-.katka-app .katka-liquid-page .bg-gray-50,
-.katka-app .katka-liquid-page .bg-gray-100,
-.katka-app .katka-liquid-page .bg-gray-50\/50,
-.katka-app .katka-liquid-page .bg-gray-50\/40,
-.katka-app .katka-liquid-page [class*="bg-white/"],
-.katka-app .katka-liquid-page [class*="bg-gray-50/"],
-.katka-app .katka-liquid-page [class*="bg-gray-100/"] {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.64)) !important;
-  border-color: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: blur(16px) saturate(160%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+.katka-app :is(button, [role='button'], .tap-target):active { transform: none; }
+.katka-primary-btn { box-shadow: 0 1px 2px #0000000c; }
+.katka-secondary-btn { background: var(--katka-card); }
+.katka-icon-btn { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; }
+.katka-icon-btn:hover { background: var(--workspace-hover); color: var(--katka-text); }
+.katka-app :is(input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']), select, textarea) {
+  color: var(--katka-text);
+  background-color: var(--katka-card);
+  border-color: var(--katka-border);
+  border-radius: var(--control-radius);
+  box-shadow: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
+.katka-app :is(input, select, textarea):focus-visible { outline: 2px solid var(--katka-accent); outline-offset: 2px; }
+.katka-app input[type='checkbox'], .katka-app input[type='radio'] { accent-color: var(--katka-accent); }
+.app-sidebar { width: 224px; height: 100dvh; padding-top: var(--khost-safe-top); background: var(--workspace-sidebar); border-right: 1px solid var(--katka-border); }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 28px 18px 20px; }
+.brand-mark { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #22252d; color: white; font-size: 28px; font-weight: 600; letter-spacing: -3px; line-height: 1; padding-right: 3px; }
+.brand-mark > span { color: #9dbbfa; }
+.sidebar-brand h1 { font-size: 19px; font-weight: 650; letter-spacing: -.6px; }
+.sidebar-brand p { color: var(--katka-caption); font-size: 10px; margin-top: 1px; letter-spacing: .015em; }
+.nav-section-label { padding: 0 11px; margin-bottom: 10px; color: var(--katka-caption); font-size: 11px; font-weight: 500; }
+.nav-item { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 11px; margin-bottom: 4px; border: 1px solid transparent; border-radius: 9px; color: var(--katka-subtext); font-size: 13px; text-align: left; font-weight: 500; }
+.nav-item svg { flex-shrink: 0; opacity: .85; }
+.nav-item:hover { background: var(--workspace-hover); color: var(--katka-text); }
+.nav-item.is-active { color: var(--katka-accent); background: var(--katka-card); box-shadow: 0 1px 4px #00000007; border-color: var(--katka-border); font-weight: 600; }
+.nav-item.is-active::after { content: ''; width: 5px; height: 5px; background: currentColor; border-radius: 50%; margin-left: auto; }
+.sidebar-footer { margin: 0 16px; border-top: 1px solid var(--katka-border); padding: 20px 0 max(16px, var(--khost-safe-bottom)); }
+.user-avatar { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; background: var(--katka-card); border: 1px solid var(--katka-border); font-size: 12px; font-weight: 600; }
+.logout-item { color: var(--katka-caption); font-size: 12px; }
+.logout-item:hover { color: #c03c45; background: #c03c450a; }
+.sidebar-overlay { background: #15161b45; opacity: 0; pointer-events: none; transition: opacity 180ms ease; backdrop-filter: blur(3px); }
+.sidebar-overlay.is-visible { opacity: 1; pointer-events: auto; }
+.app-header { background: color-mix(in srgb, var(--katka-bg) 88%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--katka-border); }
+.app-header .katka-secondary-btn { border: 0; background: transparent; }
+.app-header .katka-secondary-btn:hover { background: var(--workspace-hover); }
+.katka-app .app-header .property-select { background: transparent; padding: 0 20px 0 0; border-radius: 3px; font-size: 12px; }
+.app-main { padding: 34px 36px 48px; }
+.app-content { max-width: 1440px; }
+.app-main-roommap { padding: 20px; }
+.app-main-roommap .app-content { width: 100%; max-width: none; }
+.skip-link { position: fixed; top: -80px; left: 16px; z-index: 10000; background: var(--katka-card); padding: 12px 20px; border-radius: 10px; color: var(--katka-accent); }
+.skip-link:focus { top: 12px; }
+.page-title, .katka-app .page-title { font-size: clamp(24px, 2.2vw, 30px); line-height: 1.25; font-weight: 650; letter-spacing: -.035em; color: var(--katka-text); }
+.page-description { color: var(--katka-caption); font-size: 13px; margin-top: 9px; line-height: 1.6; }
+.eyebrow { font-size: 11px; color: var(--katka-caption); font-weight: 500; letter-spacing: .035em; }
+.page-heading { margin-bottom: 30px; }
+.dashboard-page .page-heading > div:first-child > .mt-1 { margin-top: 14px; }
+.dashboard-page .page-heading > div:first-child > .mt-1 > span:first-child { background: transparent; border: 0; padding: 0; color: var(--katka-subtext); font-weight: 400; }
+.filter-toolbar { padding: 6px; border: 1px solid var(--katka-border); background: var(--katka-card); border-radius: 12px; flex-wrap: wrap; max-width: 100%; }
+.filter-toolbar input { min-width: 0; }
+.filter-toolbar > div:first-child { background: transparent; color: var(--katka-caption); font-weight: 400; }
+.dashboard-section { background: var(--katka-card); border: 1px solid var(--katka-border); border-radius: 16px; padding: 24px; box-shadow: var(--katka-shadow-soft); }
+.dashboard-section > .mb-3 { margin-bottom: 20px; }
+.dashboard-section > .mb-3 > svg, .dashboard-section > .mb-4 svg { color: var(--katka-caption); stroke-width: 1.6; }
+.stat-tile { min-width: 0; padding: 16px; background: var(--katka-card-muted); border-radius: 10px; }
+.stat-label { font-size: 12px; font-weight: 400; color: var(--katka-subtext); }
+.stat-value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; line-height: 1.35; }
+.dashboard-overview .stat-tile { background: transparent; padding: 8px 20px; border-radius: 0; border-left: 1px solid var(--katka-border); }
+.dashboard-overview .stat-tile:first-child { border-left: 0; padding-left: 0; }
+.dashboard-overview .stat-value { font-size: clamp(23px, 2.3vw, 32px); }
+.dashboard-section h3 { font-size: 14px; font-weight: 600; }
+.katka-app table { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.katka-app thead { color: var(--katka-subtext); background: var(--katka-card-muted); }
+.katka-app th { font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: .01em; line-height: 1.5; }
+.katka-app :is(th, td) { border-bottom: 1px solid var(--katka-border); }
+.katka-app tbody > tr:last-child > td { border-bottom: 0; }
+.katka-app tbody > tr:hover { background-color: color-mix(in srgb, var(--katka-accent) 3%, transparent); }
+.katka-app tbody > tr { transition: background-color 150ms ease; }
+.dashboard-section :is(th, td) { padding: 14px 12px; }
+.dashboard-section :is(th, td):first-child { padding-left: 12px; }
+.daily-details summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; list-style: none; }
+.daily-details summary::-webkit-details-marker { display: none; }
+.details-hint { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--katka-caption); white-space: nowrap; }
+.details-hint::after { content: '+'; font-size: 19px; font-weight: 300; }
+.daily-details[open] .details-hint::after { content: '−'; }
+.daily-details[open] > div { margin-top: 22px; }
+.booking-summary > div { padding: 14px 16px; }
+.booking-summary > div > div:first-child { font-size: 11px; margin-bottom: 5px; font-weight: 400; }
+.booking-summary > div > div:last-child { font-size: 21px; letter-spacing: -.025em; }
+.katka-app .housekeeping-page { background: transparent; }
+.katka-app .housekeeping-branch-header { background: var(--katka-card-muted); color: var(--katka-text); border-color: var(--katka-border); }
+.katka-app :is(.room-branch-header, .roommap-summary-bar) { background: var(--katka-card-muted); color: var(--katka-subtext); border-color: var(--katka-border); }
+.katka-app .room-booking-chip { border-width: 1px; font-weight: 650; box-shadow: 0 4px 12px rgba(25, 35, 52, .18), 0 1px 2px rgba(25, 35, 52, .1); }
+.katka-app .roommap-page { height: calc(100dvh - 104px - var(--khost-safe-top)); }
+.katka-app .katka-panel, .katka-app .fixed.inset-0 > .bg-white { box-shadow: var(--katka-shadow-strong); }
+.katka-app .fixed.inset-0:is(.bg-black\/50, .bg-black\/45, .bg-black\/60, .bg-slate-950\/55) { background: #15161b55; backdrop-filter: blur(5px); }
+.katka-app .fixed.inset-0 > :is(.bg-white, .katka-panel) { border: 1px solid var(--katka-border); border-radius: 20px; }
+.katka-app .recharts-text { font-family: inherit; fill: var(--katka-caption); font-size: 11px; }
+.katka-app .recharts-default-tooltip { background: var(--katka-card) !important; border: 1px solid var(--katka-border) !important; border-radius: 12px; box-shadow: var(--katka-shadow-strong); color: var(--katka-text); }
+.login-page { background: var(--katka-bg); }
+.login-card { background: var(--katka-card); border: 1px solid var(--katka-border); box-shadow: 0 12px 50px #1c1e2b06; border-radius: 22px; padding: 44px 38px 30px; }
+.login-mark { width: 54px; height: 54px; border-radius: 16px; font-size: 34px; }
+.login-card h1 { letter-spacing: -.04em; font-weight: 600; margin-bottom: 10px; }
+.login-card form { margin-top: 34px; }
+.login-card .katka-input { min-height: 46px; font-size: 14px; }
+.login-card button[type='submit'] { margin-top: 26px; font-size: 14px; min-height: 46px; }
+.login-card form > div + div { margin-top: 20px; }
+.animate-fade-in { animation: fade-in 220ms ease-out both; }
+.animate-slide-up { animation: fade-in 220ms ease-out both; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
-:root[data-theme='dark'] .katka-app .katka-liquid-page .bg-white,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .bg-gray-50,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .bg-gray-100,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .bg-gray-50\/50,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .bg-gray-50\/40,
-:root[data-theme='dark'] .katka-app .katka-liquid-page [class*="bg-white/"],
-:root[data-theme='dark'] .katka-app .katka-liquid-page [class*="bg-gray-50/"],
-:root[data-theme='dark'] .katka-app .katka-liquid-page [class*="bg-gray-100/"] {
-  background: linear-gradient(145deg, rgba(24, 35, 52, 0.84), rgba(18, 28, 43, 0.8)) !important;
-  border-color: rgba(171, 195, 232, 0.24) !important;
+@media (max-width: 1279px) { .dashboard-overview .stat-tile { border: 0; padding: 14px; background: var(--katka-card-muted); border-radius: 10px; } .dashboard-overview .stat-tile:first-child { padding-left: 14px; } }
+@media (max-width: 767px) {
+  .app-main { padding: 24px 16px 36px; }
+  .app-main-roommap { padding: 12px; }
+  .app-header { gap: 8px; }
+  .app-header > div:first-child { min-width: 0; flex: 1; }
+  .app-header > div:last-child { flex-shrink: 0; gap: 3px; }
+  .app-sidebar { visibility: hidden; }
+  .app-sidebar.translate-x-0 { visibility: visible; }
+  .katka-app button { min-height: 40px; }
+  .dashboard-section { padding: 18px; }
+  .dashboard-section .stat-value { font-size: 23px; }
+  .page-heading { margin-bottom: 22px; }
+  .filter-toolbar { width: 100%; }
+  .filter-toolbar > div:first-child { display: none; }
+  .filter-toolbar input { width: 0; }
+  .notification-popover { position: fixed; top: calc(60px + var(--khost-safe-top)); left: 12px; right: 12px; width: auto; }
+  .bookings-heading { padding: 20px; }
+  .booking-summary > div:last-child { grid-column: 1 / -1; }
+  .login-card { padding: 32px 24px; }
+  .katka-app .roommap-page { height: calc(100dvh - 88px - var(--khost-safe-top)); }
 }
-
-.katka-app .katka-liquid-page .shadow-sm,
-.katka-app .katka-liquid-page .shadow-xl,
-.katka-app .katka-liquid-page .shadow-2xl {
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1) !important;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
-
-:root[data-theme='dark'] .katka-app .katka-liquid-page .shadow-sm,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .shadow-xl,
-:root[data-theme='dark'] .katka-app .katka-liquid-page .shadow-2xl {
-  box-shadow: 0 16px 32px rgba(3, 8, 17, 0.44) !important;
+.chart-legend { display: inline-flex; align-items: center; gap: 7px; color: var(--katka-caption); font-size: 11px; white-space: nowrap; }
+.chart-legend > span { width: 6px; height: 6px; border-radius: 50%; background: var(--katka-accent); }
+.segmented-control { padding: 4px; border: 1px solid var(--katka-border); border-radius: 11px; background: var(--workspace-sidebar); }
+.settings-nav h2 { font-size: 11px; font-weight: 500; letter-spacing: .02em; }
+.settings-nav nav button { padding: 11px 9px; gap: 7px; font-size: 12px; }
+.settings-nav nav button > div:first-child { padding: 5px; }
+.performance-status { border-left: 1px solid var(--katka-border); color: var(--katka-subtext); }
+.performance-heading h2 { font-size: 30px; }
+.performance-heading > div > div:first-child > div { background: transparent; padding: 0; color: var(--katka-caption); font-weight: 400; }
+.booking-table :is(th, td) { white-space: nowrap; }
+.booking-table td { font-size: 12px; }
+.booking-table .sticky { box-shadow: none; border-right: 1px solid var(--katka-border); }
+.katka-app .housekeeping-room { border-left: 3px solid #70aa89; }
+.katka-app .housekeeping-dirty { border-left-color: #d9a244; }
+.katka-app .housekeeping-occupied { border-left-color: #ce7b83; }
+.katka-app .housekeeping-room.housekeeping-status-clean,
+.katka-app .housekeeping-schedule-room.housekeeping-status-clean {
+  background: #edf8f0;
+  border-color: #b8dcc3;
+  border-left-color: #5e9f75;
 }
-
-.katka-app .katka-liquid-page input:not([type='checkbox']):not([type='radio']):not([type='file']),
-.katka-app .katka-liquid-page select,
-.katka-app .katka-liquid-page textarea {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.66)) !important;
-  border-color: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: blur(12px) saturate(145%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+.katka-app .housekeeping-room.housekeeping-status-dirty,
+.katka-app .housekeeping-schedule-room.housekeeping-status-dirty {
+  background: #fff4df;
+  border-color: #edcf94;
+  border-left-color: #d18b22;
 }
-
-:root[data-theme='dark'] .katka-app .katka-liquid-page input:not([type='checkbox']):not([type='radio']):not([type='file']),
-:root[data-theme='dark'] .katka-app .katka-liquid-page select,
-:root[data-theme='dark'] .katka-app .katka-liquid-page textarea {
-  background: linear-gradient(145deg, rgba(30, 43, 63, 0.86), rgba(21, 30, 46, 0.8)) !important;
-  border-color: rgba(171, 195, 232, 0.26) !important;
+.katka-app .housekeeping-room.housekeeping-status-occupied,
+.katka-app .housekeeping-schedule-room.housekeeping-status-occupied {
+  background: #fff0f1;
+  border-color: #e9b9bd;
+  border-left-color: #c95f69;
 }
-
-@media (hover: hover) {
-  .katka-app .katka-liquid-page button:hover,
-  .katka-app .katka-liquid-page [role="button"]:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16);
-  }
-
-  :root[data-theme='dark'] .katka-app .katka-liquid-page button:hover,
-  :root[data-theme='dark'] .katka-app .katka-liquid-page [role="button"]:hover {
-    box-shadow: 0 16px 34px rgba(3, 8, 17, 0.5);
-  }
+.katka-app .housekeeping-schedule-room {
+  border-left-width: 4px;
+}
+.katka-app .housekeeping-room-number { width: 140px; background: transparent; padding: 16px; }
+.katka-app .housekeeping-room-info { flex: 1; padding: 16px 20px; }
+.katka-app .housekeeping-room-actions { width: 150px; padding: 10px; border: 0; }
+.housekeeping-room-actions button { border: 0; border-radius: 7px; gap: 4px; font-size: 12px; background: transparent; }
+.housekeeping-room-actions .housekeeping-clean-action { background: #edf6f0; color: #33784d; flex-direction: row; }
+.housekeeping-room-actions .housekeeping-clean-action:hover { background: #e1efe5; }
+.housekeeping-room-actions .housekeeping-clean-action span { margin: 0; font-size: 12px; }
+.housekeeping-room-actions > div > div { background: transparent; }
+.housekeeping-room .text-gray-400 { font-style: normal; }
+.room-card:hover { border-color: var(--katka-accent); box-shadow: var(--katka-shadow-soft); }
+:root[data-theme='dark'] .katka-app :is(.text-purple-600, .text-purple-700, .text-purple-800, .text-indigo-600) { color: #b7a1f2; }
+:root[data-theme='dark'] .katka-app :is(.text-emerald-600, .text-emerald-700) { color: #89c7aa; }
+:root[data-theme='dark'] .housekeeping-room-actions .housekeeping-clean-action { background: #25392d; color: #a1d1b1; }
+:root[data-theme='dark'] .katka-app .housekeeping-room.housekeeping-status-clean,
+:root[data-theme='dark'] .katka-app .housekeeping-schedule-room.housekeeping-status-clean {
+  background: #1f3427;
+  border-color: #365943;
+  border-left-color: #70b488;
+}
+:root[data-theme='dark'] .katka-app .housekeeping-room.housekeeping-status-dirty,
+:root[data-theme='dark'] .katka-app .housekeeping-schedule-room.housekeeping-status-dirty {
+  background: #3b2c18;
+  border-color: #69502a;
+  border-left-color: #e0a13d;
+}
+:root[data-theme='dark'] .katka-app .housekeeping-room.housekeeping-status-occupied,
+:root[data-theme='dark'] .katka-app .housekeeping-schedule-room.housekeeping-status-occupied {
+  background: #3c2227;
+  border-color: #663740;
+  border-left-color: #df7c85;
+}
+@media (max-width: 767px) {
+  .dashboard-section > .grid:has(> .stat-tile) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-section .stat-tile { padding: 12px; }
+  .dashboard-section .stat-value { font-size: 18px; }
+  .stat-label { font-size: 11px; }
+  .performance-status { border-left: 0; border-top: 1px solid var(--katka-border); padding-left: 0; }
+  .housekeeping-toolbar > div:first-child > div:first-child { flex-wrap: wrap; }
+  .housekeeping-toolbar .page-title { font-size: 23px; }
+  .katka-app .housekeeping-room { flex-wrap: wrap; }
+  .katka-app .housekeeping-room-number { width: 25%; padding: 12px 6px; }
+  .katka-app .housekeeping-room-info { width: 75%; padding: 14px 10px; }
+  .katka-app .housekeeping-room-actions { width: 100%; border-top: 1px solid var(--katka-border); padding: 8px; }
+  .housekeeping-room-actions > div { flex-direction: row; gap: 8px; }
+  .housekeeping-room-actions > div > :is(button, div) { flex: 1; width: auto; }
+  .booking-table .sticky { position: static; }
+}
+.dialog-frame:focus { outline: none; }
+.katka-app.dialog-frame { background-color: #15161b55; }
+.katka-app.dialog-frame.katka-modal-scope { background: transparent !important; }
+.katka-app.dialog-frame > :is(.bg-white, .katka-panel) { box-shadow: var(--katka-shadow-strong); }
+.katka-app .room-booking-chip-paid { background: #bfe3ce; color: #174e32; border-color: #74b58f; }
+.katka-app .room-booking-chip-unpaid { background: #f0c0c6; color: #792c38; border-color: #dc7e8a; }
+.katka-app .room-booking-chip-hold { background: #f2d696; color: #6d4c12; border-color: #d9a53b; }
+.katka-app .room-booking-chip:hover { transform: none; filter: saturate(1.08) brightness(.98); box-shadow: 0 7px 18px rgba(25, 35, 52, .22), 0 2px 5px rgba(25, 35, 52, .12); }
+.katka-app .room-status-panel { background: var(--katka-card); }
+.katka-app .room-status-default { background: var(--katka-card); }
+.katka-app .room-status-dirty { background: #fff3d7; }
+.katka-app .room-status-occupied { background: #fde7e9; }
+.katka-app .room-status-clean { background: #e8f6ed; }
+.room-column-resizer { color: var(--katka-caption); }
+.room-column-resizer::before { position: absolute; left: 50%; top: 50%; width: 2px; height: 28px; border-radius: 999px; background: currentColor; content: ''; opacity: .42; transform: translate(-50%, -50%); }
+.room-column-resizer svg { position: relative; opacity: 0; transition: opacity 160ms ease; }
+.room-column-resizer:hover, .room-column-resizer:focus-visible { color: var(--katka-primary); background: color-mix(in srgb, var(--katka-primary) 9%, transparent); }
+.room-column-resizer:hover svg, .room-column-resizer:focus-visible svg { opacity: .8; }
+:root[data-theme='dark'] .katka-app .room-status-default { background: #24262b; }
+:root[data-theme='dark'] .katka-app .room-status-clean { background: #183528; }
+:root[data-theme='dark'] .katka-app .room-status-dirty { background: #49331b; }
+:root[data-theme='dark'] .katka-app .room-status-occupied { background: #47252a; }
+.katka-app .booking-summary > div > div:first-child { color: var(--katka-subtext); }
+.room-sheet-grid { display: grid; grid-template-columns: 50px minmax(90px, .7fr) minmax(130px, 1.05fr) minmax(110px, .85fr) minmax(100px, .8fr) minmax(100px, .8fr) 64px; align-items: stretch; }
+.room-sheet-header { position: sticky; top: 0; z-index: 4; letter-spacing: .015em; }
+.room-sheet-row:hover { background: color-mix(in srgb, var(--katka-accent) 3.5%, var(--katka-card)); }
+.room-sheet-row > div { min-height: 48px; }
+.room-sheet-group-header { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--katka-accent) 65%, transparent); }
+.room-sheet-state { display: inline-flex; width: 100%; min-height: 32px; align-items: center; justify-content: flex-start; gap: 7px; border: 0; border-radius: 7px; padding: 6px 9px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+:root[data-theme='dark'] .room-allocation-sheet,
+:root[data-theme='dark'] .room-sheet-row { background: var(--katka-card); }
+:root[data-theme='dark'] .room-sheet-header,
+:root[data-theme='dark'] .room-sheet-group-header { background: var(--katka-card-muted); }
+@media (max-width: 1279px) {
+  .booking-table .sticky { position: static; }
+  .booking-summary > div:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 479px) {
+  .reports-page input[type='date'] { padding-left: 10px; font-size: 14px; }
+  .reports-page input[type='date'] + svg, .reports-page .pointer-events-none { display: none; }
 }

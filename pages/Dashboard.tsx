@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BedDouble, Building2, CalendarCheck, CreditCard, Filter, Trophy } from 'lucide-react';
 import { Booking, BookingStatus, Property, Room } from '../types';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import { deriveBookingStatus } from '../utils/bookingState';
 
@@ -183,9 +184,9 @@ const groupFinancials = (source: Booking[], includeExtraRevenue = false): MoneyA
 };
 
 const StatTile: React.FC<{ label: string; value: string; sub?: string; tone?: string }> = ({ label, value, sub, tone = 'text-gray-900' }) => (
-  <div className="rounded-2xl border border-gray-100 bg-white/80 p-3 shadow-sm">
-    <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">{label}</div>
-    <div className={`mt-1.5 text-lg md:text-xl font-black tracking-tight ${tone}`}>{value}</div>
+  <div className="stat-tile">
+    <div className="stat-label">{label}</div>
+    <div className={`stat-value mt-2 text-xl md:text-2xl font-semibold tracking-tight ${tone}`}>{value}</div>
     {sub && <div className="mt-1 text-[11px] font-semibold text-gray-400">{sub}</div>}
   </div>
 );
@@ -582,10 +583,10 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
   const emptyData = dateRangeInfo.valid && operationalRooms.length > 0 && operationalBookings.length === 0;
 
   return (
-    <div className="katka-liquid-page space-y-4 animate-fade-in pb-8">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="katka-liquid-page dashboard-page space-y-6 animate-fade-in pb-8">
+      <div className="page-heading flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h2 className="text-xl md:text-2xl font-bold text-gray-800">Tổng quan hoạt động</h2>
+          <p className="eyebrow mb-2">Không gian vận hành</p><h2 className="page-title">Tổng quan hoạt động</h2><p className="page-description">Theo dõi doanh thu, công nợ và hiệu suất lưu trú.</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
               <Building2 size={12} />
@@ -599,13 +600,13 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
           </div>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm md:flex-row md:items-center">
+        <div className="filter-toolbar flex flex-col items-stretch gap-2 md:flex-row md:items-center">
           <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
             <Filter size={16} />
-            <span>Lọc:</span>
+            <span>Thời gian</span>
           </div>
           <select
-            className="cursor-pointer rounded-lg border-none bg-white px-2 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 focus:ring-0"
+            aria-label="Khoảng thời gian" className="cursor-pointer rounded-lg border-none bg-white px-2 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 focus:ring-0"
             value={filterPreset}
             onChange={(event) => setFilterPreset(event.target.value as DatePreset)}
           >
@@ -617,6 +618,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
           <div className="flex items-center gap-2">
             <input
               type="date"
+              aria-label="Từ ngày"
               className="flex-1 rounded-lg border border-gray-200 px-2 py-2 text-xs text-gray-700 outline-none focus:border-blue-500 focus:ring-blue-500"
               value={startDate}
               onChange={(event) => {
@@ -627,6 +629,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
             <span className="font-bold text-gray-400">-</span>
             <input
               type="date"
+              aria-label="Đến ngày"
               className="flex-1 rounded-lg border border-gray-200 px-2 py-2 text-xs text-gray-700 outline-none focus:border-blue-500 focus:ring-blue-500"
               value={endDate}
               onChange={(event) => {
@@ -658,7 +661,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
         </div>
       )}
 
-      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+      <section className="dashboard-section dashboard-overview">
         <div className="mb-3 flex items-center gap-2">
           <CreditCard size={18} className="text-blue-600" />
           <h3 className="text-base font-black text-gray-900">Doanh số phát sinh</h3>
@@ -671,13 +674,32 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
         </div>
       </section>
 
+      <section className="dashboard-section revenue-trend" aria-label="Biểu đồ doanh thu check-out theo ngày">
+        <div className="flex items-start justify-between gap-4 mb-6">
+          <div><h3>Nhịp độ doanh thu</h3><p className="text-xs text-gray-500 mt-1">Doanh thu check-out theo ngày trong kỳ đã chọn</p></div>
+          <span className="chart-legend"><span />Doanh thu</span>
+        </div>
+        <div className="h-[200px]" role="img" aria-label="Xu hướng doanh thu check-out. Số liệu đầy đủ trong bảng Chi tiết theo ngày bên dưới.">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={dailySummaryRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} accessibilityLayer>
+              <defs><linearGradient id="revenue-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--katka-accent)" stopOpacity={0.16} /><stop offset="100%" stopColor="var(--katka-accent)" stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid vertical={false} stroke="var(--katka-border)" strokeDasharray="3 5" />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} minTickGap={36} tickMargin={12} />
+              <YAxis axisLine={false} tickLine={false} width={54} tickFormatter={value => value >= 1000000 ? `${Number((value / 1000000).toFixed(1))}tr` : value >= 1000 ? `${Math.round(value / 1000)}k` : `${value}`} />
+              <Tooltip formatter={(value: number) => [formatVND(value), 'Doanh thu check-out']} labelFormatter={label => `Ngày ${label}`} />
+              <Area dataKey="checkoutRevenue" type="monotone" stroke="var(--katka-accent)" strokeWidth={2} fill="url(#revenue-fill)" isAnimationActive={false} activeDot={{ r: 4, strokeWidth: 3, stroke: 'var(--katka-card)' }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+        <section className="dashboard-section">
           <div className="mb-3 flex items-center gap-2">
             <CalendarCheck size={18} className="text-green-600" />
             <h3 className="text-base font-black text-gray-900">Doanh thu check-out trong kỳ</h3>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <StatTile label="Số đơn" value={`${checkoutStats.count}`} />
             <StatTile label="Doanh thu phòng" value={formatVND(checkoutStats.roomRevenue)} />
             <StatTile label="Dịch vụ/phụ thu" value={formatVND(checkoutStats.serviceRevenue)} tone="text-blue-600" />
@@ -687,7 +709,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
           </div>
         </section>
 
-        <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+        <section className="dashboard-section">
           <div className="mb-3 flex items-center gap-2">
             <BedDouble size={18} className="text-purple-600" />
             <h3 className="text-base font-black text-gray-900">Hiệu suất phòng</h3>
@@ -701,7 +723,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
         </section>
       </div>
 
-      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
+      <section className="dashboard-section">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2">
             <Trophy size={18} className="text-amber-500" />
@@ -775,10 +797,8 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
         </div>
       </section>
 
-      <section className="rounded-[22px] border border-gray-200 bg-white p-3.5 shadow-sm md:p-4">
-        <div className="mb-4">
-          <h3 className="text-base font-black text-gray-900">Bảng tóm tắt theo ngày</h3>
-        </div>
+      <details className="dashboard-section daily-details">
+        <summary><span><span className="block text-base font-semibold">Chi tiết theo ngày</span><span className="block text-xs text-gray-500 mt-1">Doanh thu, công nợ và hiệu suất trong kỳ</span></span><span className="details-hint">Xem bảng</span></summary>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="sticky top-0 bg-white">
@@ -807,7 +827,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
     </div>
   );
 };

@@ -208,6 +208,7 @@ export interface Property {
   tenantId?: string; // Multi-tenant Foreign Key
   name: string;
   address: string;
+  gatePassword?: string; // Mật khẩu/mã cửa cổng hiển thị trên phiếu xác nhận đặt phòng
   sortOrder?: number; // Order for display
   excludeFromDashboard?: boolean; // Không tính chi nhánh này vào Tổng quan
   isOperationalActive?: boolean; // Ẩn/hiện chi nhánh khỏi các màn vận hành
@@ -232,6 +233,7 @@ export interface Room {
   number: string;
   typeId: string;
   propertyId: string;
+  roomPassword?: string; // Mật khẩu/mã cửa phòng hiển thị trên phiếu xác nhận đặt phòng
   status: RoomStatus;
   // Firebase server time (milliseconds) of the last explicit cleaning confirmation.
   lastCleanedAt?: number;
@@ -397,6 +399,7 @@ export const PERMISSIONS = {
   CAN_EDIT_BOOKING: 'can_edit_booking',
   CAN_DELETE_BOOKING: 'can_delete_booking',
   CAN_UPDATE_ROOM_STATUS: 'can_update_room_status',
+  CAN_EDIT_ACCESS_PASSWORDS: 'can_edit_access_passwords',
   CAN_EXPORT_REPORT: 'can_export_report',
   VIEW_AUDIT_LOGS: 'view_audit_logs',
 };

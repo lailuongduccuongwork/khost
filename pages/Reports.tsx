@@ -547,26 +547,26 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
   );
 
   return (
-    <div className="katka-liquid-page space-y-4 md:space-y-6 pb-20 font-sans animate-fade-in">
+    <div className="katka-liquid-page reports-page space-y-4 md:space-y-6 pb-20 font-sans animate-fade-in">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 md:gap-4">
         <div>
-            <h2 className="text-xl md:text-2xl font-bold text-gray-800">Báo cáo & Thống kê</h2>
+            <h2 className="page-title">Báo cáo & Thống kê</h2>
             <div className="flex items-center gap-2 mt-1">
-                <p className="text-gray-500 text-xs md:text-sm">Hệ thống báo cáo chi tiết hoạt động kinh doanh.</p>
+                <p className="text-gray-500 text-xs md:text-sm">Doanh thu và đặt phòng, được tổng hợp theo thời gian bạn chọn.</p>
             </div>
         </div>
       </div>
 
       {/* Filter Toolbar */}
-      <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+      <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col xl:flex-row gap-3 items-stretch xl:items-center">
          <div className="flex items-center gap-2 text-gray-700 font-semibold md:mr-2">
              <Filter size={18} />
              <span className="text-sm">Bộ lọc thời gian:</span>
          </div>
          
-         <div className="flex flex-col sm:flex-row gap-2 md:gap-4 flex-1">
+         <div className="flex flex-col xl:flex-row gap-2 md:gap-4 flex-1 min-w-0">
              <select 
-                className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-medium w-full md:min-w-[180px]"
+                className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-medium w-full xl:w-auto xl:min-w-[180px]"
                 value={filterPreset}
                 onChange={(e) => setFilterPreset(e.target.value as DatePreset)}
              >
@@ -575,8 +575,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                  ))}
              </select>
 
-             <div className="flex items-center gap-2 w-full md:w-auto">
-                 <div className="relative flex-1">
+             <div className="flex items-center gap-2 w-full min-w-0">
+                 <div className="relative flex-1 min-w-0">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500"><Calendar size={14}/></div>
                     <input 
                         type="date" 
@@ -586,7 +586,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                     />
                  </div>
                  <span className="text-gray-400 font-bold">-</span>
-                 <div className="relative flex-1">
+                 <div className="relative flex-1 min-w-0">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500"><Calendar size={14}/></div>
                     <input 
                         type="date" 
@@ -600,12 +600,12 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 flex w-full overflow-x-auto no-scrollbar">
+      <div className="segmented-control flex w-full sm:w-fit overflow-x-auto">
           <button 
              onClick={() => { setActiveTab('REVENUE'); setSortConfig(null); }}
              className={`flex-1 md:flex-none px-4 md:px-5 py-2.5 rounded-lg font-semibold text-xs md:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap ${
                  activeTab === 'REVENUE' 
-                 ? 'bg-green-100 text-green-700 shadow-sm' 
+                 ? 'bg-white text-blue-700 shadow-sm'
                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
              }`}
           >
@@ -615,7 +615,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
              onClick={() => { setActiveTab('BOOKINGS'); setSortConfig(null); }}
              className={`flex-1 md:flex-none px-4 md:px-5 py-2.5 rounded-lg font-semibold text-xs md:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap ${
                  activeTab === 'BOOKINGS' 
-                 ? 'bg-blue-100 text-blue-700 shadow-sm' 
+                 ? 'bg-white text-blue-700 shadow-sm'
                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
              }`}
           >

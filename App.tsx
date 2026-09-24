@@ -22,7 +22,7 @@ import {
   BookingCatalogItem,
   BookingFieldSettings,
 } from './types';
-import { Lock, Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Loader2, Users, Bell, X, CheckCircle, Clock, AlertTriangle, Wallet, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useBookingAlert, AppNotification } from './hooks/useBookingAlert'; 
 import { useDebtAlert } from './hooks/useDebtAlert'; 
 import { filterOperationalProperties, filterOperationalRooms } from './utils/operationalVisibility';
@@ -34,13 +34,13 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const RoomMap = lazy(() => import('./pages/RoomMap'));
 const Bookings = lazy(() => import('./pages/Bookings'));
 const Management = lazy(() => import('./pages/Management'));
+const AccessPasswords = lazy(() => import('./pages/AccessPasswords'));
 const Reports = lazy(() => import('./pages/Reports'));
-const Performance = lazy(() => import('./pages/Performance'));
 const Housekeeping = lazy(() => import('./pages/Housekeeping'));
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
 
 const PageLoadingFallback = () => (
-  <div className="min-h-[360px] flex flex-col items-center justify-center gap-3 text-gray-500">
+  <div role="status" aria-live="polite" className="min-h-[360px] flex flex-col items-center justify-center gap-3 text-gray-500">
     <Loader2 className="animate-spin text-blue-600" size={32} />
     <p className="text-sm font-semibold">Đang tải màn hình...</p>
   </div>
@@ -737,8 +737,8 @@ const App: React.FC = () => {
 
   if (isLoading) {
       return (
-          <div className="min-h-screen flex flex-col items-center justify-center katka-system-bg text-gray-500 gap-4">
-              <Loader2 className="animate-spin text-blue-600" size={48} />
+          <div role="status" aria-live="polite" className="min-h-screen flex flex-col items-center justify-center katka-system-bg text-gray-500 gap-4">
+              <Loader2 className="animate-spin text-blue-600" size={28} />
               <p className="font-medium">Đang kết nối dữ liệu...</p>
           </div>
       )
@@ -746,20 +746,20 @@ const App: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen katka-system-bg flex items-center justify-center p-4">
-        <div className="katka-panel w-full max-w-md p-8 animate-fade-in">
+      <div className="katka-app login-page min-h-screen flex items-center justify-center p-6">
+        <div className="login-card w-full max-w-md animate-fade-in">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 katka-primary-btn rounded-xl flex items-center justify-center mb-4 shadow-soft">
-              <Lock size={24} />
+            <div className="brand-mark login-mark mb-7">
+              <span>k•</span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-800">Đăng nhập hệ thống</h1>
-            <p className="text-gray-500">K-Host SaaS Management</p>
+            <h1 className="text-2xl font-bold text-gray-800">Chào mừng trở lại.</h1>
+            <p className="text-gray-500">Đăng nhập để bắt đầu ngày làm việc.</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tên đăng nhập</label>
+              <label htmlFor="login-username" className="block text-sm font-medium text-gray-700 mb-2">Tên đăng nhập</label>
               <input 
-                type="text" 
+                id="login-username" autoComplete="username" type="text"
                 value={loginUsername}
                 onChange={(e) => setLoginUsername(e.target.value)}
                 placeholder="Nhập tên đăng nhập"
@@ -767,9 +767,9 @@ const App: React.FC = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-2">Mật khẩu</label>
               <input 
-                type="password" 
+                id="login-password" autoComplete="current-password" type="password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 placeholder="Nhập mật khẩu"
@@ -782,7 +782,7 @@ const App: React.FC = () => {
           </form>
           
           <div className="mt-6 text-center">
-              <p className="text-xs text-gray-400">Hỗ trợ Multi-Tenant Isolation</p>
+              <p className="text-xs text-gray-400">K-Host · Không gian quản lý lưu trú</p>
           </div>
         </div>
       </div>
@@ -812,6 +812,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen katka-app relative">
+      <a href="#main-content" className="skip-link">Đi đến nội dung chính</a>
       
       {/* KHU VỰC HIỂN THỊ THÔNG BÁO NỔI (TOAST) - Tự ẩn sau 3 giây */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
@@ -844,7 +845,7 @@ const App: React.FC = () => {
         isDesktopHidden={isDesktopSidebarHidden}
       />
       
-      <div className={`${isDesktopSidebarHidden ? 'md:ml-0' : 'md:ml-64'} min-h-screen flex flex-col transition-all duration-300`}>
+      <div className={`${isDesktopSidebarHidden ? 'md:ml-0' : 'md:ml-[224px]'} app-workspace min-h-screen min-w-0 flex flex-col transition-all duration-200`}>
         {currentUser.role === UserRole.SUPER_ADMIN && !isSuperAdminView && (
             <div className="khost-safe-top-bar katka-glass katka-liquid-shell text-gray-800 px-4 py-2 text-sm flex justify-between items-center sticky top-0 z-50 border-b border-white/50">
                 <span className="flex items-center gap-2">
@@ -876,7 +877,7 @@ const App: React.FC = () => {
         )}
         
         {isSuperAdminView && (
-             <header className="h-16 khost-safe-top-header katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6">
+             <header className="app-header khost-safe-top-header sticky top-0 z-30 w-full flex items-center justify-between px-4 md:px-8">
                  <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 katka-secondary-btn rounded-lg">
                     <Users size={24} />
                  </button>
@@ -891,7 +892,7 @@ const App: React.FC = () => {
                     >
                       {isDesktopSidebarHidden ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
                     </button>
-                    <div className="font-bold text-lg text-purple-700">Platform Owner Console</div>
+                    <div className="font-bold text-lg text-purple-700">Quản trị nền tảng</div>
                  </div>
                  <div className="flex items-center gap-3">
                     <button
@@ -909,8 +910,8 @@ const App: React.FC = () => {
              </header>
         )}
 
-        <main className="flex-1 p-3 md:p-6">
-          <div className="max-w-7xl mx-auto h-full">
+        <main id="main-content" tabIndex={-1} className={`app-main flex-1 min-w-0 ${currentPage === 'room-map' ? 'app-main-roommap' : ''}`}>
+          <div className="app-content mx-auto h-full">
             <Suspense fallback={<PageLoadingFallback />}>
               {isSuperAdminView && (
                    <SuperAdmin
@@ -1006,16 +1007,6 @@ const App: React.FC = () => {
                           />
                       )}
 
-                      {currentPage === 'performance' && effectiveUser.permissions?.includes(PERMISSIONS.VIEW_REPORTS) && (
-                          <Performance
-                              bookings={bookings}
-                              rooms={operationalRooms}
-                              properties={operationalProperties}
-                              users={users}
-                              currentUser={effectiveUser}
-                          />
-                      )}
-
                       {currentPage === 'management' && effectiveUser.role === UserRole.ADMIN && (
                           <Management
                               users={users}
@@ -1028,6 +1019,16 @@ const App: React.FC = () => {
                               bookingSources={bookingSources}
                               bookingFieldSettings={bookingFieldSettings}
                               notificationSettings={notificationSettings}
+                              currentUser={effectiveUser}
+                              onRefresh={manualRefresh}
+                          />
+                      )}
+
+                      {currentPage === 'management' && effectiveUser.role !== UserRole.ADMIN && effectiveUser.permissions?.includes(PERMISSIONS.CAN_EDIT_ACCESS_PASSWORDS) && (
+                          <AccessPasswords
+                              rooms={rooms}
+                              roomTypes={roomTypes}
+                              properties={properties}
                               currentUser={effectiveUser}
                               onRefresh={manualRefresh}
                           />

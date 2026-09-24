@@ -12,7 +12,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Inter', 'Segoe UI', 'sans-serif'],
       },
       colors: {
         primary: {
@@ -24,9 +24,9 @@ export default {
         },
       },
       borderRadius: {
-        lg: '16px',
-        xl: '20px',
-        '2xl': '24px',
+        lg: '10px',
+        xl: '14px',
+        '2xl': '18px',
       },
       boxShadow: {
         soft: '0px 4px 20px rgba(15, 23, 42, 0.06)',

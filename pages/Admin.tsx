@@ -1,3 +1,4 @@
+import DialogFrame from '../components/DialogFrame';
 
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -228,6 +229,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
       { id: PERMISSIONS.VIEW_DASHBOARD, label: 'Xem Tổng quan (Dashboard)' },
       { id: PERMISSIONS.MANAGE_ROOMS, label: 'Được phép vào Sơ đồ phòng / Buồng phòng' },
       { id: PERMISSIONS.CAN_UPDATE_ROOM_STATUS, label: 'Được phép đổi trạng thái sạch/bẩn phòng' },
+      { id: PERMISSIONS.CAN_EDIT_ACCESS_PASSWORDS, label: 'Được phép sửa mật khẩu cửa cơ sở và phòng' },
       { id: PERMISSIONS.MANAGE_BOOKINGS, label: 'Được phép vào Danh sách đơn' },
       { id: PERMISSIONS.VIEW_REPORTS, label: 'Xem Báo cáo' },
       { id: PERMISSIONS.ADMIN_SETTINGS, label: 'Được phép quản trị Cài đặt hệ thống' },
@@ -270,7 +272,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
       .filter(group => group.users.length > 0);
 
   return (
-    <div className="katka-liquid-page space-y-6 px-5 py-5 md:px-6 md:py-6">
+    <div className="katka-liquid-page admin-page space-y-6 px-5 py-5 md:px-6 md:py-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
             <h2 className="text-2xl font-bold text-gray-800">Quản trị hệ thống</h2>
@@ -369,7 +371,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
       </div>
 
       {showModal && createPortal(
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4 md:p-6">
+        <DialogFrame label="Tài khoản nhân viên" onDismiss={() => { if (!isSaving) setShowModal(false); }} className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4 md:p-6">
             <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl animate-fade-in max-h-[calc(100dvh-32px)] overflow-hidden flex flex-col">
                 <div className="shrink-0 border-b border-gray-100 px-5 py-4 md:px-7">
                     <div className="flex items-start justify-between gap-4">
@@ -516,12 +518,12 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
                     </button>
                 </div>
             </div>
-        </div>,
+        </DialogFrame>,
         document.body
       )}
 
       {showDeleteConfirm && userToDelete && createPortal(
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4">
+          <DialogFrame label="Xác nhận xóa nhân viên" onDismiss={() => { if (!isDeleting) { setShowDeleteConfirm(false); setDeleteError(''); } }} className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in text-center">
                   <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
                       <AlertTriangle size={32} />
@@ -556,7 +558,7 @@ const Admin: React.FC<AdminProps> = ({ users, properties, currentUser, onRefresh
                       </button>
                   </div>
               </div>
-          </div>,
+          </DialogFrame>,
           document.body
       )}
     </div>

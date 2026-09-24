@@ -1,6 +1,6 @@
 
-import React from 'react';
-import { LayoutDashboard, BedDouble, Users, BarChart3, LogOut, Briefcase, X, Shield, PaintBucket, List, TrendingUp } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { LayoutDashboard, BedDouble, BarChart3, LogOut, Briefcase, X, Shield, PaintBucket, List } from 'lucide-react';
 import { UserRole, User, PERMISSIONS } from '../types';
 
 interface SidebarProps {
@@ -14,6 +14,41 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, currentUser, isOpen, onClose, isDesktopHidden = false }) => {
+  const sidebarRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const updateVisibility = () => {
+      if (!sidebarRef.current) return;
+      const hidden = media.matches ? isDesktopHidden : !isOpen;
+      sidebarRef.current.inert = hidden;
+      sidebarRef.current.setAttribute('aria-hidden', String(hidden));
+    };
+    updateVisibility();
+    media.addEventListener('change', updateVisibility);
+    return () => media.removeEventListener('change', updateVisibility);
+  }, [isOpen, isDesktopHidden]);
+
+  useEffect(() => {
+    if (!isOpen || window.matchMedia('(min-width: 768px)').matches) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    sidebarRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current?.(); }
+      if (event.key === 'Tab') {
+        const items = (Array.from(sidebarRef.current?.querySelectorAll<HTMLButtonElement>('button') || []) as HTMLButtonElement[]).filter(item => item.getClientRects().length);
+        if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items[items.length - 1]?.focus(); }
+        else if (!event.shiftKey && document.activeElement === items[items.length - 1]) { event.preventDefault(); items[0]?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); document.body.style.overflow = oldOverflow; if (opener?.isConnected) opener.focus(); };
+  }, [isOpen]);
+
   // 1. Define Operational Menu Items (Always visible based on permissions)
   const operationMenuItems = [
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, permission: PERMISSIONS.VIEW_DASHBOARD },
@@ -21,7 +56,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
     { id: 'room-map', label: 'Sơ đồ phòng', icon: BedDouble, permission: PERMISSIONS.MANAGE_ROOMS },
     // NEW: Housekeeping Menu Item
     { id: 'housekeeping', label: 'Buồng phòng', icon: PaintBucket, permission: PERMISSIONS.MANAGE_ROOMS }, 
-    { id: 'performance', label: 'Hiệu suất chốt đơn', icon: TrendingUp, permission: PERMISSIONS.VIEW_REPORTS },
     { id: 'reports', label: 'Báo cáo', icon: BarChart3, permission: PERMISSIONS.VIEW_REPORTS },
   ];
 
@@ -54,135 +88,55 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, onLogout, cu
                   currentUser.role === UserRole.MANAGER;
       }
 
-      if (item.id === 'performance') {
-          return currentUser.permissions?.includes(item.permission) ||
-                 currentUser.role === UserRole.ADMIN ||
-                 currentUser.role === UserRole.MANAGER;
-      }
-
       return currentUser.permissions?.includes(item.permission);
   });
 
-  // 2. Define Management/System Items (Visible for Admin ONLY)
-  // Logic: Only ADMIN can see System Settings. Manager access removed.
-  const showManagement = currentUser.role === UserRole.ADMIN;
+  // Nhân viên chỉ thấy khu vực mật khẩu ra vào khi được cấp quyền riêng.
+  const canEditAccessPasswords = currentUser.permissions?.includes(PERMISSIONS.CAN_EDIT_ACCESS_PASSWORDS);
+  const showManagement = currentUser.role === UserRole.ADMIN || canEditAccessPasswords;
   const showSystemSection = showManagement;
   
-  const managementItem = { id: 'management', label: 'Cài đặt hệ thống', icon: Briefcase };
+  const managementItem = {
+      id: 'management',
+      label: currentUser.role === UserRole.ADMIN ? 'Cài đặt hệ thống' : 'Mật khẩu ra vào',
+      icon: Briefcase,
+  };
 
   // Mobile overlay click handler
   const handleOverlayClick = (e: React.MouseEvent) => {
       if (onClose) onClose();
   };
 
+  const roleLabel = isSuperAdmin ? 'Platform Owner' : currentUser.role === UserRole.ADMIN ? 'Quản trị viên' : currentUser.role === UserRole.MANAGER ? 'Quản lý' : currentUser.role === UserRole.HOUSEKEEPING ? 'Buồng phòng' : 'Lễ tân';
+
   return (
     <>
-      {/* Mobile Overlay */}
-      <div 
-        className={`fixed inset-0 bg-black/35 backdrop-blur-[2px] z-40 md:hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        onClick={handleOverlayClick}
-      ></div>
-
-      {/* Sidebar Content */}
-      <div 
-        className={`w-64 katka-glass katka-liquid-shell katka-liquid-sidebar text-gray-800 h-screen fixed left-0 top-0 flex flex-col border-r border-white/50 shadow-soft z-50 transition-transform duration-300 transform 
-        ${isOpen ? 'translate-x-0' : '-translate-x-full'} ${isDesktopHidden ? 'md:-translate-x-full' : 'md:translate-x-0'}`}
-      >
-        <div className="p-6 border-b border-white/60 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-lg text-white ${isSuperAdmin ? 'bg-purple-600' : 'bg-blue-600'}`}>
-              K
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">K-Host</h1>
-              <p className="text-xs text-gray-500 capitalize">
-                {isSuperAdmin ? 'Platform Owner' : (currentUser.role === 'ADMIN' ? 'Quản trị viên' : (currentUser.role === 'MANAGER' ? 'Quản lý' : (currentUser.role === 'HOUSEKEEPING' ? 'Buồng phòng' : 'Lễ tân')))}
-              </p>
-            </div>
-          </div>
-          {/* Close button for mobile */}
-          <button onClick={onClose} className="md:hidden text-gray-500 hover:text-gray-900">
-              <X size={24} />
-          </button>
+      <div className={`sidebar-overlay fixed inset-0 z-40 md:hidden ${isOpen ? 'is-visible' : ''}`} onClick={handleOverlayClick} aria-hidden="true" />
+      <aside ref={sidebarRef} aria-label="Điều hướng chính" className={`app-sidebar fixed left-0 top-0 flex flex-col z-50 transition-transform duration-200 ${isOpen ? 'translate-x-0' : '-translate-x-full'} ${isDesktopHidden ? 'md:-translate-x-full' : 'md:translate-x-0'}`}>
+        <div className="sidebar-brand">
+          <div className="brand-mark" aria-hidden="true">k<span>•</span></div>
+          <div><h1>K-Host</h1><p>Hospitality workspace</p></div>
+          <button onClick={onClose} className="md:hidden ml-auto katka-icon-btn" aria-label="Đóng điều hướng"><X size={18} /></button>
         </div>
-
-        <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-          
-          {/* SUPER ADMIN MENU */}
+        <nav className="flex-1 overflow-y-auto px-3 py-5">
+          <p className="nav-section-label">{isSuperAdmin ? 'Nền tảng' : 'Không gian làm việc'}</p>
           {isSuperAdmin ? (
-              <>
-                <div className="px-4 text-xs font-bold text-purple-500 uppercase tracking-wider mb-2">Platform Admin</div>
-                <button
-                    onClick={() => onNavigate('dashboard')}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
-                    currentPage === 'dashboard'
-                        ? 'bg-purple-600 text-white shadow-soft'
-                        : 'text-gray-700 hover:bg-purple-50'
-                    }`}
-                >
-                    <Shield size={20} />
-                    <span className="font-medium">Tổng quan hệ thống</span>
-                </button>
-                {/* Note: In SuperAdmin.tsx, tabs are internal, but we map 'dashboard' to the component entry */}
-              </>
+            <button onClick={() => onNavigate('dashboard')} aria-current={currentPage === 'dashboard' ? 'page' : undefined} className={`nav-item ${currentPage === 'dashboard' ? 'is-active' : ''}`}><Shield size={18} /><span>Tổng quan hệ thống</span></button>
           ) : (
-             /* STANDARD TENANT MENU */
-             <>
-                {visibleOperationItems.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = currentPage === item.id;
-                    return (
-                    <button
-                        key={item.id}
-                        onClick={() => onNavigate(item.id)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
-                        isActive 
-                            ? 'bg-blue-600 text-white shadow-soft'
-                            : 'text-gray-700 hover:bg-blue-50'
-                        }`}
-                    >
-                        <Icon size={20} />
-                        <span className="font-medium">{item.label}</span>
-                    </button>
-                    );
-                })}
-
-                {/* Management Items Separator */}
-                {showSystemSection && (
-                    <>
-                    <div className="my-4 border-t border-gray-200 mx-2"></div>
-                    <div className="px-4 text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Hệ thống</div>
-                    {showManagement && (
-                      <button
-                          key={managementItem.id}
-                          onClick={() => onNavigate(managementItem.id)}
-                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors mb-1 ${
-                          currentPage === managementItem.id
-                              ? 'bg-orange-600 text-white shadow-soft'
-                              : 'text-gray-700 hover:bg-orange-50'
-                          }`}
-                      >
-                          <Briefcase size={20} />
-                          <span className="font-medium">{managementItem.label}</span>
-                      </button>
-                    )}
-                    </>
-                )}
-             </>
+            <>
+              {visibleOperationItems.map(item => {
+                const Icon = item.icon;
+                return <button key={item.id} onClick={() => onNavigate(item.id)} aria-current={currentPage === item.id ? 'page' : undefined} className={`nav-item ${currentPage === item.id ? 'is-active' : ''}`}><Icon size={18} strokeWidth={1.7} /><span>{item.label}</span></button>;
+              })}
+              {showSystemSection && <div className="mt-8"><p className="nav-section-label">Quản trị</p>{showManagement && <button onClick={() => onNavigate(managementItem.id)} aria-current={currentPage === managementItem.id ? 'page' : undefined} className={`nav-item ${currentPage === managementItem.id ? 'is-active' : ''}`}><Briefcase size={18} strokeWidth={1.7} /><span>{managementItem.label}</span></button>}</div>}
+            </>
           )}
-
         </nav>
-
-        <div className="p-4 border-t border-gray-200">
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors mt-2"
-          >
-            <LogOut size={20} />
-            <span className="font-medium">Đăng xuất</span>
-          </button>
+        <div className="sidebar-footer">
+          <div className="flex items-center gap-3 px-2 mb-4"><div className="user-avatar">{currentUser.fullName?.slice(0, 1).toUpperCase()}</div><div className="min-w-0"><p className="text-sm font-semibold truncate">{currentUser.fullName}</p><p className="text-xs text-gray-500 mt-0.5">{roleLabel}</p></div></div>
+          <button onClick={onLogout} className="nav-item logout-item"><LogOut size={17} strokeWidth={1.7} /><span>Đăng xuất</span></button>
         </div>
-      </div>
+      </aside>
     </>
   );
 };

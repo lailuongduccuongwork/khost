@@ -1,8 +1,9 @@
+import DialogFrame from '../components/DialogFrame';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Room, RoomType, Booking, BookingStatus, RoomStatus, Customer, Property, Tag, User, PERMISSIONS, TransactionCategory, ExtraFee, UserRole, HistoryLog, RoomPolicyRule, BookingCatalogItem, BookingFieldSettings } from '../types';
 import { DataService } from '../services/dataService';
-import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, User as UserIcon, Edit2, Building2, Loader2, LogIn, LogOut } from 'lucide-react';
+import { LayoutGrid, List as ListIcon, Plus, X, Search, ChevronRight, ChevronLeft, Trash2, Calendar, Clock, Check, Info, PlusCircle, AlertTriangle, Tag as TagIcon, MapPin, Users, Lock, ArrowUpDown, ArrowUp, ArrowDown, Filter, MoreHorizontal, Receipt, Wallet, ArrowUpCircle, ArrowDownCircle, CheckCircle, User as UserIcon, Edit2, Building2, Loader2, LogIn, LogOut, GripVertical } from 'lucide-react';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import { deriveBookingStatus, deriveRoomOperationalStatus, getActiveBookingForRoom } from '../utils/bookingState';
 
@@ -29,6 +30,28 @@ interface RoomMapProps {
 }
 
 type ViewMode = 'DAY' | 'WEEK' | 'MONTH';
+
+const ROOM_COLUMN_WIDTH_STORAGE_KEY = 'khost.room-map.room-column-width';
+const ROOM_COLUMN_DEFAULT_WIDTH = 168;
+const ROOM_COLUMN_MIN_WIDTH = 136;
+const ROOM_COLUMN_MAX_WIDTH = 280;
+
+const clampRoomColumnWidth = (value: number) =>
+    Math.min(ROOM_COLUMN_MAX_WIDTH, Math.max(ROOM_COLUMN_MIN_WIDTH, Math.round(value)));
+
+const getInitialRoomColumnWidth = () => {
+    if (typeof window === 'undefined') return ROOM_COLUMN_DEFAULT_WIDTH;
+    try {
+        const storedValue = window.localStorage.getItem(ROOM_COLUMN_WIDTH_STORAGE_KEY);
+        if (storedValue === null || storedValue.trim() === '') return ROOM_COLUMN_DEFAULT_WIDTH;
+        const storedWidth = Number(storedValue);
+        return Number.isFinite(storedWidth)
+            ? clampRoomColumnWidth(storedWidth)
+            : ROOM_COLUMN_DEFAULT_WIDTH;
+    } catch {
+        return ROOM_COLUMN_DEFAULT_WIDTH;
+    }
+};
 
 interface RoomPolicyWindow {
     policyId: string;
@@ -461,6 +484,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const [quickBookings, setQuickBookings] = useState<Booking[]>([]);
   const [isLoadingQuickFinder, setIsLoadingQuickFinder] = useState(false);
   const operationalScopeRef = useRef('');
+  const [roomColumnWidth, setRoomColumnWidth] = useState(getInitialRoomColumnWidth);
+  const roomColumnResizeCleanupRef = useRef<(() => void) | null>(null);
 
   const [sortConfig, setSortConfig] = useState<{key: keyof Booking, direction: 'asc' | 'desc'} | null>(null);
   const [financeCategories, setFinanceCategories] = useState<TransactionCategory[]>([]);
@@ -469,6 +494,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       const timer = setInterval(() => setNow(new Date()), 60000);
       return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => () => roomColumnResizeCleanupRef.current?.(), []);
 
   useEffect(() => {
       if (searchSeedNonce === 0) return;
@@ -2263,7 +2290,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
              const room = rooms.find(r => r.id === row.roomId);
              const type = roomTypes.find(t => t.id === room?.typeId);
              const prop = properties.find(p => p.id === room?.propertyId); 
-             return { roomNumber: room?.number || 'N/A', typeName: type?.name || 'N/A', branchName: prop?.name || 'N/A', checkIn: row.checkIn, checkOut: row.checkOut };
+             return {
+                 roomNumber: room?.number || 'N/A',
+                 typeName: type?.name || 'N/A',
+                 branchName: prop?.name || 'N/A',
+                 gatePassword: prop?.gatePassword?.trim() || '',
+                 roomPassword: room?.roomPassword?.trim() || '',
+                 checkIn: row.checkIn,
+                 checkOut: row.checkOut,
+             };
          });
          
          const selectedTags = tags.filter(t => bookingMeta.tags.includes(t.id));
@@ -2375,7 +2410,72 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
   const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
-  const roomColumnWidthClass = 'w-[112px] md:w-[148px]';
+  const persistRoomColumnWidth = (width: number) => {
+      try {
+          window.localStorage.setItem(ROOM_COLUMN_WIDTH_STORAGE_KEY, String(width));
+      } catch {
+          // The chosen width remains active for this tab when storage is unavailable.
+      }
+  };
+
+  const updateRoomColumnWidth = (width: number, persist = false) => {
+      const nextWidth = clampRoomColumnWidth(width);
+      setRoomColumnWidth(nextWidth);
+      if (persist) persistRoomColumnWidth(nextWidth);
+  };
+
+  const beginRoomColumnResize = (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.focus();
+      roomColumnResizeCleanupRef.current?.();
+
+      const startX = event.clientX;
+      const startWidth = roomColumnWidth;
+      let latestWidth = startWidth;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const cleanup = () => {
+          window.removeEventListener('pointermove', handlePointerMove);
+          window.removeEventListener('pointerup', finishResize);
+          window.removeEventListener('pointercancel', finishResize);
+          document.body.style.cursor = previousCursor;
+          document.body.style.userSelect = previousUserSelect;
+          roomColumnResizeCleanupRef.current = null;
+      };
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+          latestWidth = clampRoomColumnWidth(startWidth + pointerEvent.clientX - startX);
+          setRoomColumnWidth(latestWidth);
+      };
+      const finishResize = () => {
+          persistRoomColumnWidth(latestWidth);
+          cleanup();
+      };
+
+      roomColumnResizeCleanupRef.current = cleanup;
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', finishResize);
+      window.addEventListener('pointercancel', finishResize);
+  };
+
+  const handleRoomColumnResizeKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 24 : 8;
+      if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          updateRoomColumnWidth(roomColumnWidth - step, true);
+      } else if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          updateRoomColumnWidth(roomColumnWidth + step, true);
+      } else if (event.key === 'Home') {
+          event.preventDefault();
+          updateRoomColumnWidth(ROOM_COLUMN_DEFAULT_WIDTH, true);
+      }
+  };
+
+  const roomColumnStyle = { width: `${roomColumnWidth}px` };
   const renderCustomerSuggestionList = (suggestions: CustomerSuggestion[]) => {
       if (suggestions.length === 0) return null;
 
@@ -2403,12 +2503,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   };
 
   return (
-    <div className="katka-liquid-page h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
+    <div className="katka-liquid-page roommap-page h-[calc(100vh-5rem)] md:h-[calc(100vh-7rem)] flex flex-col space-y-4 font-sans text-gray-800 animate-fade-in relative z-10">
        <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-2 justify-between transition-all relative z-20 overflow-x-auto no-scrollbar whitespace-nowrap">
           <div className="flex items-center gap-2 shrink-0">
               
               <div className="flex gap-2 w-auto shrink-0">
-                  <div className="relative w-[102px] md:w-[112px] shrink-0">
+                  <div className="relative w-[132px] md:w-[142px] shrink-0">
                       <select 
                         value={filters.status}
                         onChange={e => setFilters({...filters, status: e.target.value})}
@@ -2437,7 +2537,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
               <div className="flex items-center gap-2 w-auto shrink-0">
                    <button 
-                      onClick={() => handleNavigate('PREV')}
+                      aria-label="Khoảng thời gian trước" onClick={() => handleNavigate('PREV')}
                       className="w-10 h-10 shrink-0 flex items-center justify-center bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronLeft size={18}/>
@@ -2464,7 +2564,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                    </div>
 
                    <button 
-                      onClick={() => handleNavigate('NEXT')}
+                      aria-label="Khoảng thời gian tiếp theo" onClick={() => handleNavigate('NEXT')}
                       className="w-10 h-10 shrink-0 flex items-center justify-center bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-500 hover:text-blue-600 shadow-sm transition-all active:scale-95"
                    >
                       <ChevronRight size={18}/>
@@ -2522,7 +2622,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                  )}
 
                  {canAdd && (
-                    <button onClick={handleManualCreate} className="h-10 bg-green-600 hover:bg-green-700 text-white px-2.5 rounded-xl inline-flex items-center justify-center gap-1.5 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
+                    <button aria-label="Đặt phòng" onClick={handleManualCreate} className="h-10 bg-blue-600 hover:bg-blue-700 text-white px-2.5 rounded-xl inline-flex items-center justify-center gap-1.5 font-bold text-xs md:text-sm shadow-md shadow-green-200 transition-all active:scale-95 whitespace-nowrap">
                         <Plus size={18} /> <span className="hidden xl:inline">Đặt phòng</span>
                         <span className="xl:hidden">Đặt</span>
                     </button>
@@ -2579,10 +2679,37 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                         Không có phòng để hiển thị. Hãy kiểm tra chi nhánh đang chọn, quyền xem chi nhánh hoặc cấu hình phòng.
                     </div>
                  )}
-                 <div style={{minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%'}} className="relative w-fit min-w-full">
+                 <div
+                    style={{
+                        width: timelineMode === 'MONTH' ? '2000px' : '100%',
+                        minWidth: timelineMode === 'MONTH' ? '2000px' : timelineMode === 'DAY' ? '1200px' : '100%',
+                    }}
+                    className="relative"
+                 >
                      
                      <div className={`sticky top-0 z-[40] bg-gray-50 border-b flex shadow-sm ring-1 ring-gray-200 ${timelineMode === 'WEEK' ? 'h-16 md:h-14' : 'h-14'}`}>
-                         <div className={`${roomColumnWidthClass} flex-shrink-0 border-r p-2 md:p-3 font-bold text-gray-700 bg-gray-50 flex items-center sticky left-0 z-[50] shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] text-sm md:text-base`}>Phòng</div>
+                         <div
+                            className="relative flex flex-shrink-0 items-center border-r bg-gray-50 p-2 text-sm font-bold text-gray-700 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] md:p-3 md:text-base sticky left-0 z-[50]"
+                            style={roomColumnStyle}
+                         >
+                            Phòng
+                            <button
+                                type="button"
+                                role="separator"
+                                aria-label="Thay đổi độ rộng cột thông tin phòng"
+                                aria-orientation="vertical"
+                                aria-valuemin={ROOM_COLUMN_MIN_WIDTH}
+                                aria-valuemax={ROOM_COLUMN_MAX_WIDTH}
+                                aria-valuenow={roomColumnWidth}
+                                title="Kéo để đổi độ rộng · Nhấp đúp để đặt lại"
+                                className="room-column-resizer absolute inset-y-0 -right-1.5 z-[70] flex w-3 touch-none cursor-col-resize items-center justify-center"
+                                onPointerDown={beginRoomColumnResize}
+                                onKeyDown={handleRoomColumnResizeKeyDown}
+                                onDoubleClick={() => updateRoomColumnWidth(ROOM_COLUMN_DEFAULT_WIDTH, true)}
+                            >
+                                <GripVertical size={12} aria-hidden="true" />
+                            </button>
+                         </div>
                          <div className="flex-1 grid relative" style={{gridTemplateColumns: `repeat(${gridColumns}, 1fr)`}}>
                              {renderCurrentTimeLine()}
                              {timeSlots.map((slot, i) => {
@@ -2622,26 +2749,29 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                          const effectiveRoomStatus = getRoomMapEffectiveStatus(room);
                          const roomLayoutMeta = bookingLayoutByRoom.get(room.id);
                          const laneCount = roomLayoutMeta?.laneCount ?? 1;
-                         const roomRowHeight = Math.max(88, 44 + (laneCount * 24));
+                         const roomTypeName = roomTypes.find(type => type.id === room.typeId)?.name || 'Chưa có hạng phòng';
+                         const roomRowHeight = Math.max(showRoomPropertyChip ? 112 : 96, 44 + (laneCount * 24));
 
-                         let statusBg = 'bg-white room-status-default';
+                         let statusBg = 'room-status-default';
                          let statusIcon = null;
-                         let statusBorder = '';
                          let tooltip = '';
 
                          if (effectiveRoomStatus === RoomStatus.VACANT_DIRTY) {
-                            statusBg = 'bg-yellow-50 room-status-dirty'; statusBorder = 'border-l-4 border-l-yellow-400'; statusIcon = <AlertTriangle size={14} className="text-yellow-600" />; tooltip = 'Phòng chưa dọn';
+                            statusBg = 'room-status-dirty'; statusIcon = <AlertTriangle size={14} className="text-yellow-600" />; tooltip = 'Phòng chưa dọn';
                          } else if (effectiveRoomStatus === RoomStatus.VACANT_CLEAN) {
-                             statusBg = 'bg-white room-status-clean'; statusBorder = 'border-l-4 border-l-green-500'; statusIcon = <CheckCircle size={14} className="text-green-600" />; tooltip = 'Sẵn sàng';
+                             statusBg = 'room-status-clean'; statusIcon = <CheckCircle size={14} className="text-green-600" />; tooltip = 'Sẵn sàng';
                          } else if (effectiveRoomStatus === RoomStatus.OCCUPIED) {
-                             statusBg = 'bg-red-50 room-status-occupied'; statusBorder = 'border-l-4 border-l-red-500'; statusIcon = <UserIcon size={14} className="text-red-600" />; tooltip = 'Đang có khách';
+                             statusBg = 'room-status-occupied'; statusIcon = <UserIcon size={14} className="text-red-600" />; tooltip = 'Đang có khách';
                          }
 
                          return (
                              <React.Fragment key={room.id}>
                                  {isNewBranch && (
-                                     <div className="room-branch-header sticky left-0 z-[20] w-full bg-gray-200/90 border-y border-gray-300/80 font-bold text-gray-700 px-4 py-1.5 text-xs uppercase tracking-wider flex items-center gap-2 backdrop-blur-sm shadow-sm">
-                                         <Building2 size={14} className="text-gray-500"/> {propName}
+                                     <div className="room-branch-header sticky left-0 z-[20] flex w-full min-w-0 items-center gap-2 border-y border-gray-300/80 bg-gray-200/90 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-gray-700 shadow-sm backdrop-blur-sm">
+                                         <Building2 size={14} className="shrink-0 text-gray-500"/>
+                                         <span className="min-w-0 truncate" title={propName || 'Chưa có tên cơ sở'}>
+                                             {propName || 'Chưa có tên cơ sở'}
+                                         </span>
                                      </div>
                                  )}
 
@@ -2650,13 +2780,24 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                     style={{ height: `${roomRowHeight}px` }}
                                  >
                                      <div 
-                                        className={`room-status-panel ${roomColumnWidthClass} flex-shrink-0 border-r p-3 md:p-4 flex flex-col justify-start sticky left-0 z-[30] border-r-gray-200 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-all select-none relative gap-2 ${statusBg} ${statusBorder}`} 
+                                        className={`room-status-panel relative sticky left-0 z-[30] flex flex-shrink-0 select-none flex-col justify-start gap-2 overflow-hidden border-r border-r-gray-200 p-3 shadow-[4px_0_5px_-2px_rgba(0,0,0,0.05)] transition-[background-color,width] md:p-4 ${statusBg}`}
+                                        style={roomColumnStyle}
                                         title={tooltip}
                                      >
                                          <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                                <div className="room-number font-black text-[20px] md:text-[22px] text-gray-800 leading-none tracking-tight">{room.number}</div>
-                                                <div className="room-type text-[10px] md:text-xs text-gray-500 truncate mt-1 font-semibold uppercase tracking-wide">{roomTypes.find(t=>t.id===room.typeId)?.name}</div>
+                                            <div className="min-w-0 flex-1">
+                                                <div
+                                                    className="room-number truncate whitespace-nowrap text-[18px] font-black leading-none tracking-tight text-gray-800 sm:text-[20px] lg:text-[22px]"
+                                                    title={room.number || 'Chưa có số phòng'}
+                                                >
+                                                    {room.number || 'Chưa có số phòng'}
+                                                </div>
+                                                <div
+                                                    className="room-type mt-1 line-clamp-2 break-words text-[10px] font-semibold uppercase leading-tight tracking-wide text-gray-500 md:text-xs"
+                                                    title={roomTypeName}
+                                                >
+                                                    {roomTypeName}
+                                                </div>
                                             </div>
                                             <button
                                                 type="button"
@@ -2671,9 +2812,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                 {statusIcon}
                                             </button>
                                          </div>
-                                         <div className="flex flex-wrap items-center gap-1.5">
+                                         <div className="mt-auto flex min-w-0 items-center gap-1.5">
                                             {showRoomPropertyChip && propName && (
-                                                <span className="inline-flex max-w-full items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 truncate">
+                                                <span
+                                                    className="inline-flex min-w-0 max-w-full truncate rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600"
+                                                    title={propName}
+                                                >
                                                     {propName}
                                                 </span>
                                             )}
@@ -2950,7 +3094,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       </div>
 
       {showQuickFinder && createPortal(
-          <div className="katka-app katka-modal-scope fixed inset-0 z-[115] flex items-center justify-center p-2 md:p-3">
+          <DialogFrame label="Tra phòng nhanh" onDismiss={closeQuickFinder} className="katka-app katka-modal-scope fixed inset-0 z-[115] flex items-center justify-center p-2 md:p-3">
               <div className="absolute inset-0 katka-modal-backdrop" onClick={closeQuickFinder}></div>
               <div className="katka-focus-modal relative bg-white w-full max-w-[1024px] h-[calc(100dvh-20px)] md:h-[calc(100dvh-24px)] rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-fade-in">
                   <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
@@ -2962,7 +3106,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           type="button"
                           onClick={closeQuickFinder}
                           className="w-6 h-6 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
-                      >
+                       aria-label="Đóng">
                           <X size={13} />
                       </button>
                   </div>
@@ -3126,7 +3270,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                           type="button"
                                           onClick={handleCloseHoldModal}
                                           className="w-6 h-6 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
-                                      >
+                                       aria-label="Đóng">
                                           <X size={13} />
                                       </button>
                                   </div>
@@ -3198,12 +3342,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       )}
                   </div>
               </div>
-          </div>,
+          </DialogFrame>,
           document.body
       )}
 
       {statusModal.isOpen && statusModal.room && (
-          <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+          <DialogFrame label="Trạng thái phòng" onDismiss={() => { if (!isSavingRoomStatus) setStatusModal({...statusModal, isOpen: false}); }} className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
                   <button onClick={() => setStatusModal({...statusModal, isOpen: false})} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
                   
@@ -3264,11 +3408,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           </button>
                   </div>
               </div>
-          </div>
+          </DialogFrame>
       )}
 
       {moveConfirmModal && moveConfirmModal.isOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-fade-in">
+          <DialogFrame label="Xác nhận đổi phòng" onDismiss={() => { if (!isSavingMove) setMoveConfirmModal(null); }} className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-fade-in">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                   <div className="bg-blue-600 p-4 text-center">
                       <div className="w-16 h-16 bg-white/20 text-white rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner">
@@ -3316,11 +3460,11 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       </div>
                   </div>
               </div>
-          </div>
+          </DialogFrame>
       )}
 
       {showModal && createPortal(
-          <div className="katka-app katka-modal-scope fixed inset-0 z-[120] flex items-center justify-center p-1 md:p-2">
+          <DialogFrame label="Đặt phòng" onDismiss={() => setShowModal(false)} className="katka-app katka-modal-scope fixed inset-0 z-[120] flex items-center justify-center p-1 md:p-2">
               <div className="absolute inset-0 katka-modal-backdrop" onClick={() => setShowModal(false)}></div>
               
               <div className="katka-focus-modal relative bg-white w-full max-w-[810px] max-h-[calc(100dvh-8px)] md:max-h-[calc(100dvh-16px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
@@ -3707,20 +3851,6 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                           <div className="flex items-center gap-2 w-full md:w-auto">
                              {isEditMode && canEdit && (
                                 <>
-                                 <div className="relative flex-1 md:flex-none">
-                                     <select 
-                                        className="w-full md:w-36 appearance-none bg-white border border-gray-200 text-gray-700 font-bold py-2.5 pl-3 pr-8 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 text-xs shadow-sm" 
-                                        value={bookingMeta.status} 
-                                        onChange={e => setBookingMeta({...bookingMeta, status: e.target.value as any})}
-                                     >
-                                         <option value={BookingStatus.CONFIRMED}>Đã xác nhận</option>
-                                         <option value={BookingStatus.HOLD}>Giữ chỗ</option>
-                                         <option value={BookingStatus.CHECKED_IN}>Đang ở</option>
-                                         <option value={BookingStatus.CHECKED_OUT}>Đã trả</option>
-                                     </select>
-                                     <ArrowUpDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
-                                 </div>
-                                 
                                  {canDelete && (
                                      !showDeleteConfirm ? (
                                         <button 
@@ -3771,12 +3901,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       </div>
                   </div>
               </div>
-          </div>,
+          </DialogFrame>,
           document.body
       )}
 
       {showModal && showGuestFallbackConfirm && createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+          <DialogFrame label="Xác nhận tên khách" onDismiss={() => setShowGuestFallbackConfirm(false)} className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
               <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl animate-fade-in">
                   <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
                       <AlertTriangle size={24} />
@@ -3813,12 +3943,12 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                       </button>
                   </div>
               </div>
-          </div>,
+          </DialogFrame>,
           document.body
       )}
 
       {showTicketModal && receiptData && createPortal(
-          <div className="fixed inset-0 bg-black/45 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-3 md:p-6">
+          <DialogFrame label="Phiếu xác nhận đặt phòng" onDismiss={() => setShowTicketModal(false)} className="fixed inset-0 bg-black/45 backdrop-blur-[2px] z-[9999] flex items-center justify-center p-3 md:p-6">
                <div className="bg-white rounded-[28px] shadow-[0_24px_80px_rgba(15,23,42,0.24)] max-w-3xl w-full h-auto max-h-[calc(100dvh-48px)] animate-fade-in relative overflow-hidden flex flex-col">
                    <button onClick={() => setShowTicketModal(false)} className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-900"><X size={18}/></button>
 
@@ -3866,8 +3996,8 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                                 <Building2 size={16} />
                                                             </div>
                                                             <div className="min-w-0">
-                                                                <div className="truncate font-black text-blue-700 text-base">Phòng {room.roomNumber} - {room.typeName}</div>
-                                                                <div className="text-xs font-semibold text-gray-500">Chi nhánh: {room.branchName}</div>
+                                                                <div className="truncate text-base font-black text-blue-700">Số phòng {room.roomNumber}</div>
+                                                                <div className="text-xs font-semibold text-gray-500">Hạng phòng: {room.typeName} - Cơ sở: {room.branchName}</div>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -3878,6 +4008,33 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                                                         <span className="text-gray-500">Trả phòng</span>
                                                         <span className="font-semibold">{formatStandardDateTime(room.checkOut)}</span>
                                                     </div>
+
+                                                    {(room.gatePassword || room.roomPassword) && (
+                                                        <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                                            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                                                                <Lock size={13} />
+                                                                Thông tin ra vào
+                                                            </div>
+                                                            <div className="space-y-1.5 text-xs">
+                                                                {room.gatePassword && (
+                                                                    <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                                                                        <span className="font-semibold text-amber-800/80">Mật khẩu cửa cổng cơ sở {room.branchName}:</span>
+                                                                        <span className="font-mono text-sm font-black tracking-wider text-amber-950">{room.gatePassword}</span>
+                                                                    </div>
+                                                                )}
+                                                                {room.roomPassword && (
+                                                                    <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                                                                        <span className="font-semibold text-amber-800/80">Mật khẩu cửa phòng {room.roomNumber}:</span>
+                                                                        <span className="font-mono text-sm font-black tracking-wider text-amber-950">{room.roomPassword}</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="mt-2.5 flex items-start gap-1.5 border-t border-amber-200/80 pt-2 text-[11px] font-medium leading-relaxed text-amber-800">
+                                                                <Info size={13} className="mt-0.5 shrink-0" />
+                                                                <span>Mật khẩu chỉ kích hoạt sớm 5–10 phút trước giờ check-in đã đặt và duy trì tới 10 phút sau giờ check-out.</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -3976,7 +4133,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                         </div>
                    </div>
                </div>
-          </div>,
+          </DialogFrame>,
           document.body
       )}
     </div>

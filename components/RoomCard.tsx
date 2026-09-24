@@ -14,11 +14,11 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, type, currentBooking, custome
   const getStatusConfig = (status: RoomStatus) => {
     switch (status) {
       case RoomStatus.VACANT_CLEAN:
-        return { color: 'bg-green-100 border-green-300', text: 'text-green-700', icon: CheckCircle, label: 'Sẵn sàng' };
+        return { color: 'bg-white border-green-200', text: 'text-green-700', icon: CheckCircle, label: 'Sẵn sàng' };
       case RoomStatus.VACANT_DIRTY:
-        return { color: 'bg-yellow-100 border-yellow-300', text: 'text-yellow-700', icon: AlertCircle, label: 'Chưa dọn' };
+        return { color: 'bg-white border-yellow-200', text: 'text-yellow-700', icon: AlertCircle, label: 'Chưa dọn' };
       case RoomStatus.OCCUPIED:
-        return { color: 'bg-red-100 border-red-300', text: 'text-red-700', icon: User, label: 'Đang ở' };
+        return { color: 'bg-white border-red-200', text: 'text-red-700', icon: User, label: 'Đang ở' };
       default:
         return { color: 'bg-gray-100 border-gray-200', text: 'text-gray-500', icon: AlertCircle, label: 'Unknown' };
     }
@@ -28,9 +28,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, type, currentBooking, custome
   const Icon = config.icon;
 
   return (
-    <div 
+    <button type="button" aria-label={`Phòng ${room.number}, ${config.label}`}
       onClick={() => onClick(room)}
-      className={`relative h-32 rounded-lg border-2 p-3 flex flex-col justify-between cursor-pointer transition-transform hover:scale-105 hover:shadow-lg ${config.color}`}
+      className={`room-card relative h-36 rounded-xl border p-4 flex flex-col justify-between cursor-pointer text-left transition-colors ${config.color}`}
     >
       <div className="flex justify-between items-start">
         <span className={`text-2xl font-bold ${config.text}`}>{room.number}</span>
@@ -51,7 +51,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, type, currentBooking, custome
           <p className={`${config.text} font-medium`}>{config.label}</p>
         )}
       </div>
-    </div>
+    </button>
   );
 };
 

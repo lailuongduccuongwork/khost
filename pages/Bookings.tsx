@@ -1,3 +1,4 @@
+import DialogFrame from '../components/DialogFrame';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Booking, BookingStatus, Customer, HistoryLog, PERMISSIONS, Property, Room, RoomType, Tag, User } from '../types';
@@ -888,25 +889,6 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       }
   };
 
-  const handleResetAll = async () => {
-      if(!confirm("Bạn sắp mở thao tác nguy hiểm: XÓA TOÀN BỘ ĐƠN trên hệ thống.")) return;
-      const typed = window.prompt('Nhập chính xác: XOA TOAN BO DON');
-      if (typed !== 'XOA TOAN BO DON') {
-          alert('Đã hủy. Nội dung xác nhận không khớp.');
-          return;
-      }
-      if(confirm("Xác nhận lần cuối: thao tác này không thể khôi phục. Tiếp tục xóa toàn bộ đơn?")) {
-          try {
-              const deletedCount = await DataService.resetAllBookings();
-              if(onRefresh) onRefresh();
-              alert(`Đã xoá sạch dữ liệu đặt phòng (${deletedCount} đơn).`);
-          } catch (error) {
-              const message = error instanceof Error ? error.message : 'Lỗi không xác định';
-              alert(`Reset dữ liệu thất bại: ${message}`);
-          }
-      }
-  }
-
   const handleCreate = () => {
       if(!canAdd) {
           alert("Bạn không có quyền tạo đơn.");
@@ -1328,14 +1310,14 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   };
 
   return (
-    <div className="katka-liquid-page bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in relative">
-      <div className="p-5 border-b border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="katka-liquid-page bookings-page bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in relative">
+      <div className="bookings-heading p-6 border-b border-gray-200 flex flex-wrap justify-between items-start md:items-center gap-5">
         <div>
-            <h2 className="text-lg font-bold text-gray-800">Danh sách đặt phòng</h2>
+            <h2 className="page-title">Danh sách đặt phòng</h2>
             <p className="text-xs text-gray-500">Phạm vi đang xem: <span className="font-bold text-gray-700">{currentScopeName}</span></p>
         </div>
         
-        <div className="flex gap-2 w-full md:w-auto">
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
             {canAdd && (
                 <>
                     <button 
@@ -1348,7 +1330,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                     
                     <button 
                         onClick={triggerUpload}
-                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
+                        className="katka-secondary-btn hover:bg-gray-50 px-3 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
                         title="Nhập dữ liệu từ file Excel"
                         disabled={isImporting}
                     >
@@ -1372,7 +1354,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                 </>
             )}
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+        <div className="booking-summary w-full grid grid-cols-2 gap-3 xl:grid-cols-5">
             <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
                 <div className="text-[11px] font-bold uppercase text-gray-400">Tổng đơn</div>
                 <div className="text-base font-black text-gray-900">{filteredSummary.total}</div>
@@ -1411,25 +1393,6 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
               >
                   <RotateCcw size={14} /> Hoàn tác (Undo)
               </button>
-          </div>
-      )}
-
-      {/* DANGER ZONE */}
-      {canDelete && (
-          <div className="border-b border-red-100 bg-red-50 px-5 py-3">
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div>
-                      <div className="text-sm font-black text-red-700">Khu vực nguy hiểm</div>
-                      <div className="text-xs text-red-600">Xóa toàn bộ đơn yêu cầu nhập xác nhận bằng chữ.</div>
-                  </div>
-                  <button 
-                      onClick={handleResetAll}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-bold text-red-600 transition-colors hover:bg-red-100"
-                      title="Xóa sạch toàn bộ dữ liệu đặt phòng"
-                  >
-                      <Trash2 size={16} /> Xóa toàn bộ đơn
-                  </button>
-              </div>
           </div>
       )}
 
@@ -1585,7 +1548,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1700px] text-left text-sm text-gray-600">
+        <table className="booking-table w-full min-w-[1700px] text-left text-sm text-gray-600">
           <thead className="bg-gray-50 text-gray-700 font-semibold uppercase text-xs">
             <tr>
               <th className="px-4 py-3 w-10 text-center">
@@ -1778,7 +1741,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
       )}
 
       {selectedDetailBooking && (
-          <div className="fixed inset-0 bg-black/50 z-[104] flex items-center justify-center p-3 md:p-5" onClick={() => setDetailModalBookingId(null)}>
+          <DialogFrame label="Chi tiết đặt phòng" onDismiss={() => setDetailModalBookingId(null)} className="fixed inset-0 bg-black/50 z-[104] flex items-center justify-center p-3 md:p-5" onClick={() => setDetailModalBookingId(null)}>
               <div
                   className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[calc(100dvh-32px)] overflow-hidden animate-fade-in"
                   onClick={(e) => e.stopPropagation()}
@@ -1866,11 +1829,11 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                       </div>
                   </div>
               </div>
-          </div>
+          </DialogFrame>
       )}
 
       {historyModal.isOpen && selectedHistoryBooking && (
-          <div className="fixed inset-0 bg-black/50 z-[105] flex items-center justify-center p-3 md:p-5" onClick={closeBookingHistory}>
+          <DialogFrame label="Lịch sử đặt phòng" onDismiss={closeBookingHistory} className="fixed inset-0 bg-black/50 z-[105] flex items-center justify-center p-3 md:p-5" onClick={closeBookingHistory}>
               <div
                   className="bg-white rounded-2xl shadow-2xl w-full max-w-[min(1300px,96vw)] max-h-[calc(100dvh-32px)] flex flex-col overflow-hidden animate-fade-in"
                   onClick={(e) => e.stopPropagation()}
@@ -2052,12 +2015,12 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                       </div>
                   </div>
               </div>
-          </div>
+          </DialogFrame>
       )}
 
       {/* CUSTOM DELETE CONFIRMATION MODAL */}
       {deleteModal.isOpen && (
-          <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+          <DialogFrame label="Xác nhận xóa" onDismiss={() => setDeleteModal({...deleteModal, isOpen: false})} className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
                   <button onClick={() => setDeleteModal({...deleteModal, isOpen: false})} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
                   
@@ -2095,7 +2058,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                       </button>
                   </div>
               </div>
-          </div>
+          </DialogFrame>
       )}
     </div>
   );

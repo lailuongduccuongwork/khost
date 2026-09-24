@@ -31,6 +31,18 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Mr1FKNmwmssT3MCz4We7BO
 
 Run `npm test` for the cleanliness regression tests. Firebase operations in these tests use an in-memory adapter; they do not connect to production.
 
+## Automatic Firebase backups on macOS
+
+- `npm run backup:install` installs a per-user LaunchAgent that runs at 22:00 daily and again when the user logs in. Google Drive is preferred automatically when Drive for desktop is available; iCloud Drive is the fallback.
+- `npm run backup:now` creates a manual backup immediately.
+- The installer also places `Sao lưu K-Host ngay.command` in the backup folder for a double-click manual backup.
+- `npm run backup:status` shows the most recent successful backup.
+- `npm run backup:uninstall` removes the schedule without deleting existing archives.
+- To use Google Drive or an external disk, run `npm run backup:install -- --destination="/absolute/path/K-Host Backups"`.
+- Daily archives retain 30 days; monthly archives retain 12 months. Manual and pre-update archives retain the latest 30 copies each.
+- `npm run build` only compiles the app; it does not download the database. Use `npm run build:release` to create and verify a fresh pre-update backup before preparing a release. The release build stops if the backup fails. Daily scheduled and manual backups remain available.
+- Backup files are raw Firebase JSON compressed with gzip, with a checksum and summary in the matching `.metadata.json` file.
+
 ## Firebase download reduction (September 2026)
 
 - A failed login checks only `system/users`, `system/tenants`, and each listed `tenants/{id}/users` directory. It never downloads the `tenants` tree. Legacy accounts missing from the central directory can still sign in and repair that directory.

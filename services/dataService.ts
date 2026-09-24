@@ -398,12 +398,6 @@ const assertBookingMutationAllowed = (mode: BookingMutationMode, booking: Bookin
     assertPropertyWriteScope(booking.propertyId, actionMap[mode], source);
 };
 
-const assertResetBookingsAllowed = () => {
-    if (!currentAuditActor || isSystemMutation()) return;
-    if (isTenantAdminActor()) return;
-    throw new Error('Chỉ quản trị viên mới được xóa toàn bộ dữ liệu đặt phòng.');
-};
-
 const normalizeUserCredentialsForStorage = (user: User, existingUser?: User | null): User => {
     const hasNewPassword = typeof user.password === 'string' && user.password.trim().length > 0;
     const fallbackHash = existingUser?.passwordHash;
@@ -980,8 +974,15 @@ const stripTenantId = (value: any) => {
 const getChangedKeys = (before: any, after: any) => {
     const prev = stripTenantId(sanitizeForLog(before)) || {};
     const next = stripTenantId(sanitizeForLog(after)) || {};
-    const keys = Array.from(new Set([...Object.keys(prev), ...Object.keys(next)]));
-    return keys.filter((key) => JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null));
+    const rawPrev = stripTenantId(before) || {};
+    const rawNext = stripTenantId(after) || {};
+    const keys = Array.from(new Set([...Object.keys(rawPrev), ...Object.keys(rawNext)]));
+    return keys.filter((key) => {
+        if (key.toLowerCase().includes('password')) {
+            return JSON.stringify(rawPrev[key] ?? null) !== JSON.stringify(rawNext[key] ?? null);
+        }
+        return JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null);
+    });
 };
 
 const isOnlySortOrderChange = (before: any, after: any) => {
@@ -3650,45 +3651,6 @@ const _hardDeleteBookings = (ids: string[], staffId?: string, options: BookingAc
     }
 };
 
-const _resetAllBookings = async () => {
-    if (!activeTenantId || !db) {
-        throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
-    }
-
-    await _assertOnlineForMutation('reset dữ liệu');
-    assertResetBookingsAllowed();
-
-    const basePath = getBaseRef();
-    if (!basePath) {
-        throw new Error('Không xác định được tenant hiện tại.');
-    }
-
-    const deletedIds = CACHE.bookings.map((booking) => booking.id);
-    const deletedCount = deletedIds.length;
-
-    const updates: Record<string, unknown> = {
-        [`${basePath}/bookings`]: null,
-        [`${basePath}/${BOOKING_INDEX_NODE}`]: null,
-    };
-
-    await trackedUpdateRootWithBookingIndexFallback(updates, { operation: 'reset-all-bookings', pathCount: 2 });
-
-    CACHE.bookings = [];
-    _dataChangeCallback();
-
-    _recordHistory({
-        action: 'RESET',
-        entityType: 'BOOKING',
-        description: `Xóa sạch toàn bộ dữ liệu đặt phòng (${deletedCount} đơn)`,
-        metadata: {
-            deletedCount,
-            bookingIds: deletedIds,
-        },
-    });
-
-    return deletedCount;
-};
-
 const _logAction = (action: HistoryAction | string, booking: Booking, description: string, staffId?: string) => {
     _recordHistory({
         action,
@@ -4838,6 +4800,88 @@ const getBookingCatalogList = (list: BookingCatalogItem[], fallback: BookingCata
     }));
 };
 
+const _updatePropertyGatePassword = async (propertyId: string, value: string) => {
+    if (!activeTenantId || !db) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    const basePath = getBaseRef();
+    if (!basePath) throw new Error('Không xác định được tenant hiện tại.');
+
+    assertActorHasAnyPermission(
+        [PERMISSIONS.CAN_EDIT_ACCESS_PASSWORDS],
+        'sửa mật khẩu cửa cơ sở'
+    );
+
+    const property = CACHE.properties.find((item) => item.id === propertyId);
+    if (!property) throw new Error('Không tìm thấy cơ sở cần cập nhật.');
+    assertPropertyWriteScope(property.id, 'cập nhật mật khẩu cửa cơ sở');
+
+    const gatePassword = value.trim();
+    const before = cloneData(property);
+    const after: Property = { ...property, gatePassword };
+
+    await trackedSet(
+        `${basePath}/properties/${propertyId}/gatePassword`,
+        gatePassword || null,
+        { operation: 'update-property-gate-password', propertyId }
+    );
+
+    CACHE.properties = CACHE.properties.map((item) => item.id === propertyId ? after : item);
+    _dataChangeCallback();
+    _recordHistory({
+        action: 'UPDATE',
+        entityType: 'PROPERTY',
+        entityId: propertyId,
+        entityLabel: property.name || propertyId,
+        description: `Cập nhật mật khẩu cửa cơ sở ${property.name || propertyId}`,
+        before,
+        after,
+        metadata: { changedKeys: ['gatePassword'], propertyId },
+        coalesceKey: `properties:${propertyId}:gate-password`,
+    });
+
+    return after;
+};
+
+const _updateRoomPassword = async (roomId: string, value: string) => {
+    if (!activeTenantId || !db) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    const basePath = getBaseRef();
+    if (!basePath) throw new Error('Không xác định được tenant hiện tại.');
+
+    assertActorHasAnyPermission(
+        [PERMISSIONS.CAN_EDIT_ACCESS_PASSWORDS],
+        'sửa mật khẩu cửa phòng'
+    );
+
+    const room = CACHE.rooms.find((item) => item.id === roomId);
+    if (!room) throw new Error('Không tìm thấy phòng cần cập nhật.');
+    assertPropertyWriteScope(room.propertyId, 'cập nhật mật khẩu cửa phòng');
+
+    const roomPassword = value.trim();
+    const before = cloneData(room);
+    const after: Room = { ...room, roomPassword };
+
+    await trackedSet(
+        `${basePath}/rooms/${roomId}/roomPassword`,
+        roomPassword || null,
+        { operation: 'update-room-password', roomId, propertyId: room.propertyId }
+    );
+
+    CACHE.rooms = CACHE.rooms.map((item) => item.id === roomId ? after : item);
+    _dataChangeCallback();
+    _recordHistory({
+        action: 'UPDATE',
+        entityType: 'ROOM',
+        entityId: roomId,
+        entityLabel: room.number || roomId,
+        description: `Cập nhật mật khẩu cửa phòng ${room.number || roomId}`,
+        before,
+        after,
+        metadata: { changedKeys: ['roomPassword'], propertyId: room.propertyId },
+        coalesceKey: `rooms:${roomId}:room-password`,
+    });
+
+    return after;
+};
+
 export const DataService = {
     init: _initRealtimeConnection,
     clearSessionCache: () => _clearSessionCache(),
@@ -5135,6 +5179,8 @@ export const DataService = {
     saveBookingSources: (list: BookingCatalogItem[]) => _saveAuditedList('bookingSources', list),
     saveBookingFieldSettings: (settings: BookingFieldSettings) => _saveBookingFieldSettings(settings),
     saveNotificationSettings: (settings: NotificationSettings) => _saveNotificationSettings(settings),
+    updatePropertyGatePassword: _updatePropertyGatePassword,
+    updateRoomPassword: _updateRoomPassword,
 
     updateRoomStatus: _updateRoomStatus,
     addBooking: _addBooking,
@@ -5143,7 +5189,6 @@ export const DataService = {
     saveBookingGroup: _saveBookingGroupAtomic,
     deleteBookings: _deleteBookingsAtomic,
     saveBookings: (list: Booking[]) => _saveAuditedList('bookings', list),
-    resetAllBookings: _resetAllBookings,
 
     addCustomer: (customer: Customer) => {
         _saveItem('customers', customer);

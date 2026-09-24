@@ -1015,28 +1015,28 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
     const referenceLabel = timeRef === 'CREATED_AT' ? 'Ngày tạo đơn' : timeRef === 'CHECK_IN' ? 'Ngày nhận phòng' : 'Ngày trả phòng';
 
     return (
-        <div className="katka-liquid-page space-y-6 animate-fade-in pb-8">
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 md:p-6 shadow-sm">
+        <div className="katka-liquid-page performance-page space-y-6 animate-fade-in pb-8">
+            <div className="performance-heading">
                 <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
                     <div>
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-blue-50 text-blue-700">
                             <ShieldCheck size={14} />
-                            Sales Performance Terminal
+                            Phân tích nhân sự
                         </div>
-                        <h2 className="text-2xl font-bold text-gray-900 mt-3">Quản lý hiệu suất chốt đơn theo thời gian thực</h2>
+                        <h2 className="text-2xl font-bold text-gray-900 mt-3">Hiệu suất chốt đơn</h2>
                         <p className="text-sm text-gray-500 mt-2 max-w-3xl">
-                            Xem hiệu suất từng nhân sự như mã chứng khoán: chọn chỉ số, so sánh theo ngày/tuần/tháng, drill-down theo kỳ và theo dõi bất thường từ audit log.
+                            So sánh kết quả chốt đơn theo nhân sự, theo dõi xu hướng và kiểm tra các biến động trong kỳ.
                         </p>
                     </div>
 
-                    <div className="bg-slate-900 text-white rounded-2xl px-4 py-4 min-w-[280px]">
-                        <div className="text-xs uppercase tracking-wider text-slate-400">Realtime</div>
+                    <div className="performance-status px-4 py-3 min-w-[240px]">
+                        <div className="text-xs uppercase tracking-wider text-gray-500">Cập nhật theo thời gian</div>
                         <div className="flex items-center gap-2 mt-1 text-lg font-bold">
                             <Activity size={16} className="text-emerald-400" />
-                            Đang đồng bộ
+                            Thời điểm xem
                         </div>
-                        <div className="text-xs text-slate-300 mt-1">Cập nhật gần nhất: {formatDateTime(now.toISOString())}</div>
-                        <div className="text-xs text-slate-400 mt-2">
+                        <div className="text-xs text-gray-500 mt-1">Cập nhật gần nhất: {formatDateTime(now.toISOString())}</div>
+                        <div className="text-xs text-gray-500 mt-2">
                             Người xem: {currentUser.username} • {currentUser.role}
                         </div>
                     </div>
@@ -1118,8 +1118,8 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                             onChange={(e) => setChartMode(e.target.value as ChartMode)}
                             className="mt-1 w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                         >
-                            <option value="LINE">Line + Volume</option>
-                            <option value="INDEX">Index 100</option>
+                            <option value="LINE">Đường & số đơn</option>
+                            <option value="INDEX">Chỉ số gốc 100</option>
                             <option value="CANDLE">Candlestick</option>
                         </select>
                     </label>
@@ -1235,7 +1235,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                     <div>
                         <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
                             <Sparkles size={15} className="text-amber-500" />
-                            Watchlist Nhân sự (Ticker)
+                            Nhân sự theo dõi
                         </div>
                         <p className="text-xs text-gray-500 mt-1">Chọn nhân sự theo dõi và chọn nhân sự đưa vào biểu đồ so sánh.</p>
                     </div>
@@ -1292,12 +1292,12 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
                     <div className="flex items-center gap-2 text-sm font-bold text-gray-800">
                         {chartMode === 'CANDLE' ? <CandlestickChart size={16} /> : <LineChartIcon size={16} />}
-                        {chartMode === 'INDEX' ? 'Biểu đồ Index 100' : chartMode === 'CANDLE' ? 'Biểu đồ Candlestick' : 'Biểu đồ hiệu suất'}
+                        {chartMode === 'INDEX' ? 'Biểu đồ Index 100' : chartMode === 'CANDLE' ? 'Biểu đồ nến' : 'Biểu đồ hiệu suất'}
                     </div>
 
                     {chartMode === 'CANDLE' && (
                         <label className="text-xs font-semibold text-gray-600">
-                            Ticker Candlestick
+                            Nhân sự trên biểu đồ nến
                             <select
                                 value={focusTickerId}
                                 onChange={(e) => setFocusTickerId(e.target.value)}
@@ -1336,28 +1336,28 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                                     if (bucketKey) setSelectedBucketKey(bucketKey);
                                 }}
                             >
-                                <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? '#334155' : '#d1d5db'} />
+                                <CartesianGrid vertical={false} strokeDasharray="3 5" stroke={isDarkMode ? '#34363b' : '#e8e9ec'} />
                                 <XAxis
                                     dataKey="label"
                                     tick={{ fontSize: 12, fill: isDarkMode ? '#cbd5e1' : '#475569' }}
-                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
-                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
+                                    axisLine={false}
+                                    tickLine={false}
                                 />
                                 <YAxis
                                     yAxisId="left"
                                     tick={{ fontSize: 12, fill: isDarkMode ? '#cbd5e1' : '#475569' }}
                                     tickFormatter={yTickFormatter}
                                     domain={chartMode === 'INDEX' ? [0, 'auto'] : [0, 'auto']}
-                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
-                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
+                                    axisLine={false}
+                                    tickLine={false}
                                 />
                                 <YAxis
                                     yAxisId="right"
                                     orientation="right"
                                     tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }}
                                     allowDecimals={false}
-                                    axisLine={{ stroke: isDarkMode ? '#475569' : '#cbd5e1' }}
-                                    tickLine={{ stroke: isDarkMode ? '#64748b' : '#cbd5e1' }}
+                                    axisLine={false}
+                                    tickLine={false}
                                 />
                                 <Tooltip
                                     formatter={(value: any, name: string) => {
@@ -1419,7 +1419,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                         <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-white border-b">
                                 <tr className="text-left text-xs uppercase text-gray-500">
-                                    <th className="px-3 py-2">Ticker</th>
+                                    <th className="px-3 py-2">Mã nhân sự</th>
                                     <th className="px-3 py-2">Nhân sự</th>
                                     <th className="px-3 py-2 text-right">Giá trị chốt</th>
                                     <th className="px-3 py-2 text-right">Đã thu</th>
@@ -1469,14 +1469,14 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                         <div className="flex items-center justify-between gap-3">
                             <h3 className="font-bold text-sm text-gray-800 flex items-center gap-2">
                                 <Search size={15} className="text-indigo-600" />
-                                Drill-down đơn theo kỳ
+                                Chi tiết đơn theo kỳ
                             </h3>
                             <div className="text-xs text-gray-500">
                                 Kỳ: <span className="font-semibold text-gray-700">{selectedBucket?.label || '--'}</span>
                             </div>
                         </div>
                         <div className="mt-2 flex items-center gap-2">
-                            <label className="text-xs text-gray-500">Ticker:</label>
+                            <label className="text-xs text-gray-500">Nhân sự:</label>
                             <select
                                 value={focusTickerId}
                                 onChange={(e) => setFocusTickerId(e.target.value)}
@@ -1555,7 +1555,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                     <div className="performance-anomaly-header px-4 py-3 border-b">
                         <h3 className="font-bold text-sm text-red-800 flex items-center gap-2">
                             <AlertTriangle size={15} />
-                            Cảnh báo bất thường (Phase 3)
+                            Biến động cần chú ý
                         </h3>
                         <p className="text-xs text-red-700 mt-1">
                             Dựa trên lịch sử thao tác: sửa giá nhiều lần, giảm giá mạnh, import đột biến, tài khoản thao tác quá dày.
@@ -1598,7 +1598,7 @@ const Performance: React.FC<PerformanceProps> = ({ bookings, rooms, properties, 
                     <div className="px-4 py-3 border-b bg-gray-50">
                         <h3 className="font-bold text-sm text-gray-800 flex items-center gap-2">
                             <Clock3 size={15} className="text-slate-600" />
-                            Tape lịch sử thao tác (thời gian - user - thao tác - trước/sau)
+                            Lịch sử thay đổi
                         </h3>
                     </div>
 

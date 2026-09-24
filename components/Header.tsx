@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Building2, Bell, UserCircle, Menu, CheckCircle, Clock, Wallet, Check, Sun, Moon, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Building2, Bell, Menu, CheckCircle, Clock, Wallet, Check, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { User, Property } from '../types';
 import { AppNotification } from '../hooks/useBookingAlert';
 
@@ -60,14 +60,16 @@ const Header: React.FC<HeaderProps> = ({
               setShowNotif(false);
           }
       };
+      const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowNotif(false); };
       document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+      return () => { document.removeEventListener('mousedown', handleClickOutside); document.removeEventListener('keydown', handleEscape); };
   }, []);
 
   return (
-    <header className="h-16 khost-safe-top-header katka-glass katka-liquid-shell border-b border-white/60 sticky top-0 z-30 w-full flex items-center justify-between px-3 md:px-6 transition-all duration-300">
+    <header className="app-header khost-safe-top-header sticky top-0 z-30 w-full flex items-center justify-between px-4 md:px-8">
       <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
-        <button onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
+        <button aria-label="Mở điều hướng" onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
           <Menu size={24} />
         </button>
         <button
@@ -78,25 +80,17 @@ const Header: React.FC<HeaderProps> = ({
           aria-label={isSidebarHidden ? 'Hiện thanh công cụ' : 'Ẩn thanh công cụ'}
           data-haptic="light"
         >
-          {isSidebarHidden ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+          {isSidebarHidden ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
         </button>
 
-        <div className="flex items-center gap-2 md:gap-3 shrink-0">
-          <div className="w-8 h-8 md:w-10 md:h-10 katka-primary-btn rounded-xl flex items-center justify-center shadow-soft">
-            <Building2 size={20} />
-          </div>
-          <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight hidden sm:block">K-Host</h1>
-        </div>
-        
-        <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
-
+        <Building2 size={18} strokeWidth={1.6} className="text-gray-400 shrink-0 hidden sm:block" />
         <div className="flex flex-col justify-center min-w-0">
-          <p className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-wider hidden sm:block">Chi nhánh hiện tại</p>
+          <p className="text-[11px] font-medium text-gray-400 hidden sm:block mb-0.5">Không gian hiện tại</p>
           {allowedProperties.length > 1 ? (
             <select 
               value={currentPropertyId}
               onChange={(e) => onPropertyChange(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-0 w-full cursor-pointer truncate"
+              aria-label="Chọn chi nhánh" className="property-select bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-0 w-full cursor-pointer truncate"
             >
               {allowAllSelection && (
                 <option value="ALL" className="font-bold">Toàn bộ chi nhánh ({allowedProperties.length})</option>
@@ -127,13 +121,13 @@ const Header: React.FC<HeaderProps> = ({
         
         {/* TRUNG TÂM THÔNG BÁO (NOTIFICATION BELL) */}
         <div className="relative" ref={notifRef}>
-            <button onClick={() => setShowNotif(!showNotif)} className="relative text-gray-500 hover:text-blue-600 transition-colors p-1.5 rounded-lg hover:bg-blue-50">
+            <button aria-label={`Thông báo${unreadCount ? `, ${unreadCount} chưa đọc` : ""}`} aria-expanded={showNotif} onClick={() => setShowNotif(!showNotif)} className="relative katka-icon-btn">
               <Bell size={20} />
-              {unreadCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold flex items-center justify-center rounded-full border-2 border-white animate-pulse">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+              {unreadCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold flex items-center justify-center rounded-full border-2 border-white">{unreadCount > 9 ? '9+' : unreadCount}</span>}
             </button>
             
             {showNotif && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 katka-panel katka-liquid-shell z-50 overflow-hidden animate-fade-in">
+                <div className="notification-popover absolute right-0 mt-3 w-80 sm:w-96 katka-panel z-50 overflow-hidden animate-fade-in">
                     <div className="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
                         <h3 className="font-bold text-gray-800 flex items-center gap-2"><Bell size={16} className="text-blue-600"/> Thông báo</h3>
                         {unreadCount > 0 && (
@@ -175,10 +169,10 @@ const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-3 pl-3 md:pl-6 border-l border-gray-200">
           <div className="text-right hidden md:block">
             <p className="text-sm font-semibold text-gray-800">{user.fullName}</p>
-            <p className="text-xs text-gray-500 capitalize">{user.role}</p>
+            <p className="text-xs text-gray-500">{({ ADMIN: 'Quản trị viên', MANAGER: 'Quản lý', RECEPTIONIST: 'Lễ tân', HOUSEKEEPING: 'Buồng phòng', SUPER_ADMIN: 'Platform Owner' } as Record<string, string>)[user.role] || user.role}</p>
           </div>
           <div className="w-8 h-8 md:w-9 md:h-9 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 border border-gray-200 shrink-0">
-            <UserCircle size={24} />
+            <span className="text-xs font-semibold">{user.fullName?.slice(0, 1).toUpperCase()}</span>
           </div>
         </div>
       </div>

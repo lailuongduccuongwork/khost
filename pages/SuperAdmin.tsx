@@ -1,3 +1,4 @@
+import DialogFrame from '../components/DialogFrame';
 
 import React, { useState } from 'react';
 import { Tenant, SubscriptionPlan, UserRole, User, PERMISSIONS } from '../types';
@@ -194,17 +195,17 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
   };
 
   return (
-    <div className="katka-liquid-page space-y-6 pb-20 animate-fade-in relative">
+    <div className="katka-liquid-page platform-page space-y-6 pb-20 animate-fade-in relative">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-                <h2 className="text-2xl font-bold text-gray-800">Platform Administration</h2>
-                <p className="text-gray-500 text-sm">Quản lý toàn bộ hệ thống SaaS Multi-tenant</p>
+                <h2 className="text-2xl font-bold text-gray-800">Quản trị nền tảng</h2>
+                <p className="text-gray-500 text-sm">Quản lý khách hàng, gói dịch vụ và tài khoản hệ thống.</p>
             </div>
-            <div className="bg-white rounded-lg p-1 border shadow-sm flex overflow-x-auto">
-                <button onClick={() => setActiveTab('DASHBOARD')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='DASHBOARD' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>Dashboard</button>
-                <button onClick={() => setActiveTab('TENANTS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='TENANTS' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>Khách hàng (Tenants)</button>
-                <button onClick={() => setActiveTab('PLANS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='PLANS' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>Gói cước (Plans)</button>
-                <button onClick={() => setActiveTab('ADMINS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='ADMINS' ? 'bg-purple-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>Quản trị viên</button>
+            <div className="segmented-control flex overflow-x-auto">
+                <button onClick={() => setActiveTab('DASHBOARD')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='DASHBOARD' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Tổng quan</button>
+                <button onClick={() => setActiveTab('TENANTS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='TENANTS' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Khách hàng</button>
+                <button onClick={() => setActiveTab('PLANS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='PLANS' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Gói dịch vụ</button>
+                <button onClick={() => setActiveTab('ADMINS')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all whitespace-nowrap ${activeTab==='ADMINS' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>Quản trị viên</button>
             </div>
         </div>
 
@@ -416,7 +417,7 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
         )}
 
         {showTenantModal && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <DialogFrame label="Thông tin khách hàng" onDismiss={() => setShowTenantModal(false)} className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 animate-fade-in">
                     <h3 className="text-xl font-bold mb-4">{editingTenant?.id ? 'Chỉnh sửa Tenant' : 'Thêm Tenant Mới'}</h3>
                     <div className="space-y-4">
@@ -471,11 +472,11 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                         <button onClick={handleSaveTenant} className="px-4 py-2 bg-purple-600 text-white rounded font-bold hover:bg-purple-700">Lưu thông tin</button>
                     </div>
                 </div>
-            </div>
+            </DialogFrame>
         )}
 
         {showPlanModal && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <DialogFrame label="Gói dịch vụ" onDismiss={() => setShowPlanModal(false)} className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-fade-in">
                     <h3 className="text-xl font-bold mb-4">{editingPlan?.id ? 'Sửa Gói Cước' : 'Thêm Gói Cước'}</h3>
                     <div className="space-y-4">
@@ -492,11 +493,11 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                         <button onClick={handleSavePlan} className="px-4 py-2 bg-purple-600 text-white rounded font-bold hover:bg-purple-700">Lưu Gói</button>
                     </div>
                 </div>
-            </div>
+            </DialogFrame>
         )}
 
         {actionModal && (
-            <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4" onClick={() => setActionModal(null)}>
+            <DialogFrame label="Xác nhận thao tác" onDismiss={() => setActionModal(null)} className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4" onClick={() => setActionModal(null)}>
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in relative" onClick={e => e.stopPropagation()}>
                     <button onClick={() => setActionModal(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
                     
@@ -528,7 +529,7 @@ const SuperAdmin: React.FC<SuperAdminProps> = ({ tenants, plans, systemUsers, on
                         </button>
                     </div>
                 </div>
-            </div>
+            </DialogFrame>
         )}
     </div>
   );

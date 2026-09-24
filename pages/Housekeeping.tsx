@@ -242,6 +242,16 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       return { label: 'Sạch', className: 'bg-green-100 text-green-700 border-green-200' };
   };
 
+  const getRoomStatusSurfaceClass = (item: (typeof processedRooms)[number]) => {
+      if (item.activeBooking || item.room.status === RoomStatus.OCCUPIED) {
+          return 'housekeeping-status-occupied';
+      }
+      if (item.room.status === RoomStatus.VACANT_DIRTY) {
+          return 'housekeeping-status-dirty';
+      }
+      return 'housekeeping-status-clean';
+  };
+
   const getScheduleBookingMeta = (booking: Booking) => {
       const status = deriveBookingStatus(booking, currentTime);
       if (status === BookingStatus.CHECKED_IN) {
@@ -290,16 +300,16 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       : `Không có phòng nào tại ${branchLabel}.`;
 
   return (
-    <div className="katka-liquid-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
+    <div className="katka-liquid-page housekeeping-page min-h-screen bg-gray-100 pb-24 font-sans select-none">
       {/* HEADER */}
-      <div className="bg-white px-4 py-3 shadow-sm sticky top-0 z-20 border-b border-gray-200">
+      <div className="housekeeping-toolbar bg-white p-5 rounded-xl border border-gray-200 relative z-20">
         <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-                <h1 className="shrink-0 text-xl font-bold text-gray-800 flex items-center gap-2">
-                    <Brush className="text-orange-600" size={24} />
-                    BUỒNG PHÒNG
+                <h1 className="page-title flex items-center gap-2">
+                    <Brush className="text-gray-400" size={22} strokeWidth={1.7} />
+                    Buồng phòng
                 </h1>
-                <span className="inline-flex min-w-0 max-w-[220px] items-center gap-1 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-black text-white border border-blue-700 shadow-sm">
+                <span className="inline-flex min-w-0 max-w-[220px] items-center gap-1 rounded-full bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200">
                     <Building2 size={12} className="shrink-0" />
                     <span className="truncate">{branchLabel}</span>
                 </span>
@@ -387,7 +397,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             const branchName = properties.find(p => p.id === room.propertyId)?.name;
 
             // --- UI RENDER LOGIC ---
-            let cardBg = "bg-white";
+            let cardBg = "housekeeping-status-clean";
             let borderColor = "border-gray-200";
             let actionBtn = null;
             let infoContent = null;
@@ -397,7 +407,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                 <button
                     type="button"
                     onClick={() => onOpenRoomMap?.(room)}
-                    className="w-full border-t border-black/5 bg-white/80 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 hover:bg-blue-50 transition-colors inline-flex items-center justify-center gap-1"
+                    className="w-full border-t border-black/5 bg-transparent px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 hover:bg-white/40 transition-colors inline-flex items-center justify-center gap-1"
                 >
                     <CalendarDays size={12} />
                     Xem lịch
@@ -406,8 +416,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
             if (activeBooking) {
                 // === CASE 1: PHÒNG ĐANG Ở ===
-                cardBg = "bg-red-50";
-                borderColor = "border-red-200";
+                cardBg = "housekeeping-status-occupied housekeeping-occupied";
+                borderColor = "border-gray-200";
                 const minLeft = currentOccupied ? currentOccupied.minutesLeft : 999;
                 
                 infoContent = (
@@ -431,7 +441,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                                 <span className="text-[10px] text-green-700 font-bold">Sau đó: {formatCompactDateTime(nextIn)}</span>
                             </div>
                         )}
-                        {minLeft <= 60 && minLeft >= 0 && <div className="text-orange-600 font-black text-xs animate-pulse">⚡️ SẮP RA ({minLeft}p)</div>}
+                        {minLeft <= 60 && minLeft >= 0 && <div className="text-orange-600 font-black text-xs ">⚡️ SẮP RA ({minLeft}p)</div>}
                         {minLeft < 0 && <div className="text-red-600 font-black text-xs">⚠️ QUÁ GIỜ ({Math.abs(minLeft)}p)</div>}
                     </div>
                 );
@@ -448,8 +458,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
             } else if (room.status === RoomStatus.VACANT_DIRTY) {
                 // === CASE 2: PHÒNG BẨN (CẦN DỌN) ===
-                cardBg = "bg-yellow-50";
-                borderColor = "border-yellow-400 shadow-md"; 
+                cardBg = "housekeeping-status-dirty housekeeping-dirty";
+                borderColor = "border-gray-200";
                 
                 infoContent = (
                     <div className="flex flex-col justify-center h-full space-y-1 pl-1">
@@ -464,7 +474,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                             </span>
                         </div>
                         {isUrgent && (
-                            <div className="text-red-600 font-black text-xs flex items-center gap-1 mt-1 animate-pulse bg-red-100 px-1 rounded">
+                            <div className="text-red-600 font-black text-xs flex items-center gap-1 mt-1  bg-red-100 px-1 rounded">
                                 <Zap size={12} fill="currentColor"/> {warningText}
                             </div>
                         )}
@@ -477,10 +487,10 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                         <button 
                             onClick={() => handleAction(room.id, RoomStatus.VACANT_CLEAN)}
                             disabled={!canUpdateRoomStatus || isSavingThisRoom}
-                            className={`flex-1 bg-green-600 active:bg-green-700 text-white flex flex-col items-center justify-center transition-colors shadow-inner ${!canUpdateRoomStatus ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className={`housekeeping-clean-action flex-1 text-green-700 flex flex-col items-center justify-center transition-colors ${!canUpdateRoomStatus ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
-                            {isSavingThisRoom ? <Loader2 size={28} className="animate-spin" /> : <Check size={32} strokeWidth={4} />}
-                            <span className="text-[10px] font-black uppercase mt-1">{isSavingThisRoom ? 'Đang lưu' : 'SẠCH'}</span>
+                            {isSavingThisRoom ? <Loader2 size={20} className="animate-spin" /> : <Check size={20} strokeWidth={2} />}
+                            <span className="text-[10px] font-black uppercase mt-1">{isSavingThisRoom ? 'Đang lưu' : 'Báo sạch'}</span>
                         </button>
                         {roomMapShortcut}
                     </div>
@@ -488,8 +498,8 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
 
             } else {
                 // === CASE 3: PHÒNG SẠCH ===
-                cardBg = "bg-white";
-                borderColor = "border-gray-200 opacity-90";
+                cardBg = "housekeeping-status-clean";
+                borderColor = "border-gray-200";
 
                 infoContent = (
                     <div className="flex flex-col justify-center h-full space-y-1 pl-1">
@@ -530,32 +540,32 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             return (
                 <React.Fragment key={room.id}>
                     {isNewBranch && filter === 'ALL' && (
-                        <div className="housekeeping-branch-header sticky top-[105px] z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
+                        <div className="housekeeping-branch-header relative z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
                             <Building2 size={14} className="text-blue-600"/>
                             {branchName}
                         </div>
                     )}
 
-                    <div className={`flex min-h-[100px] rounded-xl overflow-hidden border-2 shadow-sm relative transition-all duration-300 ${cardBg} ${borderColor}`}>
+                    <div className={`housekeeping-room flex min-h-[100px] rounded-xl overflow-hidden border shadow-sm relative transition-all duration-200 ${cardBg} ${borderColor}`}>
                         {feedback?.state === 'saved' && (
                             <div className="absolute right-2 top-2 z-10 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-black text-white shadow">
                                 {feedback.message}
                             </div>
                         )}
                         {/* CỘT TRÁI (28%): Số phòng */}
-                        <div className="w-[28%] flex flex-col items-center justify-center border-r border-black/5 p-1 relative bg-white/50">
+                        <div className="housekeeping-room-number w-[28%] flex flex-col items-center justify-center border-r border-black/5 p-1 relative bg-white/50">
                             {nightEvent && <Moon size={14} className="absolute top-1 left-1 text-indigo-600 fill-current" />}
-                            <span className="text-3xl md:text-4xl font-black text-gray-800 tracking-tighter">{room.number}</span>
+                            <span className="text-2xl md:text-3xl font-semibold text-gray-800 tracking-tighter">{room.number}</span>
                             <span className="text-[9px] font-bold uppercase text-gray-500 text-center leading-none mt-1 line-clamp-1">{typeName}</span>
                         </div>
 
                         {/* CỘT GIỮA (47%): Thông tin */}
-                        <div className="w-[47%] px-2 py-2">
+                        <div className="housekeeping-room-info w-[47%] px-2 py-2">
                             {infoContent}
                         </div>
 
                         {/* CỘT PHẢI (25%): Nút bấm */}
-                        <div className="w-[25%] border-l border-black/5">
+                        <div className="housekeeping-room-actions w-[25%] border-l border-black/5">
                             {actionBtn}
                         </div>
                     </div>
@@ -579,17 +589,18 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
             const isNewBranch = !prevRoom || prevRoom.propertyId !== room.propertyId;
             const branchName = properties.find(p => p.id === room.propertyId)?.name;
             const statusBadge = getRoomStatusBadge(item);
+            const statusSurfaceClass = getRoomStatusSurfaceClass(item);
 
             return (
                 <React.Fragment key={room.id}>
                     {isNewBranch && (
-                        <div className="housekeeping-branch-header sticky top-[105px] z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
+                        <div className="housekeeping-branch-header relative z-10 px-4 py-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider border-y shadow-sm mt-4 mb-2 first:mt-0">
                             <Building2 size={14} className="text-blue-600"/>
                             {branchName}
                         </div>
                     )}
 
-                    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm">
+                    <div className={`housekeeping-schedule-room rounded-xl border px-3 py-2.5 shadow-sm ${statusSurfaceClass}`}>
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0 flex items-baseline gap-2">
                                 <span className="text-xl font-black text-gray-900 leading-tight">{room.number}</span>
