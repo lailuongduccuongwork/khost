@@ -41,6 +41,8 @@ import {
 import { digestPassword, encodePasswordForView, verifyPassword } from '../utils/security';
 import { deriveBookingStatus, deriveRoomOperationalStatus, isBookingOccupyingRoom } from '../utils/bookingState';
 import { initializeApp } from 'firebase/app';
+import { createRealtimePool } from '../utils/realtimePool';
+import { checkoutQueryLowerBound, roomHistoryStart } from '../utils/bookingReadScope';
 import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, runTransaction, serverTimestamp, set, startAt, update } from 'firebase/database';
 
 declare const XLSX: any;
@@ -83,6 +85,7 @@ const SYSTEM_TENANT_ID = 'SYSTEM';
 let activeRealtimeUnsubscribers: Array<() => void> = [];
 const missingQueryIndexPaths = new Set<string>();
 let bookingIndexWriteEnabled = true;
+const realtimePool = createRealtimePool<any>();
 const AUDIT_COALESCE_WINDOW_MS = 1500;
 const BOOKING_INDEX_FALLBACK_DELAY_MS = 1200;
 
@@ -603,6 +606,17 @@ const debugFirebaseTraffic = (kind: string, path: string, payload?: unknown, ext
     console.groupEnd();
 };
 
+const withReadDeadline = async <T,>(read: Promise<T>, timeoutMs: number): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([read, new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Data read timed out')), timeoutMs);
+        })]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+};
+
 const trackedGet = async (path: string) => {
     const snap = await get(ref(db, path));
     debugFirebaseTraffic('READ:get', path, snap.val(), { exists: snap.exists() });
@@ -633,15 +647,15 @@ const trackedOnValueByChild = (
     value: string,
     callback: (snap: any) => void,
     errorCallback?: (error: unknown) => void
-) =>
-    onValue(
-        query(ref(db, path), orderByChild(child), equalTo(value)),
-        (snap) => {
-            debugFirebaseTraffic('READ:onValueByChild', path, snap.val(), { exists: snap.exists(), child, value });
-            callback(snap);
-        },
-        errorCallback
-    );
+) => realtimePool.subscribe(
+    JSON.stringify([path, child, value]),
+    (next, error) => onValue(query(ref(db, path), orderByChild(child), equalTo(value)), (snap) => {
+        debugFirebaseTraffic('SNAPSHOT:onValueByChild', path, snap.val(), { exists: snap.exists(), child, value });
+        next(snap);
+    }, error),
+    callback,
+    errorCallback
+);
 
 const isMissingIndexError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error || '');
@@ -753,14 +767,11 @@ const buildCollectionDeleteUpdates = async (collectionPath: string, ids: Iterabl
 };
 
 const trackedOnValue = (path: string, callback: (snap: any) => void, errorCallback?: (error: unknown) => void) =>
-    onValue(
-        ref(db, path),
-        (snap) => {
-            debugFirebaseTraffic('READ:onValue', path, snap.val(), { exists: snap.exists() });
-            callback(snap);
-        },
-        errorCallback
-    );
+    realtimePool.subscribe(JSON.stringify([path]), (next, error) => onValue(ref(db, path), (snap) => {
+        // A value snapshot includes cached children; its size is NOT wire traffic.
+        debugFirebaseTraffic('SNAPSHOT:onValue', path, snap.val(), { exists: snap.exists() });
+        next(snap);
+    }, error), callback, errorCallback);
 
 const _disposeActiveRealtimeBindings = () => {
     activeRealtimeUnsubscribers.forEach((unsubscribe) => {
@@ -775,6 +786,7 @@ const _disposeActiveRealtimeBindings = () => {
 
 const _clearSessionCache = () => {
     _disposeActiveRealtimeBindings();
+    realtimePool.clear();
     activeTenantId = null;
     _dataChangeCallback = () => {};
     CACHE.properties = [];
@@ -1424,6 +1436,7 @@ const _recordHistory = ({
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
     try {
         _disposeActiveRealtimeBindings();
+        if (activeTenantId !== tenantId) realtimePool.clear();
         activeTenantId = tenantId;
         _dataChangeCallback = onDataChange;
 
@@ -1669,6 +1682,44 @@ const _fetchBookingsForProperties = async (propertyIds?: string[]) => {
     return Array.from(unique.values()).filter(
         (booking) => booking.status !== BookingStatus.DELETED && !isExpiredHoldBooking(booking)
     );
+};
+
+// Query the canonical bookings, not the day index, for availability and
+// cleanliness. Long stays that started before the range must still be included.
+const _fetchBookingsEndingAfter = async (propertyIds: string[], timeMs: number) => {
+    if (!_ensureFirebase() || !getBaseRef() || propertyIds.length === 0) return [] as Booking[];
+    if (!Number.isFinite(timeMs) || timeMs <= 0) return _fetchBookingsForProperties(propertyIds);
+    const tenantId = activeTenantId;
+    const path = `${getBaseRef()}/bookings`;
+    const snap = await get(query(ref(db, path), orderByChild('checkOutDate'), startAt(checkoutQueryLowerBound(timeMs))));
+    debugFirebaseTraffic('READ:endingAfter', path, snap.val());
+    return filterRowsByPropertyScope(snapshotToArray<Booking>(snap), propertyIds)
+        .map(booking => normalizeForNode('bookings', booking, tenantId) as Booking)
+        .filter(booking => new Date(booking.checkOutDate).getTime() >= timeMs &&
+            booking.status !== BookingStatus.DELETED && !isExpiredHoldBooking(booking));
+};
+
+const _subscribeRoomStateBookings = (
+    rooms: Room[], callback: (rows: Booking[]) => void, errorCallback?: (error: unknown) => void
+) => {
+    const propertyIds = normalizePropertyScope(rooms.map(room => room.propertyId));
+    const lowerTime = roomHistoryStart(rooms);
+    if (!rooms.length || !_ensureFirebase() || !getBaseRef()) {
+        callback([]);
+        return () => undefined;
+    }
+    // Keep the property-scoped query for unconfirmed legacy rooms. It avoids
+    // downloading unrelated tenants and preserves the existing cleaning rule.
+    if (lowerTime <= 0) return _subscribeBookingsForPropertiesView(propertyIds, callback, errorCallback);
+    const path = `${getBaseRef()}/bookings`;
+    const tenantId = activeTenantId;
+    const lowerBound = checkoutQueryLowerBound(lowerTime);
+    const roomIds = new Set(rooms.map(room => room.id));
+    return realtimePool.subscribe(JSON.stringify([path, 'checkOutDate', lowerBound]),
+        (next, error) => onValue(query(ref(db, path), orderByChild('checkOutDate'), startAt(lowerBound)), next, error),
+        snap => callback(snapshotToArray<Booking>(snap)
+            .filter(booking => roomIds.has(booking.roomId))
+            .map(booking => normalizeForNode('bookings', booking, tenantId) as Booking)), errorCallback);
 };
 
 const subscribeScopedCollectionByProperty = <T extends { id?: string }>(
@@ -2119,6 +2170,7 @@ const _subscribeOperationalBookings = (
     let fallbackRows: Booking[] = [];
 
     const emitIndexRows = () => {
+        if (seenSnapshotKeys.size < expectedSnapshotCount) return;
         const unique = new Map<string, Booking>();
         snapshotMap.forEach((storedSnap) => {
             snapshotToArray<Booking>(storedSnap).forEach((record) => {
@@ -2202,7 +2254,7 @@ const _validateRoomAvailabilityRemote = async (
         };
     }
 
-    const propertyBookings = await _fetchBookingsForProperties([propertyId]);
+    const propertyBookings = await _fetchBookingsEndingAfter([propertyId], startMs);
     const activeBookings = propertyBookings.filter((booking) => isBookingActiveForConflict(booking));
     const conflict = findBookingConflict(activeBookings, roomId, startMs, endMs, excludeId);
     return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
@@ -2611,7 +2663,7 @@ const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: Ro
     const isManual = !options.suppressLog && options.source !== 'SYSTEM';
     const confirmsCleaning = isManual && status === RoomStatus.VACANT_CLEAN;
     if (isManual) {
-        const roomBookings = await _fetchBookingsForProperties([roomBefore.propertyId]);
+        const roomBookings = await _fetchBookingsEndingAfter([roomBefore.propertyId], Date.now());
         if (roomBookings.some((booking) => booking.roomId === roomId && isBookingOccupyingRoom(booking))) {
             throw new Error('Phòng đang có khách ở. Vui lòng cập nhật giờ trả phòng trước khi báo sạch/bẩn.');
         }
@@ -2682,7 +2734,7 @@ const _syncRoomStatusesForRooms = async (roomIds: string[], options: RoomStatusO
     );
     const bookingsSource =
         db && activeTenantId && propertyIds.length > 0
-            ? await _fetchBookingsForProperties(propertyIds)
+            ? await _fetchBookingsEndingAfter(propertyIds, roomHistoryStart(targetRooms))
             : CACHE.bookings;
 
     const nowMs = Date.now();
@@ -4715,7 +4767,7 @@ const _saveBookingAtomic = async (
             throw new Error(policyCheck.reason || 'Vi phạm chính sách phòng');
         }
 
-        const propertyBookings = await _fetchBookingsForProperties([normalizedBooking.propertyId]);
+        const propertyBookings = await _fetchBookingsEndingAfter([normalizedBooking.propertyId], startMs);
         const conflict = findBookingConflict(
             propertyBookings,
             normalizedBooking.roomId,
@@ -4935,48 +4987,29 @@ export const DataService = {
                 }
             }
 
-            // Fallback self-heal: trong trường hợp system/users bị lệch, thử tra ngược tenant users.
-            const tenantSnap = await Promise.race([
-                trackedGet('tenants'),
-                new Promise<null>((resolve) =>
-                    setTimeout(() => resolve(null), CONNECTION_PREFLIGHT_TIMEOUT_MS + 1000)
-                ),
-            ]);
-            if (tenantSnap && tenantSnap.exists()) {
-                const tenantsRaw = tenantSnap.val() || {};
-                const tenantEntries = Object.entries(tenantsRaw) as Array<[string, any]>;
-
-                for (const [tenantId, tenantNode] of tenantEntries) {
-                    if (!tenantNode || typeof tenantNode !== 'object') continue;
-                    const tenantUsersNode = tenantNode.users;
-                    if (!tenantUsersNode || typeof tenantUsersNode !== 'object') continue;
-
-                    const tenantUsers = Object.entries(tenantUsersNode).reduce<User[]>((acc, [userId, userRaw]) => {
-                        if (!userRaw || typeof userRaw !== 'object') return acc;
-                        const nextUser = {
-                            ...(userRaw as User),
-                            id: (userRaw as User).id || userId,
-                            tenantId: (userRaw as User).tenantId || tenantId,
-                        };
-                        acc.push(nextUser);
-                        return acc;
-                    }, []);
-
-                    const matchedTenantUser = _findUserByCredential(tenantUsers, username, password);
-                    if (!matchedTenantUser) continue;
-
-                    const normalizedUser = normalizeUserCredentialsForStorage(matchedTenantUser, matchedTenantUser);
-                    const updates: Record<string, any> = {
-                        [`system/users/${normalizedUser.id}`]: normalizedUser,
-                        [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
-                    };
-                    trackedUpdateRoot(updates, { operation: 'self-heal-user-index' }).catch((error: any) => {
-                        console.error('Self-heal user index failed', error);
-                    });
-
-                    return { user: normalizedUser, reason: null as null };
-                }
+            // Legacy accounts can be absent from system/users. Read only the
+            // small user directories, never the tenant trees (bookings + audit logs).
+            const directories = await withReadDeadline((async () => {
+                const tenantDirectory = await trackedGet('system/tenants');
+                const tenantIds = Object.keys(tenantDirectory.val() || {});
+                return Promise.all(tenantIds.map(async (tenantId) => {
+                    const userSnap = await trackedGet(`tenants/${tenantId}/users`);
+                    return snapshotToArray<User>(userSnap).map(user => ({ ...user, tenantId }));
+                }));
+            })(), 8000);
+            const matchedTenantUser = _findUserByCredential(directories.flat(), username, password);
+            if (matchedTenantUser) {
+                const normalizedUser = normalizeUserCredentialsForStorage(matchedTenantUser, matchedTenantUser);
+                const updates: Record<string, any> = {
+                    [`system/users/${normalizedUser.id}`]: normalizedUser,
+                    [`tenants/${normalizedUser.tenantId}/users/${normalizedUser.id}`]: normalizedUser,
+                };
+                trackedUpdateRoot(updates, { operation: 'self-heal-user-index' }).catch((error: any) => {
+                    console.error('Self-heal user index failed', error);
+                });
+                return { user: normalizedUser, reason: null as null };
             }
+
         } catch (error) {
             console.error('Login error', error);
             return { user: null as User | null, reason: 'CONNECTION_ERROR' as const };
@@ -5028,6 +5061,8 @@ export const DataService = {
         callback: (rows: Booking[]) => void,
         errorCallback?: (error: unknown) => void
     ) => _subscribeBookingsForPropertiesView(propertyIds, callback, errorCallback),
+    subscribeRoomStateBookings: _subscribeRoomStateBookings,
+    fetchBookingsEndingAfter: _fetchBookingsEndingAfter,
     fetchOperationalBookings: (propertyId: string, start: string, end: string, paddingDays?: number) =>
         _fetchOperationalBookings(propertyId, start, end, paddingDays),
     fetchOperationalBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string, paddingDays?: number) =>

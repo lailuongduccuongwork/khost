@@ -77,10 +77,11 @@ function serviceFixture(initialRoom = room, bookings = []) {
     const sdk = {
         ref: (_, key = '') => ({ key }),
         query: (ref, ...conditions) => ({ ...ref, ...Object.assign({}, ...conditions) }),
-        orderByChild: (child) => ({ child }), equalTo: (value) => ({ value }),
+        orderByChild: (child) => ({ child }), equalTo: (value) => ({ value }), startAt: (lower) => ({ lower }),
         get: async (ref) => {
             let value = read(ref.key);
-            if (ref.child) value = Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item[ref.child] === ref.value));
+            if (ref.child) value = Object.fromEntries(Object.entries(value || {}).filter(([, item]) =>
+                ref.lower !== undefined ? item[ref.child] >= ref.lower : item[ref.child] === ref.value));
             return snap(value);
         },
         serverTimestamp: () => ({ '.sv': 'timestamp' }),

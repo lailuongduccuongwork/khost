@@ -139,7 +139,6 @@ const App: React.FC = () => {
   // --- NOTIFICATION ENGINE ---
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const loadingFallbackRef = useRef<number | null>(null);
-  const lastOperationalLoadKeyRef = useRef<string>('');
   const userDirectoryHydrationRef = useRef<{ tenantId: string | null; ready: boolean }>({
     tenantId: null,
     ready: false,
@@ -147,6 +146,9 @@ const App: React.FC = () => {
   const operationalProperties = useMemo(() => filterOperationalProperties(properties), [properties]);
   const operationalRooms = useMemo(() => filterOperationalRooms(rooms, operationalProperties), [rooms, operationalProperties]);
   const operationalRoomIds = useMemo(() => new Set(operationalRooms.map((room) => room.id)), [operationalRooms]);
+  const visiblePropertyKey = properties.map(property => property.id).sort().join(',');
+  const operationalPropertyKey = operationalProperties.map(property => property.id).sort().join(',');
+  const roomStateKey = operationalRooms.map(room => `${room.id}:${room.propertyId}:${room.lastCleanedAt || 0}`).sort().join(',');
   const operationalRoomKey = useMemo(() => operationalRooms.map((room) => room.id).sort().join(','), [operationalRooms]);
   const scopedOperationalPropertyIds = useMemo(() => {
     const allowedIds = currentUser?.allowedPropertyIds || [];
@@ -490,53 +492,21 @@ const App: React.FC = () => {
       return;
     }
 
-    const scopeKey = [
-      activeTenantId,
-      currentPage,
-      currentPropertyId || 'ALL',
-      targetPropertyIds.join(','),
-      dataTick,
-    ].join('|');
-
-    if (lastOperationalLoadKeyRef.current === scopeKey) {
-      return;
-    }
-
-    let cancelled = false;
-    lastOperationalLoadKeyRef.current = scopeKey;
-
     const useViewScopedData = currentPage === 'dashboard' || currentPage === 'room-map' || currentPage === 'housekeeping' || currentPage === 'bookings';
-    if (useViewScopedData) {
-      // Các màn này đã có realtime hydrate riêng ngay bên dưới.
-      // Bỏ lượt load tay để tránh READ bị nhân đôi khi vừa vào màn hoặc đổi chi nhánh.
-      lastOperationalLoadKeyRef.current = '';
-      return;
-    }
+    if (useViewScopedData) return;
 
-    const loaders: Promise<any>[] = [DataService.loadRoomsForPropertiesView(targetPropertyIds)];
-    if (currentPage !== 'room-map' && currentPage !== 'reports') {
-      loaders.push(DataService.loadBookingsForPropertiesView(targetPropertyIds));
-    }
-
-    Promise.all(loaders)
-      .then((results) => {
-        if (cancelled) return;
-        const nextRooms = (results[0] || []) as Room[];
-        const nextBookings = currentPage === 'room-map' || currentPage === 'reports' ? [] : (((results[1] || []) as Booking[]));
-        const visibleRooms = currentPage === 'management' || currentPage === 'reports' ? nextRooms : filterOperationalRooms(nextRooms, operationalProperties);
-        const visibleRoomIds = new Set(visibleRooms.map((room) => room.id));
-        setRooms(visibleRooms);
-        setBookings(currentPage === 'management' || currentPage === 'reports' ? nextBookings : nextBookings.filter((booking) => visibleRoomIds.has(booking.roomId)));
-      })
-      .catch((error) => {
-        lastOperationalLoadKeyRef.current = '';
-        console.error('Scoped operational data load failed', error);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTenantId, currentPage, currentPropertyId, currentUser, dataTick, isLoading, operationalProperties, properties]);
+    const stopRooms = DataService.subscribeRoomsForPropertiesView(targetPropertyIds, nextRooms => {
+      setRooms(useHistoricalScope ? nextRooms : filterOperationalRooms(nextRooms, operationalProperties));
+    }, error => console.error('Scoped room load failed', error));
+    // Management consumes rooms/settings only; loading bookings there also
+    // re-downloaded the whole history on every unrelated dataTick.
+    const stopBookings = currentPage === 'performance'
+      ? DataService.subscribeBookingsForPropertiesView(targetPropertyIds, setBookings,
+          error => console.error('Performance booking load failed', error))
+      : () => undefined;
+    if (currentPage !== 'performance') setBookings([]);
+    return () => { stopRooms(); stopBookings(); };
+  }, [activeTenantId, currentPage, currentPropertyId, currentUser, isLoading, operationalPropertyKey, visiblePropertyKey]);
 
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
@@ -561,7 +531,7 @@ const App: React.FC = () => {
         console.error('Scoped room realtime sync failed', error);
       }
     );
-  }, [activeTenantId, currentPage, isLoading, operationalProperties, scopedOperationalPropertyKey]);
+  }, [activeTenantId, currentPage, isLoading, operationalPropertyKey, scopedOperationalPropertyKey]);
 
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
@@ -578,9 +548,14 @@ const App: React.FC = () => {
 
     setIsBookingsScopeLoading(true);
     setBookingScopeError(null);
-    // Cleanliness needs the complete stay history, independent of the visible calendar range.
-    return DataService.subscribeBookingsForPropertiesView(
-      targetPropertyIds,
+    // Room state needs stays since the last cleaning, independent of the
+    // calendar range. The booking list retains its complete search/export scope.
+    const subscribe = currentPage === 'bookings'
+      ? (next: (rows: Booking[]) => void, fail: (error: unknown) => void) =>
+          DataService.subscribeBookingsForPropertiesView(targetPropertyIds, next, fail)
+      : (next: (rows: Booking[]) => void, fail: (error: unknown) => void) =>
+          DataService.subscribeRoomStateBookings(operationalRooms.filter(room => targetPropertyIds.includes(room.propertyId)), next, fail);
+    return subscribe(
       (nextBookings) => {
         setBookingScopeError(null);
         setBookings(nextBookings.filter((booking) => operationalRoomIds.has(booking.roomId)));
@@ -592,7 +567,7 @@ const App: React.FC = () => {
         setIsBookingsScopeLoading(false);
       }
     );
-  }, [activeTenantId, currentPage, isLoading, operationalRoomKey, scopedOperationalPropertyKey]);
+  }, [activeTenantId, currentPage, isLoading, operationalRoomKey, roomStateKey, scopedOperationalPropertyKey]);
 
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;

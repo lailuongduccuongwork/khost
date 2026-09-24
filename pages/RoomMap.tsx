@@ -605,6 +605,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
   }, [bookingRows, currentProperty.id, showModal]);
 
   const modalScopeKey = useMemo(() => modalScopePropertyIds.join('|'), [modalScopePropertyIds]);
+  const modalBookingStart = Math.min(...bookingRows.map(row => new Date(row.checkIn).getTime()).filter(Number.isFinite));
 
   useEffect(() => {
       if (!showModal) {
@@ -623,7 +624,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       let cancelled = false;
       setIsLoadingModalAvailability(true);
 
-      DataService.loadBookingsForPropertiesView(scopedPropertyIds)
+      DataService.fetchBookingsEndingAfter(scopedPropertyIds, Number.isFinite(modalBookingStart) ? modalBookingStart : Date.now())
           .then((rows) => {
               if (cancelled) return;
               setModalAvailabilityBookings(rows);
@@ -641,7 +642,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       return () => {
           cancelled = true;
       };
-  }, [showModal, modalScopeKey]);
+  }, [showModal, modalScopeKey, modalBookingStart]);
 
   const activeModalAvailabilityBookings = useMemo(() => {
       const nowMs = now.getTime();
