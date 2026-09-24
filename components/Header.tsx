@@ -1,14 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Building2, Bell, Menu, CheckCircle, Clock, Wallet, Check, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Building2, Bell, Menu, CheckCircle, Clock, Wallet, Check, Sun, Moon, PanelLeftClose, PanelLeftOpen, ChevronDown } from 'lucide-react';
 import { User, Property } from '../types';
 import { AppNotification } from '../hooks/useBookingAlert';
 
 interface HeaderProps {
   user: User;
   properties: Property[];
-  currentPropertyId: string;
-  allowAllSelection?: boolean;
-  onPropertyChange: (id: string) => void;
+  selectedPropertyIds: string[];
+  onPropertyChange: (ids: string[]) => void;
   onMenuClick?: () => void;
   notifications?: AppNotification[];
   onMarkAllRead?: () => void;
@@ -22,8 +21,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({
   user,
   properties,
-  currentPropertyId,
-  allowAllSelection = true,
+  selectedPropertyIds,
   onPropertyChange,
   onMenuClick,
   notifications = [],
@@ -35,7 +33,9 @@ const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
 }) => {
   const [showNotif, setShowNotif] = useState(false);
+  const [showProperties, setShowProperties] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const propertyRef = useRef<HTMLDivElement>(null);
 
   // Filter properties allowed for this user
   let allowedProperties = properties;
@@ -43,13 +43,25 @@ const Header: React.FC<HeaderProps> = ({
       allowedProperties = properties.filter(p => user.allowedPropertyIds!.includes(p.id));
   }
 
-  let displayLabel = 'Đang tải...';
-  if (currentPropertyId === 'ALL') {
-      displayLabel = 'Toàn bộ chi nhánh';
-  } else {
-      const prop = allowedProperties.find(p => p.id === currentPropertyId);
-      displayLabel = prop ? prop.name : 'Unknown Property';
-  }
+  const allowedPropertyIds = allowedProperties.map(property => property.id);
+  const selectedIds = selectedPropertyIds.filter(id => allowedPropertyIds.includes(id));
+  const allSelected = allowedProperties.length > 0 && selectedIds.length === allowedProperties.length;
+  const displayLabel = allSelected
+      ? `Toàn bộ chi nhánh (${allowedProperties.length})`
+      : selectedIds.length === 1
+          ? allowedProperties.find(property => property.id === selectedIds[0])?.name || 'Chi nhánh hiện tại'
+          : selectedIds.length > 1
+              ? `${selectedIds.length} chi nhánh`
+              : 'Đang tải...';
+
+  const toggleProperty = (propertyId: string) => {
+      if (selectedIds.includes(propertyId)) {
+          if (selectedIds.length === 1) return;
+          onPropertyChange(selectedIds.filter(id => id !== propertyId));
+          return;
+      }
+      onPropertyChange([...selectedIds, propertyId]);
+  };
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
@@ -59,8 +71,15 @@ const Header: React.FC<HeaderProps> = ({
           if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
               setShowNotif(false);
           }
+          if (propertyRef.current && !propertyRef.current.contains(e.target as Node)) {
+              setShowProperties(false);
+          }
       };
-      const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowNotif(false); };
+      const handleEscape = (e: KeyboardEvent) => {
+          if (e.key !== 'Escape') return;
+          setShowNotif(false);
+          setShowProperties(false);
+      };
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('keydown', handleEscape);
       return () => { document.removeEventListener('mousedown', handleClickOutside); document.removeEventListener('keydown', handleEscape); };
@@ -68,7 +87,7 @@ const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="app-header khost-safe-top-header sticky top-0 z-30 w-full flex items-center justify-between px-4 md:px-8">
-      <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
+      <div className="flex min-w-0 items-center gap-2 overflow-visible md:gap-4">
         <button aria-label="Mở điều hướng" onClick={onMenuClick} className="md:hidden p-2 katka-secondary-btn rounded-lg shrink-0">
           <Menu size={24} />
         </button>
@@ -87,18 +106,55 @@ const Header: React.FC<HeaderProps> = ({
         <div className="flex flex-col justify-center min-w-0">
           <p className="text-[11px] font-medium text-gray-400 hidden sm:block mb-0.5">Không gian hiện tại</p>
           {allowedProperties.length > 1 ? (
-            <select 
-              value={currentPropertyId}
-              onChange={(e) => onPropertyChange(e.target.value)}
-              aria-label="Chọn chi nhánh" className="property-select bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-0 w-full cursor-pointer truncate"
-            >
-              {allowAllSelection && (
-                <option value="ALL" className="font-bold">Toàn bộ chi nhánh ({allowedProperties.length})</option>
+            <div className="relative min-w-0" ref={propertyRef}>
+              <button
+                type="button"
+                aria-label="Chọn chi nhánh"
+                aria-haspopup="listbox"
+                aria-expanded={showProperties}
+                onClick={() => setShowProperties(value => !value)}
+                className="property-select flex max-w-[220px] items-center gap-1.5 bg-transparent border-none outline-none text-sm font-medium text-gray-700 min-w-0 w-full cursor-pointer"
+              >
+                <span className="truncate">{displayLabel}</span>
+                <ChevronDown size={14} className={`shrink-0 transition-transform ${showProperties ? 'rotate-180' : ''}`} />
+              </button>
+              {showProperties && (
+                <div className="property-multiselect absolute left-0 top-full z-50 mt-3 min-w-[260px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl" role="listbox" aria-multiselectable="true">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={allSelected}
+                    onClick={() => onPropertyChange(allowedPropertyIds)}
+                    className="property-option w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-semibold border-b border-gray-100"
+                  >
+                    <span className={`property-check ${allSelected ? 'is-selected' : ''}`}><Check size={13} /></span>
+                    <span className="flex-1">Toàn bộ chi nhánh</span>
+                    <span className="text-xs text-gray-400">{allowedProperties.length}</span>
+                  </button>
+                  <div className="max-h-72 overflow-y-auto p-1.5">
+                    {allowedProperties.map(property => {
+                      const checked = selectedIds.includes(property.id);
+                      return (
+                        <button
+                          type="button"
+                          key={property.id}
+                          role="option"
+                          aria-selected={checked}
+                          onClick={() => toggleProperty(property.id)}
+                          className="property-option w-full flex items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm"
+                        >
+                          <span className={`property-check ${checked ? 'is-selected' : ''}`}><Check size={13} /></span>
+                          <span className="truncate">{property.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="border-t border-gray-100 px-3 py-2 text-[11px] text-gray-400">
+                    Đã chọn {selectedIds.length}/{allowedProperties.length} chi nhánh
+                  </div>
+                </div>
               )}
-              {allowedProperties.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+            </div>
           ) : (
             <span className="text-sm font-medium text-gray-700 truncate">
               {displayLabel}

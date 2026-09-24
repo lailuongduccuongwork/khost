@@ -288,7 +288,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
   const nightShiftRooms = processedRooms.filter(r => r.nightEvent !== null);
   const countDirty = processedRooms.filter(item => item.room.status === RoomStatus.VACANT_DIRTY).length;
   const todayBookingCount = scheduleList.reduce((total, item) => total + item.todayBookings.length, 0);
-  const branchLabel = currentProperty.id === 'ALL' ? 'Tất cả chi nhánh' : currentProperty.name;
+  const branchLabel = currentProperty.name;
   const todayLabel = formatDayLabel(currentTime);
   const emptyReason = searchTerm.trim()
       ? `Không có phòng khớp từ khóa "${searchTerm.trim()}".`

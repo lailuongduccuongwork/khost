@@ -2409,7 +2409,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
   const isReadOnly = isEditMode ? !canEdit : !canAdd;
   const propertiesToRender = currentProperty.id === 'ALL' ? properties : [currentProperty];
-  const bookingDetailGridTemplate = '1.05fr 1.35fr 1.05fr 1.85fr 1.85fr 0.8fr';
+  const bookingDetailGridTemplate = '1.35fr 1.9fr 1.35fr 1.6fr 1.6fr 0.7fr';
   const persistRoomColumnWidth = (width: number) => {
       try {
           window.localStorage.setItem(ROOM_COLUMN_WIDTH_STORAGE_KEY, String(width));
@@ -3467,7 +3467,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           <DialogFrame label="Đặt phòng" onDismiss={() => setShowModal(false)} className="katka-app katka-modal-scope fixed inset-0 z-[120] flex items-center justify-center p-1 md:p-2">
               <div className="absolute inset-0 katka-modal-backdrop" onClick={() => setShowModal(false)}></div>
               
-              <div className="katka-focus-modal relative bg-white w-full max-w-[810px] max-h-[calc(100dvh-8px)] md:max-h-[calc(100dvh-16px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
+              <div className="katka-focus-modal relative bg-white w-full max-w-[1180px] max-h-[calc(100dvh-8px)] md:max-h-[calc(100dvh-16px)] md:rounded-2xl shadow-2xl flex flex-col animate-fade-in border-0 md:border border-gray-200 overflow-hidden">
                   
                   <div className="flex-shrink-0 p-2.5 md:p-3 border-b border-gray-100 flex justify-between items-center bg-white z-10 md:rounded-t-2xl">
                       <div>

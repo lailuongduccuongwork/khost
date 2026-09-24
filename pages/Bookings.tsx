@@ -21,7 +21,7 @@ interface BookingsProps {
   onRefresh?: () => void;
   onCreateBooking?: () => void;
   onOpenRoomMapBooking?: (booking: Booking) => void;
-  currentPropertyId: string;
+  selectedPropertyIds: string[];
   isScopeLoading?: boolean;
   currentUser: User; // Full user for permissions
 }
@@ -217,7 +217,7 @@ const resolveImportedProperty = (branchName: string, propertyLookup: Map<string,
     return { status: 'MATCHED' as const, property: candidates[0], candidates };
 };
 
-const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, customers, onRefresh, onCreateBooking, onOpenRoomMapBooking, currentPropertyId, isScopeLoading = false, currentUser }) => {
+const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, properties, tags, users, customers, onRefresh, onCreateBooking, onOpenRoomMapBooking, selectedPropertyIds, isScopeLoading = false, currentUser }) => {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [searchTerm, setSearchTerm] = useState('');
   const [propertyFilter, setPropertyFilter] = useState<string>('ALL');
@@ -256,10 +256,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
   const canAdd = currentUser.permissions?.includes(PERMISSIONS.CAN_ADD_BOOKING);
   const canDelete = currentUser.permissions?.includes(PERMISSIONS.CAN_DELETE_BOOKING);
-  const isHeaderScopedToSingleProperty = currentPropertyId !== 'ALL';
-  const currentScopeName = currentPropertyId === 'ALL'
-      ? `Toàn bộ chi nhánh (${properties.length})`
-      : properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
+  const isHeaderScopedToSingleProperty = selectedPropertyIds.length === 1;
+  const currentScopeName = selectedPropertyIds.length === 1
+      ? properties.find((property) => property.id === selectedPropertyIds[0])?.name || 'Chi nhánh hiện tại'
+      : `${selectedPropertyIds.length} chi nhánh đã chọn`;
 
   const customerById = useMemo(() => new Map(customers.map(customer => [customer.id, customer])), [customers]);
   const roomById = useMemo(() => new Map(rooms.map(room => [room.id, room])), [rooms]);
@@ -279,10 +279,10 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   }, []);
 
   useEffect(() => {
-      setPropertyFilter(currentPropertyId || 'ALL');
+      setPropertyFilter(selectedPropertyIds.length === 1 ? selectedPropertyIds[0] : 'ALL');
       setRoomFilter('ALL');
       setIsHydratingScope(true);
-  }, [currentPropertyId]);
+  }, [selectedPropertyIds]);
 
   useEffect(() => {
       if (!isHydratingScope) return;
@@ -792,7 +792,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   }, [filteredBookings, nowMs]);
   const hasActiveFilters =
       searchTerm.trim() ||
-      propertyFilter !== (currentPropertyId || 'ALL') ||
+      propertyFilter !== (selectedPropertyIds.length === 1 ? selectedPropertyIds[0] : 'ALL') ||
       statusFilter !== 'ALL' ||
       roomTypeFilter !== 'ALL' ||
       roomFilter !== 'ALL' ||
@@ -903,7 +903,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
   const resetFilters = () => {
       setSearchTerm('');
-      setPropertyFilter(currentPropertyId || 'ALL');
+      setPropertyFilter(selectedPropertyIds.length === 1 ? selectedPropertyIds[0] : 'ALL');
       setStatusFilter('ALL');
       setRoomTypeFilter('ALL');
       setRoomFilter('ALL');

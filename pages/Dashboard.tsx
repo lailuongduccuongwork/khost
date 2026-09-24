@@ -9,7 +9,7 @@ interface DashboardProps {
   bookings: Booking[];
   rooms: Room[];
   properties: Property[];
-  currentPropertyId: string;
+  selectedPropertyIds: string[];
   onDateRangeChange?: (range: { startIso: string; endIso: string; key: string } | null) => void;
 }
 
@@ -191,7 +191,7 @@ const StatTile: React.FC<{ label: string; value: string; sub?: string; tone?: st
   </div>
 );
 
-const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, currentPropertyId, onDateRangeChange }) => {
+const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, selectedPropertyIds, onDateRangeChange }) => {
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -296,9 +296,14 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
   }, [filterPreset]);
 
   const currentPropertyName = useMemo(() => {
-    if (currentPropertyId === 'ALL') return `Toàn bộ chi nhánh (${properties.length})`;
-    return properties.find((property) => property.id === currentPropertyId)?.name || 'Chi nhánh hiện tại';
-  }, [currentPropertyId, properties]);
+    if (selectedPropertyIds.length === properties.length) return `Toàn bộ chi nhánh (${properties.length})`;
+    if (selectedPropertyIds.length === 1) {
+      return properties.find((property) => property.id === selectedPropertyIds[0])?.name || 'Chi nhánh hiện tại';
+    }
+    return `${selectedPropertyIds.length} chi nhánh đã chọn`;
+  }, [selectedPropertyIds, properties]);
+
+  const selectedPropertySet = useMemo(() => new Set(selectedPropertyIds), [selectedPropertyIds]);
 
   const dateRangeInfo = useMemo(() => {
     if (!startDate || !endDate) return { valid: false, message: 'Vui lòng chọn đủ ngày bắt đầu và ngày kết thúc.', days: 0 };
@@ -343,7 +348,7 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
   );
 
   const dashboardExcludedSummary = useMemo(() => {
-    const scopedProperties = properties.filter((property) => currentPropertyId === 'ALL' || property.id === currentPropertyId);
+    const scopedProperties = properties.filter((property) => selectedPropertySet.has(property.id));
     const scopedPropertyIds = new Set(scopedProperties.map((property) => property.id));
     const propertyCount = scopedProperties.filter((property) => property.excludeFromDashboard).length;
     const roomCount = rooms.filter((room) =>
@@ -357,16 +362,16 @@ const Dashboard: React.FC<DashboardProps> = ({ bookings, rooms, properties, curr
       roomCount,
       hasExclusions: propertyCount > 0 || roomCount > 0,
     };
-  }, [properties, rooms, currentPropertyId, dashboardExcludedPropertyIds]);
+  }, [properties, rooms, selectedPropertySet, dashboardExcludedPropertyIds]);
 
   const operationalRooms = useMemo(
     () => rooms.filter((room) =>
       !isArchiveBucketRoom(room) &&
-      (currentPropertyId === 'ALL' || room.propertyId === currentPropertyId) &&
+      selectedPropertySet.has(room.propertyId) &&
       !room.excludeFromDashboard &&
       !dashboardExcludedPropertyIds.has(room.propertyId)
     ),
-    [rooms, currentPropertyId, dashboardExcludedPropertyIds]
+    [rooms, selectedPropertySet, dashboardExcludedPropertyIds]
   );
 
   const roomById = useMemo(() => {

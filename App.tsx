@@ -100,7 +100,7 @@ const App: React.FC = () => {
   const [isSuperAdminView, setIsSuperAdminView] = useState(false);
 
   // --- App View State ---
-  const [currentPropertyId, setCurrentPropertyId] = useState<string>(''); 
+  const [selectedPropertyIds, setSelectedPropertyIds] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [roomMapSearchSeed, setRoomMapSearchSeed] = useState('');
   const [roomMapSearchNonce, setRoomMapSearchNonce] = useState(0);
@@ -156,11 +156,9 @@ const App: React.FC = () => {
     const visiblePropertyIds = (hasRestrictions ? operationalProperties.filter((p) => allowedIds.includes(p.id)) : operationalProperties).map(
       (property) => property.id
     );
-    if (currentPropertyId && currentPropertyId !== 'ALL') {
-      return visiblePropertyIds.includes(currentPropertyId) ? [currentPropertyId] : [];
-    }
-    return visiblePropertyIds;
-  }, [currentPropertyId, currentUser?.allowedPropertyIds, operationalProperties]);
+    const selected = selectedPropertyIds.filter(id => visiblePropertyIds.includes(id));
+    return selected.length > 0 ? selected : visiblePropertyIds;
+  }, [selectedPropertyIds, currentUser?.allowedPropertyIds, operationalProperties]);
   const scopedOperationalPropertyKey = scopedOperationalPropertyIds.join(',');
 
   const clearLoadingFallback = useCallback(() => {
@@ -428,23 +426,12 @@ const App: React.FC = () => {
         return;
     }
 
-    let activePropId = currentPropertyId;
-
-    const isValid =
-        activePropId && (activePropId === 'ALL' || selectableProperties.some((p) => p.id === activePropId));
     const selectablePropertyIds = selectableProperties.map((property) => property.id);
-    const isAllowed = !hasRestrictions || (activePropId === 'ALL' ? selectablePropertyIds.length > 1 : selectablePropertyIds.includes(activePropId));
-
-    if (!isValid || !isAllowed) {
-        if (!hasRestrictions) {
-            activePropId = 'ALL';
-        } else {
-            activePropId = selectablePropertyIds.length > 1 ? 'ALL' : selectablePropertyIds[0];
-        }
-        if (activePropId !== currentPropertyId) {
-            setCurrentPropertyId(activePropId);
-            return;
-        }
+    const validSelection = selectedPropertyIds.filter(id => selectablePropertyIds.includes(id));
+    const nextSelection = validSelection.length > 0 ? validSelection : selectablePropertyIds;
+    if (!isSameStringList(nextSelection, selectedPropertyIds)) {
+        setSelectedPropertyIds(nextSelection);
+        return;
     }
 
     const useViewScopedData = currentPage === 'dashboard' || currentPage === 'room-map' || currentPage === 'housekeeping' || currentPage === 'bookings';
@@ -452,7 +439,7 @@ const App: React.FC = () => {
       return;
     }
 
-  }, [dataTick, currentPage, currentPropertyId, isLoading, currentUser, activeTenantId, clearSession]);
+  }, [dataTick, currentPage, selectedPropertyIds, isLoading, currentUser, activeTenantId, clearSession]);
 
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
@@ -468,23 +455,8 @@ const App: React.FC = () => {
     );
     const useHistoricalScope = currentPage === 'management' || currentPage === 'reports';
     const selectablePropertyIds = useHistoricalScope ? visiblePropertyIds : operationalVisiblePropertyIds;
-
-    const requiresFocusedProperty = currentPage === 'housekeeping';
-    if (requiresFocusedProperty && currentPropertyId === 'ALL' && selectablePropertyIds.length > 0) {
-      setCurrentPropertyId(selectablePropertyIds[0]);
-      return;
-    }
-
-    const targetPropertyIds =
-      currentPage === 'management'
-        ? visiblePropertyIds
-        : currentPage === 'reports'
-          ? currentPropertyId && currentPropertyId !== 'ALL'
-            ? visiblePropertyIds.includes(currentPropertyId) ? [currentPropertyId] : []
-            : visiblePropertyIds
-        : currentPropertyId && currentPropertyId !== 'ALL'
-          ? operationalVisiblePropertyIds.includes(currentPropertyId) ? [currentPropertyId] : []
-          : operationalVisiblePropertyIds;
+    const selectedSet = new Set(selectedPropertyIds);
+    const targetPropertyIds = selectablePropertyIds.filter(id => selectedSet.has(id));
 
     if (targetPropertyIds.length === 0) {
       setRooms([]);
@@ -506,7 +478,7 @@ const App: React.FC = () => {
       : () => undefined;
     if (currentPage !== 'performance') setBookings([]);
     return () => { stopRooms(); stopBookings(); };
-  }, [activeTenantId, currentPage, currentPropertyId, currentUser, isLoading, operationalPropertyKey, visiblePropertyKey]);
+  }, [activeTenantId, currentPage, selectedPropertyIds, currentUser, isLoading, operationalPropertyKey, visiblePropertyKey]);
 
   useEffect(() => {
     if (isLoading || !activeTenantId || activeTenantId === 'SYSTEM') return;
@@ -649,7 +621,7 @@ const App: React.FC = () => {
     if (foundUser) {
       setCurrentUser(foundUser);
       safeStorageSet('k_host_user', JSON.stringify(foundUser));
-      setCurrentPropertyId('');
+      setSelectedPropertyIds([]);
       try {
         DataService.recordLogin(foundUser);
       } catch (e) {
@@ -792,23 +764,33 @@ const App: React.FC = () => {
   if (!effectiveUser) return null;
 
   const handleOpenRoomMapFromHousekeeping = (room: Room) => {
-    setCurrentPropertyId(room.propertyId);
+    setSelectedPropertyIds([room.propertyId]);
     setRoomMapSearchSeed(room.number || '');
     setRoomMapSearchNonce(Date.now());
     setCurrentPage('room-map');
   };
 
   const handleOpenRoomMapFromBooking = (booking: Booking) => {
-    if (booking.propertyId) setCurrentPropertyId(booking.propertyId);
+    if (booking.propertyId) setSelectedPropertyIds([booking.propertyId]);
     setRoomMapSearchSeed(booking.id || booking.guestName || '');
     setRoomMapSearchNonce(Date.now());
     setCurrentPage('room-map');
   };
 
   const pageProperties = currentPage === 'management' || currentPage === 'reports' ? properties : operationalProperties;
-  const currentPropertyObj = currentPropertyId === 'ALL' 
-        ? { id: 'ALL', name: 'Toàn bộ chi nhánh', address: '' } as Property
-        : (pageProperties.find(p => p.id === currentPropertyId) || pageProperties[0] || {id:'err', name:'Lỗi tải', address:''} as Property);
+  const selectedPageProperties = pageProperties.filter(property => selectedPropertyIds.includes(property.id));
+  const effectivePageProperties = selectedPageProperties.length > 0 ? selectedPageProperties : pageProperties;
+  const selectedOperationalProperties = operationalProperties.filter(property => selectedPropertyIds.includes(property.id));
+  const effectiveOperationalProperties = selectedOperationalProperties.length > 0 ? selectedOperationalProperties : operationalProperties;
+  const currentPropertyObj = effectivePageProperties.length === 1
+        ? effectivePageProperties[0]
+        : {
+            id: 'ALL',
+            name: effectivePageProperties.length === pageProperties.length
+              ? 'Toàn bộ chi nhánh'
+              : `${effectivePageProperties.length} chi nhánh`,
+            address: '',
+          } as Property;
 
   return (
     <div className="min-h-screen katka-app relative">
@@ -862,9 +844,8 @@ const App: React.FC = () => {
             <Header 
               user={effectiveUser}
               properties={pageProperties}
-              currentPropertyId={currentPropertyId}
-              allowAllSelection={currentPage !== 'housekeeping'}
-              onPropertyChange={setCurrentPropertyId}
+              selectedPropertyIds={selectedPropertyIds}
+              onPropertyChange={setSelectedPropertyIds}
               onMenuClick={() => setIsMobileMenuOpen(true)}
               notifications={notifications}
               onMarkAllRead={handleMarkAllRead}
@@ -930,7 +911,7 @@ const App: React.FC = () => {
                               bookings={bookings}
                               rooms={operationalRooms}
                               properties={operationalProperties}
-                              currentPropertyId={currentPropertyId}
+                              selectedPropertyIds={scopedOperationalPropertyIds}
                               onDateRangeChange={handleDashboardDateRangeChange}
                           />
                       )}
@@ -940,14 +921,14 @@ const App: React.FC = () => {
                               bookings={bookings}
                               rooms={operationalRooms}
                               roomTypes={roomTypes}
-                              properties={operationalProperties}
+                              properties={effectiveOperationalProperties}
                               tags={tags}
                               users={users}
                               customers={customers}
                               onRefresh={manualRefresh}
                               onCreateBooking={() => setCurrentPage('room-map')}
                               onOpenRoomMapBooking={handleOpenRoomMapFromBooking}
-                              currentPropertyId={currentPropertyId}
+                              selectedPropertyIds={scopedOperationalPropertyIds}
                               isScopeLoading={isBookingsScopeLoading}
                               currentUser={effectiveUser}
                           />
@@ -970,7 +951,7 @@ const App: React.FC = () => {
                               bookingCategories={bookingCategories}
                               bookingSources={bookingSources}
                               bookingFieldSettings={bookingFieldSettings}
-                              properties={operationalProperties}
+                              properties={effectiveOperationalProperties}
                               onRefresh={manualRefresh}
                               onUpdateStatus={handleUpdateRoomStatus}
                               currentProperty={currentPropertyObj}
@@ -985,7 +966,7 @@ const App: React.FC = () => {
                               rooms={operationalRooms}
                               bookings={bookings}
                               roomTypes={roomTypes}
-                              properties={operationalProperties}
+                              properties={effectiveOperationalProperties}
                               currentProperty={currentPropertyObj}
                               onRefresh={manualRefresh}
                               onUpdateStatus={handleUpdateRoomStatus}
@@ -1000,9 +981,9 @@ const App: React.FC = () => {
                               rooms={rooms}
                               users={users}
                               roomTypes={roomTypes}
-                              properties={properties}
+                              properties={effectivePageProperties}
                               tags={tags}
-                              currentPropertyId={currentPropertyId}
+                              selectedPropertyIds={selectedPropertyIds}
                               currentUser={effectiveUser}
                           />
                       )}
@@ -1013,7 +994,7 @@ const App: React.FC = () => {
                               rooms={rooms}
                               roomTypes={roomTypes}
                               roomPolicies={roomPolicies}
-                              properties={properties}
+                              properties={effectivePageProperties}
                               tags={tags}
                               bookingCategories={bookingCategories}
                               bookingSources={bookingSources}
@@ -1028,7 +1009,7 @@ const App: React.FC = () => {
                           <AccessPasswords
                               rooms={rooms}
                               roomTypes={roomTypes}
-                              properties={properties}
+                              properties={effectivePageProperties}
                               currentUser={effectiveUser}
                               onRefresh={manualRefresh}
                           />

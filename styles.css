@@ -924,6 +924,32 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .app-header .katka-secondary-btn { border: 0; background: transparent; }
 .app-header .katka-secondary-btn:hover { background: var(--workspace-hover); }
 .katka-app .app-header .property-select { background: transparent; padding: 0 20px 0 0; border-radius: 3px; font-size: 12px; }
+.property-multiselect {
+  width: min(320px, calc(100vw - 32px));
+  color: var(--katka-text);
+  background: var(--katka-card);
+  border-color: var(--katka-border);
+  box-shadow: var(--katka-shadow-strong);
+}
+.property-option { color: var(--katka-subtext); }
+.property-option:hover { color: var(--katka-text); background: var(--workspace-hover); }
+.property-check {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--katka-border);
+  border-radius: 5px;
+  color: transparent;
+  background: var(--katka-card);
+}
+.property-check.is-selected {
+  color: #fff;
+  background: var(--katka-accent);
+  border-color: var(--katka-accent);
+}
 .app-main { padding: 34px 36px 48px; }
 .app-content { max-width: 1440px; }
 .app-main-roommap { padding: 20px; }

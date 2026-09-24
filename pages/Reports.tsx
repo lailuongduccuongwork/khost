@@ -13,7 +13,7 @@ interface ReportsProps {
   roomTypes: RoomType[];
   properties: Property[];
   tags: Tag[];
-  currentPropertyId: string;
+  selectedPropertyIds: string[];
   currentUser: User; // Need full user for permissions
 }
 
@@ -35,7 +35,7 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, roomTypes, properties, tags, currentPropertyId, currentUser }) => {
+const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, roomTypes, properties, tags, selectedPropertyIds, currentUser }) => {
   const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
   
   // Filter States
@@ -59,9 +59,10 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
   }, [currentUser?.allowedPropertyIds, properties]);
 
   const targetPropertyIds = useMemo(() => {
-      if (currentPropertyId && currentPropertyId !== 'ALL') return [currentPropertyId];
-      return visiblePropertyIds;
-  }, [currentPropertyId, visiblePropertyIds]);
+      const visibleSet = new Set(visiblePropertyIds);
+      const selected = selectedPropertyIds.filter(id => visibleSet.has(id));
+      return selected.length > 0 ? selected : visiblePropertyIds;
+  }, [selectedPropertyIds, visiblePropertyIds]);
 
   const targetPropertySet = useMemo(() => new Set(targetPropertyIds), [targetPropertyIds]);
 
