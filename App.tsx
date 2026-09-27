@@ -994,7 +994,7 @@ const App: React.FC = () => {
                               rooms={rooms}
                               roomTypes={roomTypes}
                               roomPolicies={roomPolicies}
-                              properties={effectivePageProperties}
+                              properties={properties}
                               tags={tags}
                               bookingCategories={bookingCategories}
                               bookingSources={bookingSources}

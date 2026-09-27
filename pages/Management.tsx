@@ -46,6 +46,13 @@ type CascadeDeleteKind = 'property' | 'roomType' | 'room';
 type NewRoomTypeDraft = { propertyId: string; name: string } | null;
 type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
 type EditRoomModalState = { roomId: string; number: string; typeId: string; roomPassword: string } | null;
+type NewPropertyDraft = {
+    name: string;
+    address: string;
+    gatePassword: string;
+    isOperationalActive: boolean;
+    excludeFromDashboard: boolean;
+};
 type PreparedCascadeDelete = Awaited<ReturnType<typeof DataService.prepareManagementCascadeDelete>>;
 
 interface DangerousDeleteModalState {
@@ -167,6 +174,8 @@ const Management: React.FC<ManagementProps> = ({
   const [newRoomTypeDraft, setNewRoomTypeDraft] = useState<NewRoomTypeDraft>(null);
   const [newRoomDraft, setNewRoomDraft] = useState<NewRoomDraft>(null);
   const [editRoomModal, setEditRoomModal] = useState<EditRoomModalState>(null);
+  const [newPropertyDraft, setNewPropertyDraft] = useState<NewPropertyDraft | null>(null);
+  const [isCreatingProperty, setIsCreatingProperty] = useState(false);
   const [roomManagementSearch, setRoomManagementSearch] = useState('');
   const [managementRooms, setManagementRooms] = useState<Room[]>(rooms);
   const [managementRoomTypes, setManagementRoomTypes] = useState<RoomType[]>(roomTypes);
@@ -609,9 +618,36 @@ const Management: React.FC<ManagementProps> = ({
       const baseName = 'Chi nhánh mới';
       const suffix = properties.filter(prop => prop.name.startsWith(baseName)).length;
       const name = suffix > 0 ? `${baseName} ${suffix + 1}` : baseName;
-      const newProp: Property = { id: `p_${Date.now()}`, name, address: 'Địa chỉ...', sortOrder: properties.length };
-      DataService.saveProperties([...properties, newProp]);
-      setEditingId(newProp.id);
+      setNewPropertyDraft({
+          name,
+          address: '',
+          gatePassword: '',
+          isOperationalActive: true,
+          excludeFromDashboard: false,
+      });
+  };
+
+  const handleCreateProperty = async () => {
+      if (!newPropertyDraft || isCreatingProperty) return;
+      const name = newPropertyDraft.name.trim();
+      if (!name) return alert('Tên chi nhánh không được để trống.');
+      if (propertyHasDuplicateName(name)) return alert('Tên chi nhánh đã tồn tại.');
+
+      const newProp: Property = {
+          id: `p_${Date.now()}`,
+          name,
+          address: newPropertyDraft.address.trim(),
+          gatePassword: newPropertyDraft.gatePassword.trim(),
+          sortOrder: properties.length,
+          isOperationalActive: newPropertyDraft.isOperationalActive,
+          hiddenFromOperations: !newPropertyDraft.isOperationalActive,
+          excludeFromDashboard: newPropertyDraft.excludeFromDashboard,
+      };
+
+      setIsCreatingProperty(true);
+      const saved = await runSaveAction('chi nhánh mới', () => DataService.saveProperties([...properties, newProp]));
+      setIsCreatingProperty(false);
+      if (saved) setNewPropertyDraft(null);
   };
 
   const handleTogglePropertyDashboardExclusion = (propertyId: string) => {
@@ -2139,6 +2175,118 @@ const Management: React.FC<ManagementProps> = ({
           )}
 
       </div>
+
+      {newPropertyDraft && createPortal(
+          <DialogFrame
+              label="Thêm chi nhánh"
+              onDismiss={() => { if (!isCreatingProperty) setNewPropertyDraft(null); }}
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px] animate-fade-in"
+          >
+              <form
+                  onSubmit={(event) => { event.preventDefault(); handleCreateProperty(); }}
+                  className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+              >
+                  <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
+                      <div>
+                          <h3 className="text-lg font-black text-gray-900">Thêm chi nhánh</h3>
+                          <p className="mt-1 text-sm font-medium text-gray-500">Nhập thông tin để tạo và đưa chi nhánh vào hệ thống.</p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setNewPropertyDraft(null)}
+                          disabled={isCreatingProperty}
+                          className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                          aria-label="Đóng"
+                      >
+                          <X size={18} />
+                      </button>
+                  </div>
+
+                  <div className="space-y-4 p-5">
+                      <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Tên chi nhánh *</span>
+                          <input
+                              value={newPropertyDraft.name}
+                              onChange={(event) => setNewPropertyDraft(prev => prev ? { ...prev, name: event.target.value } : prev)}
+                              autoFocus
+                              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-base font-bold text-gray-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                              placeholder="Ví dụ: HD CS4"
+                          />
+                      </label>
+
+                      <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Địa chỉ</span>
+                          <input
+                              value={newPropertyDraft.address}
+                              onChange={(event) => setNewPropertyDraft(prev => prev ? { ...prev, address: event.target.value } : prev)}
+                              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-semibold text-gray-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                              placeholder="Nhập địa chỉ chi nhánh"
+                          />
+                      </label>
+
+                      <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Mật khẩu cửa cổng</span>
+                          <div className="relative mt-1.5">
+                              <Key size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" />
+                              <input
+                                  value={newPropertyDraft.gatePassword}
+                                  onChange={(event) => setNewPropertyDraft(prev => prev ? { ...prev, gatePassword: event.target.value } : prev)}
+                                  className="w-full rounded-xl border border-gray-200 py-2.5 pl-10 pr-3 font-mono text-sm font-bold text-gray-900 outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-50"
+                                  placeholder="Ví dụ: 2580#"
+                                  autoComplete="off"
+                              />
+                          </div>
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 hover:bg-gray-50">
+                              <input
+                                  type="checkbox"
+                                  checked={newPropertyDraft.isOperationalActive}
+                                  onChange={(event) => setNewPropertyDraft(prev => prev ? { ...prev, isOperationalActive: event.target.checked } : prev)}
+                                  className="mt-0.5 h-4 w-4"
+                              />
+                              <span>
+                                  <span className="block text-sm font-bold text-gray-800">Hiển thị vận hành</span>
+                                  <span className="mt-0.5 block text-xs text-gray-500">Hiện trên Sơ đồ phòng, Đặt phòng và Buồng phòng.</span>
+                              </span>
+                          </label>
+                          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 hover:bg-gray-50">
+                              <input
+                                  type="checkbox"
+                                  checked={!newPropertyDraft.excludeFromDashboard}
+                                  onChange={(event) => setNewPropertyDraft(prev => prev ? { ...prev, excludeFromDashboard: !event.target.checked } : prev)}
+                                  className="mt-0.5 h-4 w-4"
+                              />
+                              <span>
+                                  <span className="block text-sm font-bold text-gray-800">Tính vào Tổng quan</span>
+                                  <span className="mt-0.5 block text-xs text-gray-500">Đưa số liệu chi nhánh vào báo cáo Tổng quan.</span>
+                              </span>
+                          </label>
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 border-t border-gray-100 bg-gray-50 px-5 py-4">
+                      <button
+                          type="button"
+                          onClick={() => setNewPropertyDraft(null)}
+                          disabled={isCreatingProperty}
+                          className="flex-1 rounded-xl border border-gray-200 bg-white py-2.5 font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                      >
+                          Hủy
+                      </button>
+                      <button
+                          type="submit"
+                          disabled={isCreatingProperty}
+                          className="flex-1 rounded-xl bg-blue-600 py-2.5 font-bold text-white shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                          {isCreatingProperty ? 'Đang tạo...' : 'Tạo chi nhánh'}
+                      </button>
+                  </div>
+              </form>
+          </DialogFrame>,
+          document.body
+      )}
 
       {editRoomModal && editingRoom && (
           <DialogFrame label="Chỉnh sửa phòng" onDismiss={closeEditRoomModal} className="fixed inset-0 bg-black/45 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in">
