@@ -86,6 +86,35 @@ export interface ExtraFee {
     amount: number; // Số tiền
     type: 'REVENUE' | 'EXPENSE';
 }
+
+export interface FinancialTransaction {
+    id: string;
+    timestamp: string;
+    propertyId: string;
+    bookingId: string;
+    feeId: string;
+    kind?: 'EXTRA_FEE' | 'BOOKING_PAYMENT'; // Missing on older stored surcharge rows.
+    type: 'REVENUE' | 'EXPENSE';
+    amount: number; // Signed change within its category; a removal reverses the original amount.
+    content: string;
+    guestName: string;
+    tags: string;
+    room: string;
+    roomType: string;
+    property: string;
+    createdAt: string;
+    checkInDate: string;
+    checkOutDate: string;
+    roomPrice: number | null;
+    otherRevenue: number | null;
+    totalBill: number | null;
+    otherExpenses: number | null;
+    netRevenue: number | null;
+    paidAmount: number | null;
+    debt: number | null;
+    createdBy: string;
+    performedBy: string;
+}
 // -------------------------------------
 
 export interface NotificationSettings {

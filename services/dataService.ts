@@ -4,6 +4,7 @@ import {
     BookingFieldSettings,
     BookingStatus,
     Customer,
+    FinancialTransaction,
     DEFAULT_NOTIFICATION_SETTINGS,
     HistoryAction,
     HistoryEntityType,
@@ -43,7 +44,8 @@ import { deriveBookingStatus, deriveRoomOperationalStatus, isBookingOccupyingRoo
 import { initializeApp } from 'firebase/app';
 import { createRealtimePool } from '../utils/realtimePool';
 import { checkoutQueryLowerBound, roomHistoryStart } from '../utils/bookingReadScope';
-import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, query, ref, remove, runTransaction, serverTimestamp, set, startAt, update } from 'firebase/database';
+import { buildFinancialTransactions, FinancialContext, transactionsFromHistory } from '../utils/financialTransactions';
+import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, orderByKey, query, ref, remove, runTransaction, serverTimestamp, set, startAt, update } from 'firebase/database';
 
 declare const XLSX: any;
 declare global {
@@ -1418,7 +1420,9 @@ const _recordHistory = ({
         source,
         before: before ? sanitizeForLog(before) : null,
         after: after ? sanitizeForLog(after) : null,
-        metadata: metadata ? sanitizeForLog(metadata) : null,
+        metadata: entityType === 'BOOKING'
+            ? { ...(metadata ? sanitizeForLog(metadata) : {}), financialReportVersion: 2 }
+            : metadata ? sanitizeForLog(metadata) : null,
         bookingSnapshot: bookingSnapshot ? sanitizeForLog(bookingSnapshot) : undefined,
         staffId: resolvedActor.id,
     };
@@ -1432,6 +1436,28 @@ const _recordHistory = ({
     }
 
     return _writeHistoryLog(entry, coalesceKey);
+};
+
+// Financial snapshots use the existing audit collection and are committed in the
+// same multi-path write as the bookings, without the audit coalescing window.
+const buildFinancialHistoryEntry = (
+    before: Booking[], after: Booking[], options: BookingActionOptions, deletedBookingIds: string[] = []
+): HistoryLog | null => {
+    const timestamp = new Date().toISOString();
+    const id = `log_${Date.now()}_finance_${Math.random().toString(36).slice(2, 10)}`;
+    const actor = resolveAuditActor(options.staffId, activeTenantId, options.source || 'WEB');
+    const rows = buildFinancialTransactions(before, after, CACHE, {
+        id, timestamp, performedBy: actor.username || actor.fullName || actor.id, deletedBookingIds,
+    });
+    if (rows.length === 0) return null;
+    return removeUndefinedDeep({
+        id, tenantId: activeTenantId, timestamp, action: 'UPDATE', entityType: 'BOOKING',
+        entityId: rows[0].bookingId, entityLabel: rows[0].bookingId,
+        description: `Ghi nhận ${rows.length} khoản phát sinh thu/chi`,
+        actorId: actor.id, actorUsername: actor.username, actorName: actor.fullName || actor.username || actor.id,
+        actorRole: actor.role, staffId: actor.id, source: options.source || 'WEB',
+        metadata: { financialReportVersion: 2, financialTransactions: rows },
+    }) as HistoryLog;
 };
 
 const _initRealtimeConnection = (tenantId: string, onDataChange: () => void) => {
@@ -2106,6 +2132,42 @@ const _fetchReportBookingsForProperties = async (
     snapshotToArray<Booking>(createdSnap).forEach(addBooking);
 
     return Array.from(unique.values());
+};
+
+const _fetchFinancialTransactions = async (propertyIds: string[], start: string, end: string, context?: FinancialContext): Promise<FinancialTransaction[]> => {
+    if (!_ensureFirebase() || !activeTenantId || !db) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    const basePath = getBaseRef();
+    const tenantId = activeTenantId;
+    const lower = Date.parse(start), upper = Date.parse(end);
+    if (!basePath || !Number.isFinite(lower) || !Number.isFinite(upper) || upper < lower) return [];
+    const allowed = currentAuditActor?.allowedPropertyIds || [];
+    const scope = new Set(normalizePropertyScope(propertyIds).filter(id => !allowed.length || allowed.includes(id)));
+    if (!scope.size) return [];
+    const historyPath = `${basePath}/history`;
+    const indexKey = `${historyPath}:timestamp`;
+    let snapshot: any;
+    if (!missingQueryIndexPaths.has(indexKey)) {
+        try {
+            snapshot = await trackedGetByChildRange(historyPath, 'timestamp', new Date(lower).toISOString(), new Date(upper).toISOString());
+        } catch (error) {
+            if (!isMissingIndexError(error)) throw error;
+            missingQueryIndexPaths.add(indexKey);
+        }
+    }
+    if (!snapshot) {
+        // All app versions store audits as log_<epoch milliseconds>_<suffix>.
+        // Key queries use Firebase's built-in index and still read only this
+        // range. Allow for the two clock reads when creating an audit entry;
+        // the transaction timestamp below enforces the exact selected range.
+        const startKey = `log_${Math.max(0, lower - 1000)}_`;
+        const endKey = `log_${upper + 1000}_\uf8ff`;
+        snapshot = await get(query(ref(db, historyPath), orderByKey(), startAt(startKey), endAt(endKey)));
+        debugFirebaseTraffic('READ:financialHistoryByKeyRange', historyPath, snapshot.val(), { startKey, endKey });
+    }
+    if (activeTenantId !== tenantId) return [];
+    const logs = snapshotToArray<HistoryLog>(snapshot).filter(log => !log.tenantId || log.tenantId === tenantId);
+    return transactionsFromHistory(logs, context || CACHE).filter(row => scope.has(row.propertyId)
+        && Date.parse(row.timestamp) >= lower && Date.parse(row.timestamp) <= upper);
 };
 
 const _subscribeOperationalBookings = (
@@ -3425,6 +3487,12 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         Object.assign(updates, buildBookingIndexDiff(basePath, before, item.booking));
     });
 
+    const financialEntry = buildFinancialHistoryEntry(
+        Array.from(new Map([...knownBookings, ...remotePropertyBookings].map(b => [b.id, b])).values()),
+        Array.from(nextMap.values()), options, deleteIds
+    );
+    if (financialEntry) updates[`${basePath}/history/${financialEntry.id}`] = financialEntry;
+
     await trackedUpdateRootWithBookingIndexFallback(updates, {
         operation: 'save-booking-group',
         upsertCount: normalizedUpserts.length,
@@ -3432,6 +3500,7 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
     });
 
     CACHE.bookings = Array.from(nextMap.values());
+    if (financialEntry) upsertHistoryCache(financialEntry);
     _dataChangeCallback();
 
     const createdIds: string[] = [];
@@ -4747,6 +4816,19 @@ const _saveBookingAtomic = async (
         ...buildBookingIndexDiff(basePath, previousBookingFromCommittedTxn, normalizedBooking as Booking),
     };
 
+    let financialBefore = previousBookingFromCommittedTxn ? [previousBookingFromCommittedTxn] : [];
+    if (normalizedBooking.groupId && (
+        JSON.stringify(previousBookingFromCommittedTxn?.extraFees || []) !== JSON.stringify(normalizedBooking.extraFees || [])
+        || Number(previousBookingFromCommittedTxn?.paidAmount || 0) !== Number(normalizedBooking.paidAmount || 0)
+    )) {
+        financialBefore = (await _fetchBookingsForProperties(CACHE.properties.map(p => p.id)))
+            .filter(b => b.groupId === normalizedBooking.groupId || b.id === normalizedBooking.id);
+        if (previousBookingFromCommittedTxn && !financialBefore.some(b => b.id === normalizedBooking.id)) financialBefore.push(previousBookingFromCommittedTxn);
+    }
+    const financialAfter = [...financialBefore.filter(b => b.id !== normalizedBooking.id), normalizedBooking as Booking];
+    const financialEntry = buildFinancialHistoryEntry(financialBefore, financialAfter, options);
+    if (financialEntry) updates[`${basePath}/history/${financialEntry.id}`] = financialEntry;
+
     await trackedUpdateRootWithBookingIndexFallback(updates, {
         operation: mode === 'create' ? 'create-booking' : 'update-booking',
         pathCount: Object.keys(updates).length,
@@ -4755,6 +4837,7 @@ const _saveBookingAtomic = async (
     const cacheIndex = CACHE.bookings.findIndex((item) => item.id === normalizedBooking.id);
     if (cacheIndex > -1) CACHE.bookings[cacheIndex] = normalizedBooking as Booking;
     else CACHE.bookings.push(normalizedBooking as Booking);
+    if (financialEntry) upsertHistoryCache(financialEntry);
     _dataChangeCallback();
 
     return {
@@ -5115,6 +5198,7 @@ export const DataService = {
         _fetchDashboardBookingsForProperties(propertyIds, start, end, paddingDays),
     fetchReportBookingsForProperties: (propertyIds: string[] | undefined, start: string, end: string) =>
         _fetchReportBookingsForProperties(propertyIds, start, end),
+    fetchFinancialTransactions: _fetchFinancialTransactions,
     subscribeOperationalBookings: (
         propertyIds: string[] | undefined,
         start: string,
@@ -5124,6 +5208,8 @@ export const DataService = {
         paddingDays?: number
     ) => _subscribeOperationalBookings(propertyIds, start, end, callback, errorCallback, paddingDays),
     fetchBookingById: (bookingId: string, options?: { forceRemote?: boolean }) => _fetchBookingById(bookingId, options),
+    fetchBookingGroupMembers: async (groupId: string, propertyIds: string[]) =>
+        groupId ? (await _fetchBookingsForProperties(propertyIds)).filter(booking => booking.groupId === groupId) : [],
     getBookings: (propertyId?: string) => {
         const nowMs = Date.now();
         if (nowMs - lastHoldCleanupAttemptMs > HOLD_CLEANUP_THROTTLE_MS) {

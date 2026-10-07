@@ -119,7 +119,7 @@
           ".validate": "newData.hasChildren(['enabled', 'inAppEnabled', 'soundEnabled', 'browserEnabled', 'bookingAlerts', 'debtAlerts'])"
         },
         "history": {
-          ".indexOn": ["entityId", "metadata/groupId"],
+          ".indexOn": ["entityId", "metadata/groupId", "timestamp"],
           "$logId": {
             ".validate": "newData.hasChildren(['id', 'tenantId', 'timestamp', 'description']) && newData.child('id').val() === $logId && newData.child('tenantId').val() === $tenantId"
           }

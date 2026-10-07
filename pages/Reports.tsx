@@ -2,7 +2,11 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Booking, BookingStatus, Room, User, RoomType, Property, Tag, PERMISSIONS } from '../types';
 import { DataService } from '../services/dataService';
-import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Calendar, Filter, Info, Lock, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ArrowUpCircle, ArrowDownCircle, ArrowLeftRight } from 'lucide-react';
+import FinancialReport from '../components/FinancialReport';
+import ReportBookingDetails from '../components/ReportBookingDetails';
+import ReportExportDialog from '../components/ReportExportDialog';
+import { BOOKING_EXPORT_COLUMNS, reportExportStorageKey, selectExportColumns } from '../utils/reportExport';
 import { isArchiveBucketRoom } from '../utils/roomBuckets';
 import { deriveBookingStatus } from '../utils/bookingState';
 
@@ -35,8 +39,37 @@ const DATE_PRESETS: { label: string; value: DatePreset }[] = [
     { label: 'Tùy chọn...', value: 'CUSTOM' },
 ];
 
+type ReportFinancialKey = 'Tiền phòng' | 'Thu khác' | 'Tổng bill' | 'Chi khác' | 'Doanh thu net' | 'Đã trả' | 'Còn nợ';
+
+const REPORT_FINANCIAL_METRICS: { key: ReportFinancialKey; label: string; color: string }[] = [
+    { key: 'Tiền phòng', label: 'Tiền phòng', color: 'text-gray-900' },
+    { key: 'Thu khác', label: 'Thu khác', color: 'text-green-600' },
+    { key: 'Tổng bill', label: 'Tổng bill', color: 'text-gray-900' },
+    { key: 'Chi khác', label: 'Chi khác', color: 'text-red-600' },
+    { key: 'Doanh thu net', label: 'Doanh thu net', color: 'text-purple-700' },
+    { key: 'Đã trả', label: 'Đã trả', color: 'text-blue-700' },
+    { key: 'Còn nợ', label: 'Còn nợ', color: 'text-red-600' },
+];
+
+const ReportFinancialSummary = ({ data, unavailable }: { data: Record<ReportFinancialKey, number>[]; unavailable: boolean }) => (
+    <section aria-label="Tổng hợp tài chính báo cáo" aria-busy={unavailable} className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <h4 className="mb-4 text-sm font-semibold text-gray-700">Tổng hợp báo cáo</h4>
+        <dl className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7" aria-live="polite">
+            {REPORT_FINANCIAL_METRICS.map(({ key, label, color }) => (
+                <div key={key} className="min-w-0">
+                    <dt className="mb-1 text-xs font-medium text-gray-500">{label}</dt>
+                    <dd className={`text-lg font-bold tabular-nums break-words ${color}`}>
+                        {unavailable ? '—' : data.reduce((sum, row) => sum + row[key], 0).toLocaleString('vi-VN')}
+                        <span className="ml-1 text-xs font-normal text-gray-500">đ</span>
+                    </dd>
+                </div>
+            ))}
+        </dl>
+    </section>
+);
+
 const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, roomTypes, properties, tags, selectedPropertyIds, currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS'>('REVENUE');
+  const [activeTab, setActiveTab] = useState<'REVENUE' | 'BOOKINGS' | 'TRANSACTIONS'>('REVENUE');
   
   // Filter States
   const [filterPreset, setFilterPreset] = useState<DatePreset>('THIS_MONTH');
@@ -45,6 +78,8 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
   const [reportSourceBookings, setReportSourceBookings] = useState<Booking[]>([]);
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [reportLoadError, setReportLoadError] = useState('');
+  const [detailRequest, setDetailRequest] = useState<{ bookingId: string; propertyId: string } | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   
   // Sort State
   const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'} | null>(null);
@@ -65,6 +100,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
   }, [selectedPropertyIds, visiblePropertyIds]);
 
   const targetPropertySet = useMemo(() => new Set(targetPropertyIds), [targetPropertyIds]);
+  const financialContext = useMemo(() => ({ rooms, roomTypes, properties, tags, users }), [rooms, roomTypes, properties, tags, users]);
 
   const reportRooms = useMemo(() => {
       return rooms
@@ -202,7 +238,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
   };
 
   useEffect(() => {
-      if (!reportRangeKey || targetPropertyIds.length === 0) {
+      if (activeTab === 'TRANSACTIONS' || !reportRangeKey || targetPropertyIds.length === 0 || startDate > endDate) {
           setReportSourceBookings([]);
           setIsReportLoading(false);
           setReportLoadError('');
@@ -236,7 +272,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
       return () => {
           cancelled = true;
       };
-  }, [reportRangeKey, reportPropertyKey]);
+  }, [reportRangeKey, reportPropertyKey, activeTab]);
 
 
   // --- Formatting Helpers ---
@@ -319,8 +355,9 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
           "Thời gian nhận phòng": formatDateTime(b.checkInDate),
           "Thời gian trả phòng": formatDateTime(b.checkOutDate),
           
-          "Tổng bill": customerBill,
+          "Tiền phòng": customerBill - displayOtherRevenue,
           "Thu khác": displayOtherRevenue,
+          "Tổng bill": customerBill,
           "Chi khác": displayOtherExpenses,
           "Doanh thu net": netRevenue,
           
@@ -389,9 +426,6 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
       return data;
   }, [reportBookings, reportRooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
-  // Total Revenue based on NET REVENUE (Real income)
-  const totalRevenue = revenueData.reduce((acc, curr) => acc + curr["Doanh thu net"], 0);
-
   // --- 2. Booking Report (Báo cáo đặt phòng phát sinh) ---
   // Criteria: All existing bookings AND createdAt is within range
   const bookingReportData = useMemo(() => {
@@ -424,17 +458,18 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
       return data;
   }, [reportBookings, reportRooms, users, roomTypes, properties, startDate, endDate, tags, sortConfig]);
 
+  const summaryUnavailable = isReportLoading || !!reportLoadError || !reportRangeKey || startDate > endDate;
 
-  const handleExport = (data: any[], fileName: string) => {
-      if (!canExport) {
-          alert("Bạn không có quyền tải xuống báo cáo này.");
-          return;
-      }
-      const cleanData = data.map(({ _debtRaw, _status, _checkOutDate, _checkInDate, _createdAt, _tags, ...rest }) => rest);
-      DataService.exportToExcel(cleanData, fileName, {
+  const exportRows = (activeTab === 'BOOKINGS' ? bookingReportData : revenueData)
+      .map(({ _debtRaw, _status, _checkOutDate, _checkInDate, _createdAt, _tags, ...rest }) => rest);
+  const handleExport = (columns: string[], templateName: string) => {
+      if (!canExport || summaryUnavailable) return;
+      const fileName = activeTab === 'BOOKINGS' ? 'Bao_cao_dat_phong.xlsx' : 'Bao_cao_doanh_thu_phong.xlsx';
+      DataService.exportToExcel(selectExportColumns(exportRows, columns, BOOKING_EXPORT_COLUMNS), fileName, {
           reportType: activeTab,
           startDate,
           endDate,
+          propertyIds: targetPropertyIds, columns, templateName,
       });
   };
 
@@ -482,10 +517,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                             TG Trả phòng <SortIcon colKey="TG Trả phòng"/>
                         </th>
 
-                        <th className="p-4 border-b text-right text-gray-700 bg-gray-50">Tổng bill</th>
+                        <th className="p-4 border-b text-right text-gray-700 bg-gray-50">Tiền phòng</th>
                         <th className="p-4 border-b text-right text-green-600 bg-gray-50">Thu khác</th>
+                        <th className="p-4 border-b text-right text-gray-700 bg-gray-50">Tổng bill</th>
                         <th className="p-4 border-b text-right text-red-600 bg-gray-50">Chi khác</th>
-                        <th className="p-4 border-b text-right font-extrabold report-col-net">Doanh thu Net</th>
+                        <th className="p-4 border-b text-right font-extrabold report-col-net">Doanh thu net</th>
                         <th className="p-4 border-b text-right report-col-paid">Đã trả</th>
                         <th className="p-4 border-b text-right report-col-debt">Còn nợ</th>
                         <th className="p-4 border-b">Nhân viên</th>
@@ -493,8 +529,11 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                     {data.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                            <td className="p-4 font-mono text-gray-500 text-xs font-semibold">{row["Mã BK"]}</td>
+                        <tr key={idx} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => {
+                            const booking = reportBookings.find(b => b.id === row['Mã BK']);
+                            if (booking) setDetailRequest({ bookingId: booking.id, propertyId: booking.propertyId });
+                        }}>
+                            <td className="p-4 font-mono text-blue-600 text-xs font-semibold"><button type="button" aria-label={`Xem chi tiết đặt phòng ${row['Mã BK']}`} className="hover:underline">{row["Mã BK"]}</button></td>
                             <td className="p-4 font-bold text-gray-800 whitespace-nowrap">{row["Khách hàng"]}</td>
                             
                             {/* Render Tags */}
@@ -516,10 +555,13 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                             <td className="p-4 text-gray-500 text-xs whitespace-nowrap">{row["Thời gian trả phòng"]}</td>
                             
                             <td className="p-4 text-right font-bold text-gray-700 bg-gray-50/50">
-                                {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
+                                {row["Tiền phòng"] > 0 ? row["Tiền phòng"].toLocaleString() : '-'}
                             </td>
                             <td className="p-4 text-right font-medium text-green-600 bg-gray-50/50">
                                 {row["Thu khác"] > 0 ? `+${row["Thu khác"].toLocaleString()}` : '-'}
+                            </td>
+                            <td className="p-4 text-right font-bold text-gray-700 bg-gray-50/50">
+                                {row["Tổng bill"] > 0 ? row["Tổng bill"].toLocaleString() : '-'}
                             </td>
                             <td className="p-4 text-right font-medium text-red-500 bg-gray-50/50">
                                 {row["Chi khác"] > 0 ? `-${row["Chi khác"].toLocaleString()}` : '-'}
@@ -539,7 +581,7 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                         </tr>
                     ))}
                     {data.length === 0 && (
-                        <tr><td colSpan={16} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
+                        <tr><td colSpan={17} className="p-8 text-center text-gray-400 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>
                     )}
                 </tbody>
             </table>
@@ -552,9 +594,6 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2 md:gap-4">
         <div>
             <h2 className="page-title">Báo cáo & Thống kê</h2>
-            <div className="flex items-center gap-2 mt-1">
-                <p className="text-gray-500 text-xs md:text-sm">Doanh thu và đặt phòng, được tổng hợp theo thời gian bạn chọn.</p>
-            </div>
         </div>
       </div>
 
@@ -622,15 +661,32 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
           >
               <Calendar size={16} /> Báo cáo Đặt phòng
           </button>
+          <button
+             onClick={() => { setActiveTab('TRANSACTIONS'); setSortConfig(null); }}
+             className={`flex-1 md:flex-none px-4 md:px-5 py-2.5 rounded-lg font-semibold text-xs md:text-sm flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'TRANSACTIONS' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+          >
+              <ArrowLeftRight size={16} /> Báo cáo phát sinh thu/chi
+          </button>
       </div>
 
-      {isReportLoading && (
+      {activeTab === 'TRANSACTIONS' && <FinancialReport propertyIds={targetPropertyIds} properties={properties} context={financialContext} currentUser={currentUser} startDate={startDate} endDate={endDate}
+          onOpenBooking={(bookingId, propertyId) => setDetailRequest({ bookingId, propertyId })} />}
+      {detailRequest && <ReportBookingDetails key={`${currentUser.tenantId}:${detailRequest.bookingId}`} request={detailRequest} propertyIds={targetPropertyIds}
+          tenantId={currentUser.tenantId} context={financialContext} onDismiss={() => setDetailRequest(null)} />}
+      {exportDialogOpen && canExport && activeTab !== 'TRANSACTIONS' && <ReportExportDialog
+          key={reportExportStorageKey(currentUser.tenantId, currentUser.id, activeTab)}
+          storageKey={reportExportStorageKey(currentUser.tenantId, currentUser.id, activeTab)}
+          title={activeTab === 'BOOKINGS' ? 'Báo cáo Đặt phòng phát sinh' : 'Báo cáo Doanh thu phòng (Đã Check-out)'}
+          columns={BOOKING_EXPORT_COLUMNS} rows={summaryUnavailable ? [] : exportRows}
+          onDismiss={() => setExportDialogOpen(false)} onExport={handleExport} />}
+
+      {activeTab !== 'TRANSACTIONS' && isReportLoading && (
           <div className="bg-blue-50 border border-blue-100 text-blue-700 rounded-xl px-4 py-3 text-sm font-semibold">
               Đang tải dữ liệu báo cáo...
           </div>
       )}
 
-      {reportLoadError && (
+      {activeTab !== 'TRANSACTIONS' && reportLoadError && (
           <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl px-4 py-3 text-sm font-semibold">
               {reportLoadError}
           </div>
@@ -650,18 +706,15 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
               </div>
               
               <div className="flex flex-col-reverse md:flex-row items-stretch md:items-center gap-2 w-full md:w-auto">
-                  <div className="px-4 py-2 bg-purple-50 rounded-lg border border-purple-100 text-right flex justify-between md:block items-center">
-                      <span className="text-xs text-purple-600 font-bold uppercase block">Tổng doanh thu thực (Net)</span>
-                      <span className="text-lg md:text-xl font-bold text-purple-700">{totalRevenue.toLocaleString()} VNĐ</span>
-                  </div>
                   {canExport && (
-                      <button onClick={() => handleExport(revenueData, 'Bao_cao_doanh_thu_phong.xlsx')} className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto">
+                      <button onClick={() => setExportDialogOpen(true)} disabled={summaryUnavailable || !revenueData.length} className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto disabled:opacity-40">
                           <FileSpreadsheet size={18} /> <span className="md:hidden">Xuất Excel</span><span className="hidden md:inline">Tải Excel</span>
                       </button>
                   )}
               </div>
           </div>
 
+          <ReportFinancialSummary data={revenueData} unavailable={summaryUnavailable} />
           <ReportTable data={revenueData} onSort={handleSort} />
       </div>
       )}
@@ -679,12 +732,13 @@ const Reports: React.FC<ReportsProps> = ({ bookings: _bookings, rooms, users, ro
                     </p>
                 </div>
                 {canExport && (
-                    <button onClick={() => handleExport(bookingReportData, 'Bao_cao_dat_phong.xlsx')} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto">
+                    <button onClick={() => setExportDialogOpen(true)} disabled={summaryUnavailable || !bookingReportData.length} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors font-medium text-sm h-10 w-full md:w-auto disabled:opacity-40">
                         <FileSpreadsheet size={18} /> <span className="md:hidden">Xuất Excel</span><span className="hidden md:inline">Tải Excel</span>
                     </button>
                 )}
              </div>
 
+             <ReportFinancialSummary data={bookingReportData} unavailable={summaryUnavailable} />
              <ReportTable data={bookingReportData} onSort={handleSort} />
           </div>
       )}

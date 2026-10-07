@@ -1164,3 +1164,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .reports-page input[type='date'] { padding-left: 10px; font-size: 14px; }
   .reports-page input[type='date'] + svg, .reports-page .pointer-events-none { display: none; }
 }
+/* Keep the two identifying transaction columns visible without compressing the remaining fields. */
+.financial-report-scroll { isolation: isolate; }
+@media (min-width: 768px) {
+  .financial-report-scroll .financial-pin-time { position: sticky; left: 0; z-index: 1; min-width: 190px; width: 190px; max-width: 190px; }
+  .financial-report-scroll .financial-pin-amount { position: sticky; left: 190px; z-index: 1; min-width: 160px; width: 160px; max-width: 160px; border-right: 1px solid #e5e7eb; }
+  .financial-report-scroll th.financial-pin-time,
+  .financial-report-scroll th.financial-pin-amount { z-index: 2; }
+}

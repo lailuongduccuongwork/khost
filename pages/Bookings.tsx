@@ -1,3 +1,4 @@
+import BookingDetailDialog from '../components/BookingDetailDialog';
 import DialogFrame from '../components/DialogFrame';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -1740,97 +1741,20 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
           </div>
       )}
 
-      {selectedDetailBooking && (
-          <DialogFrame label="Chi tiết đặt phòng" onDismiss={() => setDetailModalBookingId(null)} className="fixed inset-0 bg-black/50 z-[104] flex items-center justify-center p-3 md:p-5" onClick={() => setDetailModalBookingId(null)}>
-              <div
-                  className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[calc(100dvh-32px)] overflow-hidden animate-fade-in"
-                  onClick={(e) => e.stopPropagation()}
-              >
-                  <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                      <div>
-                          <h3 className="text-lg font-bold text-gray-900">Chi tiết đơn #{selectedDetailBooking.id}</h3>
-                          <p className="text-xs text-gray-500 mt-1">Xem nhanh thông tin khách, phòng, lịch ở và tài chính</p>
-                      </div>
-                      <button
-                          onClick={() => setDetailModalBookingId(null)}
-                          className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-                          title="Đóng chi tiết"
-                      >
-                          <X size={18} />
-                      </button>
-                  </div>
-
-                  <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm overflow-y-auto max-h-[calc(100dvh-140px)]">
-                      <div className="space-y-3">
-                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-                              <div className="text-xs font-semibold text-gray-500 uppercase">Khách hàng</div>
-                              <div className="mt-2 text-base font-bold text-gray-900">{getDisplayName(selectedDetailBooking)}</div>
-                              <div className="text-sm text-gray-600 mt-1">{selectedDetailBooking.guestPhone || '--'}</div>
-                              <div className="text-sm text-gray-600 mt-1">Trạng thái: <span className="font-semibold text-gray-900">{getBookingStatusLabel(deriveBookingStatus(selectedDetailBooking, nowMs))}</span></div>
-                          </div>
-                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-                              <div className="text-xs font-semibold text-gray-500 uppercase">Lưu trú</div>
-                              <div className="mt-2 text-sm text-gray-700">Chi nhánh: <span className="font-semibold text-gray-900">{getPropertyName(selectedDetailBooking)}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Phòng: <span className="font-semibold text-gray-900">{getRoomNumber(selectedDetailBooking.roomId)}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Hạng phòng: <span className="font-semibold text-gray-900">{getRoomTypeName(selectedDetailBooking)}</span></div>
-                              {!roomById.get(selectedDetailBooking.roomId) && (
-                                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                                      Phòng của đơn này không còn khớp dữ liệu phòng hiện tại.
-                                  </div>
-                              )}
-                              <div className="mt-1 text-sm text-gray-700">Nhận phòng: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.checkInDate)}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Trả phòng: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.checkOutDate)}</span></div>
-                              {onOpenRoomMapBooking && (
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                      <button
-                                          onClick={() => onOpenRoomMapBooking(selectedDetailBooking)}
-                                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
-                                      >
-                                          Mở trên sơ đồ phòng
-                                      </button>
-                                      <button
-                                          onClick={() => onOpenRoomMapBooking(selectedDetailBooking)}
-                                          className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
-                                      >
-                                          Sửa đơn
-                                      </button>
-                                  </div>
-                              )}
-                          </div>
-                      </div>
-
-                      <div className="space-y-3">
-                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-                              <div className="text-xs font-semibold text-gray-500 uppercase">Tài chính</div>
-                              {(() => {
-                                  const summary = getBookingFinancialSummary(selectedDetailBooking);
-                                  return (
-                                      <div className="mt-2 space-y-1 text-sm text-gray-700">
-                                          <div>Tổng bill: <span className="font-semibold text-gray-900">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.totalBill)}</span></div>
-                                          <div>Thu khác: <span className="font-semibold text-green-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.extraRevenue)}</span></div>
-                                          <div>Chi khác: <span className="font-semibold text-red-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.extraExpense)}</span></div>
-                                          <div>Doanh thu net: <span className="font-semibold text-blue-700">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.netRevenue)}</span></div>
-                                          <div>Đã trả: <span className="font-semibold text-gray-900">{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.paidAmount)}</span></div>
-                                          <div>Còn nợ: <span className={`font-semibold ${summary.outstanding > 0 ? 'text-red-700' : 'text-green-700'}`}>{summary.isGroupedChild ? 'Theo đoàn' : formatCurrency(summary.outstanding)}</span></div>
-                                      </div>
-                                  );
-                              })()}
-                          </div>
-                          <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
-                              <div className="text-xs font-semibold text-gray-500 uppercase">Khác</div>
-                              <div className="mt-2 text-sm text-gray-700">Nhân viên tạo: <span className="font-semibold text-gray-900">{getCreatorLabel(selectedDetailBooking)}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Ngày tạo: <span className="font-semibold text-gray-900">{toDateTimeLabel(selectedDetailBooking.createdAt)}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Tags: <span className="font-semibold text-gray-900">{getBookingTags(selectedDetailBooking).length > 0 ? getBookingTags(selectedDetailBooking).join(', ') : '--'}</span></div>
-                              <div className="mt-1 text-sm text-gray-700">Ghi chú:</div>
-                              <div className="mt-1 rounded-lg bg-white border border-gray-200 p-3 text-sm text-gray-700 min-h-20 whitespace-pre-wrap">
-                                  {selectedDetailBooking.notes || 'Không có ghi chú'}
-                              </div>
-                          </div>
-                      </div>
-                  </div>
-              </div>
-          </DialogFrame>
-      )}
+      {selectedDetailBooking && <BookingDetailDialog
+          booking={selectedDetailBooking}
+          guestName={getDisplayName(selectedDetailBooking)}
+          propertyName={getPropertyName(selectedDetailBooking)}
+          roomNumber={getRoomNumber(selectedDetailBooking.roomId)}
+          roomTypeName={getRoomTypeName(selectedDetailBooking)}
+          hasRoom={roomById.has(selectedDetailBooking.roomId)}
+          statusLabel={getBookingStatusLabel(deriveBookingStatus(selectedDetailBooking, nowMs))}
+          creatorLabel={getCreatorLabel(selectedDetailBooking)}
+          tagNames={getBookingTags(selectedDetailBooking)}
+          financialSummary={getBookingFinancialSummary(selectedDetailBooking)}
+          onDismiss={() => setDetailModalBookingId(null)}
+          onOpenRoomMapBooking={onOpenRoomMapBooking}
+      />}
 
       {historyModal.isOpen && selectedHistoryBooking && (
           <DialogFrame label="Lịch sử đặt phòng" onDismiss={closeBookingHistory} className="fixed inset-0 bg-black/50 z-[105] flex items-center justify-center p-3 md:p-5" onClick={closeBookingHistory}>
