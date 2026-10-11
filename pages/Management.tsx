@@ -1,3 +1,4 @@
+import HousekeepingSettingsPanel from '../components/HousekeepingSettingsPanel';
 import DialogFrame from '../components/DialogFrame';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -41,7 +42,7 @@ interface ManagementProps {
   onRefresh: () => void;
 }
 
-type TabType = 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'NOTIFICATIONS' | 'ADVANCED';
+type TabType = 'HOUSEKEEPING' | 'PROPERTIES' | 'ROOM_MANAGEMENT' | 'ROOM_POLICIES' | 'ADMIN' | 'NOTIFICATIONS' | 'ADVANCED';
 type CascadeDeleteKind = 'property' | 'roomType' | 'room';
 type NewRoomTypeDraft = { propertyId: string; name: string } | null;
 type NewRoomDraft = { propertyId: string; number: string; typeId: string } | null;
@@ -203,6 +204,7 @@ const Management: React.FC<ManagementProps> = ({
       { id: 'PROPERTIES', label: 'Cơ sở & Chi nhánh', icon: Building2, desc: 'Quản lý các toà nhà' },
       { id: 'ROOM_MANAGEMENT', label: 'Phân bổ Hạng & Phòng', icon: BedDouble, desc: 'Cấu hình phòng theo cấu trúc' },
       { id: 'ROOM_POLICIES', label: 'Chính sách phòng', icon: AlertTriangle, desc: 'Khóa phòng / Chỉ nhận giờ' },
+      { id: 'HOUSEKEEPING', label: 'Lịch buồng phòng', icon: Users, desc: 'Ca làm, cơ sở phụ trách, di chuyển' },
       { id: 'ADMIN', label: 'Nhân sự & Phân quyền', icon: Shield, desc: 'Tài khoản nhân viên' },
       { id: 'NOTIFICATIONS', label: 'Thông báo', icon: Bell, desc: 'Nhắc lịch, công nợ' },
       { id: 'ADVANCED', label: 'Cấu hình nâng cao', icon: Settings, desc: 'Thu chi, thẻ tag, danh mục đơn' },
@@ -1828,6 +1830,8 @@ const Management: React.FC<ManagementProps> = ({
           )}
 
           {/* TAB 4: PHÂN QUYỀN (SỬ DỤNG LẠI COMPONENT ADMIN) */}
+          {activeTab === 'HOUSEKEEPING' && <HousekeepingSettingsPanel properties={properties} settings={notificationSettings.housekeeping} />}
+
           {activeTab === 'ADMIN' && (
               <div className="bg-white border border-gray-200 rounded-2xl shadow-sm animate-fade-in">
                  <Admin users={users} properties={properties} currentUser={currentUser} onRefresh={onRefresh} />

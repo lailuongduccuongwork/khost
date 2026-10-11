@@ -1,3 +1,4 @@
+import HousekeepingPlanPanel from '../components/HousekeepingPlanPanel';
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { Room, Booking, BookingStatus, RoomStatus, Property, RoomType } from '../types';
@@ -21,7 +22,7 @@ interface HousekeepingProps {
 }
 
 type FilterType = 'ALL' | 'DIRTY' | 'CLEAN' | 'OCCUPIED';
-type HousekeepingView = 'CURRENT' | 'DAY_SCHEDULE';
+type HousekeepingView = 'CURRENT' | 'DAY_SCHEDULE' | 'CLEANING_PLAN';
 
 const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes, properties, currentProperty, onRefresh, onUpdateStatus, onOpenRoomMap, canUpdateRoomStatus }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -340,6 +341,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 items-center">
             <button onClick={() => setActiveView('CURRENT')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${activeView==='CURRENT' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Việc hiện tại</button>
             <button onClick={() => setActiveView('DAY_SCHEDULE')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${activeView==='DAY_SCHEDULE' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Lịch trong ngày</button>
+            <button onClick={() => setActiveView('CLEANING_PLAN')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${activeView==='CLEANING_PLAN' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Lịch dọn dự kiến</button>
             <div className="h-6 w-px shrink-0 bg-gray-200" />
             {activeView === 'CURRENT' ? (
                 <>
@@ -348,11 +350,11 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
                     <button onClick={() => setFilter('CLEAN')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='CLEAN' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Sẵn sàng</button>
                     <button onClick={() => setFilter('OCCUPIED')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filter==='OCCUPIED' ? 'bg-red-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>Đang ở</button>
                 </>
-            ) : (
+            ) : activeView === 'DAY_SCHEDULE' ? (
                 <span className="px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap bg-gray-100 text-gray-600">
                     {todayLabel} · {todayBookingCount} lượt khách
                 </span>
-            )}
+            ) : null}
         </div>
       </div>
 
@@ -380,7 +382,7 @@ const Housekeeping: React.FC<HousekeepingProps> = ({ rooms, bookings, roomTypes,
       )}
 
       {/* ROOM LIST */}
-      {activeView === 'CURRENT' ? (
+      {activeView === 'CLEANING_PLAN' ? <HousekeepingPlanPanel properties={properties} propertyIds={currentProperty.id === 'ALL' ? properties.map(p => p.id) : [currentProperty.id]} /> : activeView === 'CURRENT' ? (
       <div className="p-2 space-y-3">
         {filteredList.length === 0 && (
             <div className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">

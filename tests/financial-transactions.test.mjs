@@ -290,8 +290,8 @@ test('the room-map group save commits one transaction with all room totals and i
     const child = booking({ id: 'child', groupId: 'g1', roomId: 'r2' });
     const f = fixture({ [leader.id]: leader, child });
     f.CACHE.rooms = [
-        { ...context.rooms[0], status: 'VACANT_CLEAN' },
-        { ...context.rooms[0], id: 'r2', number: '502', status: 'VACANT_CLEAN' },
+        { ...context.rooms[0], status: 'VACANT_CLEAN', lastCleanedAt: Date.now() },
+        { ...context.rooms[0], id: 'r2', number: '502', status: 'VACANT_CLEAN', lastCleanedAt: Date.now() },
     ];
     const next = { ...leader, extraFees: [fee()], totalPrice: 175000 };
     await f._saveBookingGroupAtomic({ upserts: [{ booking: next, mode: 'update' }, { booking: child, mode: 'update' }] });
@@ -312,8 +312,8 @@ test('room-map payments use fresh group balances and preserve totals when the pa
     const f = fixture({ [leader.id]: leader, child });
     f.CACHE.bookings = [{ ...leader, paidAmount: 0 }, child]; // A stale local view must not inflate the receipt.
     f.CACHE.rooms = [
-        { ...context.rooms[0], status: 'VACANT_CLEAN' },
-        { ...context.rooms[0], id: 'r2', number: '502', status: 'VACANT_CLEAN' },
+        { ...context.rooms[0], status: 'VACANT_CLEAN', lastCleanedAt: Date.now() },
+        { ...context.rooms[0], id: 'r2', number: '502', status: 'VACANT_CLEAN', lastCleanedAt: Date.now() },
     ];
     await f._saveBookingGroupAtomic({ upserts: [{ booking: { ...leader, paidAmount: 1500000 }, mode: 'update' }, { booking: child, mode: 'update' }] });
     const entry = Object.entries(f.writes[0]).find(([key]) => key.includes('/history/'))[1];

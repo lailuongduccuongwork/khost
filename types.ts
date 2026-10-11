@@ -117,7 +117,44 @@ export interface FinancialTransaction {
 }
 // -------------------------------------
 
+export interface HousekeepingWorker {
+  id: string;
+  name: string;
+  propertyIds: string[];
+  shiftStart: string;
+  shiftEnd: string;
+  cleaningMinutes: number;
+  travelMinutes: number;
+  weekdays: number[];
+  breakStart?: string;
+  breakEnd?: string;
+  daysOff?: string[];
+}
+
+export interface HousekeepingSettings {
+  workers: HousekeepingWorker[];
+}
+
+export const normalizeHousekeepingSettings = (value?: any): HousekeepingSettings => {
+  const time = (v: unknown, fallback: string) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : fallback;
+  const minutes = (v: unknown, fallback: number, min: number) => Number.isFinite(Number(v)) ? Math.max(min, Math.min(480, Math.round(Number(v)))) : fallback;
+  const seen = new Set<string>();
+  return { workers: (Array.isArray(value?.workers) ? value.workers : []).filter((w: any) => {
+    if (!w || typeof w.id !== 'string' || !w.id || seen.has(w.id)) return false;
+    seen.add(w.id); return true;
+  }).map((w: any) => ({
+    id: w.id, name: String(w.name || 'Nhân viên buồng phòng'),
+    propertyIds: Array.from(new Set<string>((Array.isArray(w.propertyIds) ? w.propertyIds : []).filter((p: any) => typeof p === 'string' && p))),
+    shiftStart: time(w.shiftStart, '08:00'), shiftEnd: time(w.shiftEnd, '22:00'),
+    cleaningMinutes: minutes(w.cleaningMinutes, 30, 1), travelMinutes: minutes(w.travelMinutes, 15, 0),
+    weekdays: Array.isArray(w.weekdays) ? Array.from(new Set<number>(w.weekdays.filter((d: any) => Number.isInteger(d) && d >= 0 && d <= 6))) : [0, 1, 2, 3, 4, 5, 6],
+    breakStart: time(w.breakStart, ''), breakEnd: time(w.breakEnd, ''),
+    daysOff: (Array.isArray(w.daysOff) ? w.daysOff : []).filter((d: any) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  })) };
+};
+
 export interface NotificationSettings {
+  housekeeping?: HousekeepingSettings;
   enabled: boolean;
   inAppEnabled: boolean;
   soundEnabled: boolean;
@@ -179,6 +216,7 @@ export const normalizeNotificationSettings = (value?: any): NotificationSettings
     : DEFAULT_NOTIFICATION_SETTINGS.debtAlerts.dailyHours;
 
   return {
+    housekeeping: normalizeHousekeepingSettings(source.housekeeping),
     enabled: normalizeNotificationBoolean(source.enabled, DEFAULT_NOTIFICATION_SETTINGS.enabled),
     inAppEnabled: normalizeNotificationBoolean(source.inAppEnabled, DEFAULT_NOTIFICATION_SETTINGS.inAppEnabled),
     soundEnabled: normalizeNotificationBoolean(source.soundEnabled, DEFAULT_NOTIFICATION_SETTINGS.soundEnabled),

@@ -45,6 +45,8 @@ import { initializeApp } from 'firebase/app';
 import { createRealtimePool } from '../utils/realtimePool';
 import { checkoutQueryLowerBound, roomHistoryStart } from '../utils/bookingReadScope';
 import { buildFinancialTransactions, FinancialContext, transactionsFromHistory } from '../utils/financialTransactions';
+import { cleaningWarnings, housekeepingScope, CleaningWarning, housekeepingWorkers, buildCleaningJobs, planHousekeeping } from '../utils/housekeepingPlan';
+import { HousekeepingSettings, normalizeHousekeepingSettings } from '../types';
 import { endAt, equalTo, getDatabase, get, limitToLast, onValue, orderByChild, orderByKey, query, ref, remove, runTransaction, serverTimestamp, set, startAt, update } from 'firebase/database';
 
 declare const XLSX: any;
@@ -191,6 +193,14 @@ interface RoomStatusOptions {
 interface BookingActionOptions {
     source?: AuditSource;
     staffId?: string;
+    housekeepingAcknowledgement?: string;
+}
+
+export class HousekeepingWarningError extends Error {
+    constructor(public warnings: CleaningWarning[], public acknowledgement: string) {
+        super('Lịch dọn phòng cần được xác nhận trước khi lưu.');
+        this.name = 'HousekeepingWarningError';
+    }
 }
 
 interface BookingGroupSaveItem {
@@ -2317,7 +2327,7 @@ const _validateRoomAvailabilityRemote = async (
         };
     }
 
-    const propertyBookings = await _fetchBookingsEndingAfter([propertyId], startMs);
+    const propertyBookings = await _fetchBookingsEndingAfter([propertyId], startMs - 30 * 60 * 1000);
     const activeBookings = propertyBookings.filter((booking) => isBookingActiveForConflict(booking));
     const conflict = findBookingConflict(activeBookings, roomId, startMs, endMs, excludeId);
     return conflict ? { valid: false, reason: `Trùng đơn ${conflict.id}` } : { valid: true };
@@ -2682,7 +2692,8 @@ const _saveNotificationSettings = async (settings: NotificationSettings) => {
     assertActorHasAnyPermission([PERMISSIONS.ADMIN_SETTINGS], 'cập nhật cài đặt thông báo');
 
     const previous = cloneData(CACHE.notificationSettings);
-    const normalized = normalizeNotificationSettings(settings);
+    const latest = await trackedGet(`${basePath}/notificationSettings/housekeeping`);
+    const normalized = normalizeNotificationSettings({ ...settings, housekeeping: latest.val() });
     await trackedSet(`${basePath}/notificationSettings`, removeUndefinedDeep(normalized), { node: 'notificationSettings' });
 
     CACHE.notificationSettings = normalized;
@@ -2701,6 +2712,55 @@ const _saveNotificationSettings = async (settings: NotificationSettings) => {
             coalesceKey: 'notification-settings:update',
         });
     }
+};
+
+const _saveHousekeepingSettings = async (settings: HousekeepingSettings) => {
+    const basePath = getBaseRef();
+    if (!db || !basePath || activeTenantId === SYSTEM_TENANT_ID) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+    assertActorHasAnyPermission([PERMISSIONS.ADMIN_SETTINGS], 'cập nhật lịch buồng phòng');
+    const before = CACHE.notificationSettings.housekeeping;
+    const normalized = normalizeHousekeepingSettings(settings);
+    // Reuse the tenant's existing warning settings node, compatible with deployed rules.
+    const snap = await trackedGet(`${basePath}/notificationSettings`);
+    if (!snap.exists()) {
+        await trackedSet(`${basePath}/notificationSettings`, normalizeNotificationSettings({ housekeeping: normalized }), { node: 'notificationSettings' });
+    } else {
+        await trackedSet(`${basePath}/notificationSettings/housekeeping`, normalized, { node: 'notificationSettings' });
+    }
+    CACHE.notificationSettings = { ...CACHE.notificationSettings, housekeeping: normalized };
+    _dataChangeCallback();
+    _recordHistory({ action: 'UPDATE', entityType: 'SYSTEM', entityId: 'housekeepingSettings', entityLabel: 'Lịch buồng phòng',
+        description: 'Cập nhật nhân viên, ca làm và cơ sở phụ trách buồng phòng', before: before || {}, after: normalized });
+};
+
+const _checkHousekeepingBeforeSave = async (upserts: Booking[], deletedIds: string[], existing: Booking[], options: BookingActionOptions) => {
+    const scheduleChanged = upserts.some(b => {
+        const old = existing.find(e => e.id === b.id);
+        return !b.isHold && b.status !== BookingStatus.HOLD && (!old || old.roomId !== b.roomId || old.propertyId !== b.propertyId || old.checkInDate !== b.checkInDate || old.checkOutDate !== b.checkOutDate || old.isHold || old.status === BookingStatus.HOLD);
+    });
+    if (!scheduleChanged) return;
+    const basePath = getBaseRef();
+    if (!basePath) return;
+    const settingsSnap = await trackedGet(`${basePath}/notificationSettings/housekeeping`);
+    const settings = normalizeHousekeepingSettings(settingsSnap.val());
+    const changedIds = [...upserts.map(b => b.id), ...deletedIds];
+    const touched = [...upserts, ...existing.filter(b => changedIds.includes(b.id))];
+    const requested = housekeepingScope(settings, [...new Set(touched.map(b => b.propertyId))]);
+    const allowed = currentAuditActor?.allowedPropertyIds || [];
+    const scope = requested.filter(id => !allowed.length || allowed.includes(id));
+    const [before, rooms] = await Promise.all([_fetchBookingsForProperties(scope), _loadRoomsForPropertiesView(scope)]);
+    const map = new Map(before.map(b => [b.id, b]));
+    deletedIds.forEach(id => map.delete(id)); upserts.forEach(b => map.set(b.id, b));
+    const after = [...map.values()];
+    const warnings = cleaningWarnings(before, after, rooms, settings, changedIds);
+    if (upserts.some(b => !rooms.some(r => r.id === b.roomId))) warnings.push({ message: 'Chưa tải được đủ thông tin phòng để kiểm tra lịch dọn. Hãy kiểm tra lại trước khi nhận khách.' });
+    if (requested.length !== scope.length) warnings.push({ message: 'Nhân viên còn phụ trách cơ sở ngoài phạm vi xem của bạn. Chưa kiểm tra được đầy đủ lịch dọn liên cơ sở.' });
+    if (!warnings.length) return;
+    // A confirmation only applies to this exact proposal and freshly read schedule.
+    const acknowledgement = JSON.stringify({ settings, warnings, rooms: rooms.map(r => [r.id, r.status, r.lastCleanedAt || 0]).sort(),
+        bookings: after.map(b => [b.id, b.roomId, b.checkInDate, b.checkOutDate, b.status, !!b.isHold]).sort() });
+    if (options.housekeepingAcknowledgement !== acknowledgement) throw new HousekeepingWarningError(warnings, acknowledgement);
+    return { confirmedBy: options.staffId || currentAuditActor?.id, confirmedAt: new Date().toISOString(), warnings };
 };
 
 const _updateRoomStatus = async (roomId: string, status: RoomStatus, options: RoomStatusOptions = {}) => {
@@ -3472,6 +3532,8 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         nextMap.set(nextBooking.id, nextBooking);
     }
 
+    const cleaningConfirmation = await _checkHousekeepingBeforeSave(normalizedUpserts.map(item => item.booking), deleteIds, remotePropertyBookings, options);
+
     const updates: Record<string, unknown> = {};
     deleteIds.forEach((id) => {
         updates[`${basePath}/bookings/${id}`] = null;
@@ -3498,6 +3560,10 @@ const _saveBookingGroupAtomic = async (params: BookingGroupSaveParams, options: 
         upsertCount: normalizedUpserts.length,
         deleteCount: deleteIds.length,
     });
+
+    if (cleaningConfirmation) _recordHistory({ action: 'UPDATE', entityType: 'BOOKING', entityId: normalizedUpserts[0].booking.id,
+        entityLabel: normalizedUpserts[0].booking.id, description: 'Xác nhận lưu đơn dù có cảnh báo lịch dọn phòng',
+        metadata: { housekeepingConfirmation: cleaningConfirmation }, staffId: options.staffId });
 
     CACHE.bookings = Array.from(nextMap.values());
     if (financialEntry) upsertHistoryCache(financialEntry);
@@ -4798,7 +4864,7 @@ const _saveBookingAtomic = async (
             throw new Error(policyCheck.reason || 'Vi phạm chính sách phòng');
         }
 
-        const propertyBookings = await _fetchBookingsEndingAfter([normalizedBooking.propertyId], startMs);
+        const propertyBookings = await _fetchBookingsEndingAfter([normalizedBooking.propertyId], startMs - 30 * 60 * 1000);
         const conflict = findBookingConflict(
             propertyBookings,
             normalizedBooking.roomId,
@@ -4810,6 +4876,8 @@ const _saveBookingAtomic = async (
             throw new Error(`Trùng đơn ${conflict.id}`);
         }
     }
+
+    const cleaningConfirmation = await _checkHousekeepingBeforeSave([normalizedBooking as Booking], [], previousBookingFromCommittedTxn ? [previousBookingFromCommittedTxn] : [], options);
 
     const updates: Record<string, unknown> = {
         [`${basePath}/bookings/${normalizedBooking.id}`]: normalizedBooking,
@@ -4833,6 +4901,10 @@ const _saveBookingAtomic = async (
         operation: mode === 'create' ? 'create-booking' : 'update-booking',
         pathCount: Object.keys(updates).length,
     });
+
+    if (cleaningConfirmation) _recordHistory({ action: 'UPDATE', entityType: 'BOOKING', entityId: normalizedBooking.id,
+        entityLabel: normalizedBooking.id, description: 'Xác nhận lưu đơn dù có cảnh báo lịch dọn phòng',
+        metadata: { housekeepingConfirmation: cleaningConfirmation }, staffId: options.staffId });
 
     const cacheIndex = CACHE.bookings.findIndex((item) => item.id === normalizedBooking.id);
     if (cacheIndex > -1) CACHE.bookings[cacheIndex] = normalizedBooking as Booking;
@@ -5236,6 +5308,23 @@ export const DataService = {
     getBookingSources: () => getBookingCatalogList(CACHE.bookingSources, INITIAL_BOOKING_SOURCES),
     getBookingFieldSettings: () => normalizeBookingFieldSettings(CACHE.bookingFieldSettings),
     getNotificationSettings: () => normalizeNotificationSettings(CACHE.notificationSettings),
+    getHousekeepingSettings: () => normalizeHousekeepingSettings(CACHE.notificationSettings.housekeeping),
+    saveHousekeepingSettings: _saveHousekeepingSettings,
+    fetchHousekeepingPlan: async (propertyIds: string[], date: string, endDate?: string) => {
+        const basePath = getBaseRef();
+        if (!basePath) throw new Error('Kết nối dữ liệu chưa sẵn sàng.');
+        const settingsSnap = await trackedGet(`${basePath}/notificationSettings/housekeeping`);
+        const settings = normalizeHousekeepingSettings(settingsSnap.val());
+        const allowed = currentAuditActor?.allowedPropertyIds || [];
+        const requested = housekeepingScope(settings, propertyIds);
+        const scope = requested.filter(id => !allowed.length || allowed.includes(id));
+        if (!scope.length) return { assignments: [], rooms: [], settings, incomplete: requested.length !== scope.length };
+        const [bookings, rooms] = await Promise.all([_fetchBookingsForProperties(scope), _loadRoomsForPropertiesView(scope)]);
+        const start = Date.parse(`${date}T00:00:00+07:00`), end = endDate ? Date.parse(`${endDate}T00:00:00+07:00`) : start + 86400000;
+        const assignments = planHousekeeping(buildCleaningJobs(bookings, rooms, Date.now(), end + 2 * 86400000), housekeepingWorkers(settings, scope))
+            .filter(j => j.deadline >= start && j.deadline < end);
+        return { assignments, rooms, settings, incomplete: requested.length !== scope.length };
+    },
     getHistory: () => CACHE.history,
     fetchRecentHistory: (limit?: number, tenantId?: string | null) => _fetchRecentHistory(limit, tenantId),
     fetchBookingHistory: (params: BookingHistoryQueryParams) => _fetchBookingHistory(params),

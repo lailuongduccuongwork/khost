@@ -1,3 +1,4 @@
+import { useHousekeepingWarning } from '../hooks/useHousekeepingWarning';
 import BookingDetailDialog from '../components/BookingDetailDialog';
 import DialogFrame from '../components/DialogFrame';
 
@@ -228,6 +229,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
   const [fromDateFilter, setFromDateFilter] = useState('');
   const [toDateFilter, setToDateFilter] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const { saveWithWarning, warningDialog } = useHousekeepingWarning(isImporting);
   const [isHydratingScope, setIsHydratingScope] = useState(false);
   const [sortField, setSortField] = useState<BookingSortField>('checkOutDate');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -1232,7 +1234,8 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
                   };
 
                   try {
-                      await DataService.addBooking(newBooking, { source: 'IMPORT', staffId: currentUser.id });
+                      const didSave = await saveWithWarning((housekeepingAcknowledgement) => DataService.addBooking(newBooking, { source: 'IMPORT', staffId: currentUser.id, housekeepingAcknowledgement }));
+                      if (!didSave) { errorLog.push(`Dòng ${i + 1}: Bỏ qua do chưa xác nhận cảnh báo lịch dọn phòng.`); continue; }
                       successCount++;
                   } catch (createError) {
                       const detail = createError instanceof Error ? createError.message : 'Không rõ nguyên nhân';
@@ -1312,6 +1315,7 @@ const Bookings: React.FC<BookingsProps> = ({ bookings, rooms, roomTypes, propert
 
   return (
     <div className="katka-liquid-page bookings-page bg-white rounded-lg shadow-sm border border-gray-200 animate-fade-in relative">
+      {warningDialog}
       <div className="bookings-heading p-6 border-b border-gray-200 flex flex-wrap justify-between items-start md:items-center gap-5">
         <div>
             <h2 className="page-title">Danh sách đặt phòng</h2>
