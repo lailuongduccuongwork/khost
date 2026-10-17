@@ -551,6 +551,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
       isOpen: boolean, booking?: Booking, newRoom?: Room, newCheckIn?: Date, newCheckOut?: Date
   } | null>(null);
   const [isSavingMove, setIsSavingMove] = useState(false);
+  const [showMoveNotificationReminder, setShowMoveNotificationReminder] = useState(false);
 
   const [statusModal, setStatusModal] = useState<{
       isOpen: boolean; room: Room | null; targetStatus: RoomStatus;
@@ -2056,6 +2057,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
           upsertFullBookingCache([updatedBooking]);
           mergeOperationalBookings([updatedBooking]);
           setMoveConfirmModal(null);
+          setShowMoveNotificationReminder(true);
       } catch (error) {
           console.error('Room move failed', { bookingId: booking.id, targetRoomId: newRoom.id, error });
           const message = error instanceof Error ? error.message : 'Không thể cập nhật đơn khi kéo thả.';
@@ -3450,7 +3452,7 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
 
       {moveConfirmModal && moveConfirmModal.isOpen && (
           <DialogFrame label="Xác nhận đổi phòng" onDismiss={() => { if (!isSavingMove) setMoveConfirmModal(null); }} className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-fade-in">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90dvh] overflow-y-auto">
                   <div className="bg-blue-600 p-4 text-center">
                       <div className="w-16 h-16 bg-white/20 text-white rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner">
                           <CheckCircle size={32} />
@@ -3459,6 +3461,10 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                   </div>
                   
                   <div className="p-6">
+                      <div className="mb-4 flex items-start gap-2 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm font-bold text-amber-900" role="note">
+                          <AlertTriangle size={22} className="shrink-0" />
+                          <p>LƯU Ý BÁO LẠI KHÁCH VÀ BUỒNG PHÒNG THÔNG TIN MỚI SAU KHI ĐỔI</p>
+                      </div>
                       <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 space-y-3">
                           <div className="flex justify-between items-center pb-3 border-b border-gray-200">
                               <span className="text-gray-500 font-medium text-sm">Khách hàng:</span>
@@ -3498,6 +3504,15 @@ const RoomMap: React.FC<RoomMapProps> = ({ rooms, roomTypes, roomPolicies, booki
                   </div>
               </div>
           </DialogFrame>
+      )}
+
+      {showMoveNotificationReminder && createPortal(
+          <DialogFrame label="Nhắc báo thông tin đổi phòng" onDismiss={() => {}} className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+                  <h3 className="text-center text-lg font-bold text-gray-900">Bạn đã báo lại khách, buồng phòng thông tin mới chưa?</h3>
+                  <button type="button" onClick={() => setShowMoveNotificationReminder(false)} className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-bold text-white transition-colors hover:bg-blue-700">Đã báo</button>
+              </div>
+          </DialogFrame>, document.body
       )}
 
       {showModal && createPortal(
